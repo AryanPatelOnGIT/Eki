@@ -42,17 +42,17 @@ import busRoutes from "./routes/buses";
 import analyticsRoutes from "./routes/analytics";
 import requestRoutes from "./routes/requests";
 import polylineRoutes from "./routes/polyline";
-import planRoutes from "./routes/plan";
-import routesListRoutes from "./routes/routesList";
-import devicesRoutes from "./routes/devices";
+import planRoutes, { segmentRoutes } from "./routes/plan";
+import routesListRoutes, { routesCollectionRoutes } from "./routes/routesList";
+import devicesRoutes, { devicesV2Router } from "./routes/devices";
 import placesRoutes from "./routes/places";
 import shiftsRoutes from "./routes/shifts";
 import sessionsRoutes from "./routes/sessions";
-import feedbackRoutes from "./routes/feedback";
+import feedbackRoutes, { feedbackV2Router } from "./routes/feedback";
 import usersRoutes from "./routes/users";
-import settingsRoutes from "./routes/settings";
+import settingsRoutes, { settingsV2Router } from "./routes/settings";
 import fleetRoutes from "./routes/fleet";
-import privacyRoutes from "./routes/privacy";
+import privacyRoutes, { privacyDeletionRequestsRouter } from "./routes/privacy";
 
 const PORT = process.env.PORT || 4000;
 // Expected replica count behind the load balancer. Every in-memory limiter
@@ -194,6 +194,8 @@ app.use("/api/routes", routeComputeLimiter, polylineRoutes);
 // Route planner — zero Google Maps API cost at runtime
 app.use("/api/plan", routePlanLimiter, planRoutes);
 app.use("/api/routes-list", routesListRoutes);
+app.use("/api/v2/routes", routesCollectionRoutes);
+app.use("/api/v2/routes", routePlanLimiter, segmentRoutes);
 app.use(
   "/api/devices",
   (req, res, next) =>
@@ -203,14 +205,18 @@ app.use(
       : writeLimiter(req, res, next),
   devicesRoutes,
 );
+app.use("/api/v2/devices", writeLimiter, devicesV2Router);
 app.use("/api/places", placesRoutes);
 app.use("/api/shifts", writeLimiter, shiftsRoutes);
 app.use("/api/sessions", writeLimiter, sessionsRoutes);
 app.use("/api/feedback", writeLimiter, feedbackRoutes);
+app.use("/api/v2/feedback", writeLimiter, feedbackV2Router);
 app.use("/api/users", writeLimiter, usersRoutes);
 app.use("/api/settings", writeLimiter, settingsRoutes);
+app.use("/api/v2/settings/global", writeLimiter, settingsV2Router);
 app.use("/api/fleet", writeLimiter, fleetRoutes);
 app.use("/api/privacy", writeLimiter, privacyRoutes);
+app.use("/api/v2/privacy-deletion-requests", writeLimiter, privacyDeletionRequestsRouter);
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 const health = createHealthState();

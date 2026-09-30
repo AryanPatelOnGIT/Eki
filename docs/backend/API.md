@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-09-14.
+Last updated: 2026-09-30.
 
 Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
 
@@ -41,6 +41,11 @@ documentation, tickets or logs. A successful new telemetry sample returns
 `202`; an equal or older duplicate returns `200`.
 
 ## Endpoint map
+
+The compatible v2 resource aliases for settings, route planning/listing, device
+disable, feedback status, and privacy deletion requests are documented in
+[`API_RESOURCE_MIGRATION.md`](API_RESOURCE_MIGRATION.md). Existing paths remain
+available during the rollout.
 
 | Area | Endpoints | Authentication |
 |---|---|---|

@@ -8,6 +8,7 @@ import { singleRouteParam } from "../lib/requestParams";
 import { evaluateFeedback } from "../services/feedbackService";
 
 const router = Router();
+export const feedbackV2Router = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{16,128}$/;
 const FEEDBACK_STATUSES = new Set(["new", "reviewed", "resolved"]);
@@ -237,10 +238,11 @@ router.post("/", requireAuth, async (req: AuthenticatedRequest, res: Response) =
 });
 
 /** PATCH /api/feedback/:feedbackId/status — admin-only review workflow. */
-router.patch("/:feedbackId/status", requireAdmin, async (
+const updateFeedbackStatus = async (
   req: AuthenticatedRequest,
   res: Response,
 ) => {
+  res.set("Cache-Control", "no-store");
   const feedbackId = singleRouteParam(req.params.feedbackId);
   const body = req.body;
   const status = body?.status;
@@ -280,6 +282,9 @@ router.patch("/:feedbackId/status", requireAdmin, async (
     console.error("[Feedback] Failed to update status:", error);
     res.status(500).json({ error: "Unable to update feedback status." });
   }
-});
+};
+
+router.patch("/:feedbackId/status", requireAdmin, updateFeedbackStatus);
+feedbackV2Router.patch("/:feedbackId", requireAdmin, updateFeedbackStatus);
 
 export default router;

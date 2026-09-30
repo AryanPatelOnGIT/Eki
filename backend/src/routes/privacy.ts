@@ -8,8 +8,10 @@ type AuthenticatedRequest = Request & {
 };
 
 const router = Router();
+export const privacyDeletionRequestsRouter = Router();
 
-router.post("/deletion-request", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+const requestDeletion = async (req: AuthenticatedRequest, res: Response) => {
+  res.set("Cache-Control", "no-store");
   if (!req.user?.uid || req.user.role !== "passenger") {
     res.status(409).json({
       error: "Operator and administrator accounts must be offboarded by university IT.",
@@ -28,6 +30,18 @@ router.post("/deletion-request", requireAuth, async (req: AuthenticatedRequest, 
     console.error("[Privacy] Failed to queue deletion request:", error);
     res.status(500).json({ error: "Unable to queue the deletion request." });
   }
+};
+
+router.post("/deletion-request", requireAuth, requestDeletion);
+privacyDeletionRequestsRouter.post("/", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  if (req.body !== undefined &&
+      (!req.body || typeof req.body !== "object" || Array.isArray(req.body) ||
+       Object.keys(req.body).length !== 0)) {
+    res.status(400).json({ error: "Deletion requests do not accept a request body." });
+    return;
+  }
+  void requestDeletion(req, res);
 });
 
 export default router;

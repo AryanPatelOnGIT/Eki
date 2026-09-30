@@ -296,7 +296,9 @@ describe("production security configuration", () => {
     expect(settings).toContain("allow read: if isAuthenticated();");
     expect(locations).toContain("allow read, write: if isAdmin();");
     expect(planRoute).toContain('router.post("/", requireAuth');
+    expect(planRoute).toContain('segmentRoutes.get("/:routeId/segments", requireAuth');
     expect(routesList).toContain('router.get("/", requireAuth');
+    expect(routesList).toContain('routesCollectionRoutes.get("/", requireAuth');
   });
 
   it("keeps App Check enforcement out of Firestore rules", () => {

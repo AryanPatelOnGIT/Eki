@@ -89,7 +89,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import settingsRouter from "./settings";
+import settingsRouter, { settingsV2Router } from "./settings";
 import usersRouter from "./users";
 
 let server: Server;
@@ -100,6 +100,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api/users", usersRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api/v2/settings/global", settingsV2Router);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -221,9 +222,9 @@ describe("profile bootstrap route", () => {
 });
 
 describe("settings route", () => {
-  async function save(body: Record<string, unknown>) {
-    return fetch(`${baseUrl}/api/settings`, {
-      method: "PUT",
+  async function save(body: Record<string, unknown>, v2 = false) {
+    return fetch(`${baseUrl}${v2 ? "/api/v2/settings/global" : "/api/settings"}`, {
+      method: v2 ? "PATCH" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -246,5 +247,16 @@ describe("settings route", () => {
       updatedBy: "admin_1",
     });
     expect(harness.settings.updatedAt).toBeDefined();
+  });
+
+  it("uses the same partial validation and persistence for v2 PATCH", async () => {
+    expect((await save({ role: "admin" }, true)).status).toBe(400);
+    const response = await save({ announcementText: "Updated" }, true);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ saved: true });
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", updatedBy: "admin_1" });
+    const legacy = await save({ announcementActive: true });
+    expect(legacy.status).toBe(200);
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", announcementActive: true });
   });
 });
