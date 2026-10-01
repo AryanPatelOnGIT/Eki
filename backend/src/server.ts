@@ -30,6 +30,7 @@ import {
   getRouteProcessingStatus,
   startTelemetryRouteWatcher,
 } from "./services/telemetryRouteService";
+import { drainHttpOperations } from "./services/httpOperations";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
 import { createHealthState } from "./lib/healthState";
 import { createHttpMetricsMiddleware, registerOperationalMetrics } from "./lib/metrics";
@@ -41,17 +42,17 @@ import { startWorkerCoordinator } from "./services/workerCoordinator";
 import busRoutes from "./routes/buses";
 import analyticsRoutes from "./routes/analytics";
 import requestRoutes from "./routes/requests";
-import polylineRoutes from "./routes/polyline";
+import polylineRoutes, { routeSaveResourcesRouter, routeGeometryPreviewsRouter } from "./routes/polyline";
 import planRoutes, { segmentRoutes } from "./routes/plan";
 import routesListRoutes, { routesCollectionRoutes } from "./routes/routesList";
 import devicesRoutes, { devicesV2Router } from "./routes/devices";
 import placesRoutes from "./routes/places";
-import shiftsRoutes from "./routes/shifts";
-import sessionsRoutes from "./routes/sessions";
+import shiftsRoutes, { rideSessionsRouter } from "./routes/shifts";
+import sessionsRoutes, { rideSessionBoardingRouter } from "./routes/sessions";
 import feedbackRoutes, { feedbackV2Router } from "./routes/feedback";
 import usersRoutes from "./routes/users";
 import settingsRoutes, { settingsV2Router } from "./routes/settings";
-import fleetRoutes from "./routes/fleet";
+import fleetRoutes, { fleetReconciliationJobsRouter } from "./routes/fleet";
 import privacyRoutes, { privacyDeletionRequestsRouter } from "./routes/privacy";
 
 const PORT = process.env.PORT || 4000;
@@ -136,7 +137,7 @@ const CORS_ORIGINS = [...new Set([
   ...configuredCorsOrigins,
   ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
 ])];
-app.use(cors({ origin: CORS_ORIGINS, credentials: false }));
+app.use(cors({ origin: CORS_ORIGINS, credentials: false, exposedHeaders: ["Location", "Retry-After"] }));
 app.use((req, res, next) => {
   if (req.method === "TRACE" || req.method === "CONNECT") {
     res.status(405).json({ error: "Method not allowed." });
@@ -157,7 +158,10 @@ const routeComputeLimiter = rateLimit({
   // Reconciliation is a cheap Firestore read and may poll while a save lease
   // is active. It remains under the global limiter but must not consume the
   // scarce billable-routing budget.
-  skip: (req) => req.method === "GET" && /\/save-operations\//.test(req.originalUrl),
+  skip: (req) => req.method === "GET" && (
+    /\/save-operations\//.test(req.originalUrl) ||
+    req.originalUrl.startsWith("/api/v2/route-geometry-previews/")
+  ),
 });
 const routePlanLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -191,6 +195,13 @@ app.use("/api/buses", writeLimiter, busRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/requests", writeLimiter, requestRoutes);
 app.use("/api/routes", routeComputeLimiter, polylineRoutes);
+app.use(
+  "/api/v2/routes",
+  (req, res, next) => req.method === "PUT" ? routeComputeLimiter(req, res, next) : next(),
+  routeSaveResourcesRouter,
+);
+app.use("/api/v2/route-geometry-previews", routeComputeLimiter, routeGeometryPreviewsRouter);
+app.use("/api/v2/fleet-reconciliation-jobs", writeLimiter, fleetReconciliationJobsRouter);
 // Route planner — zero Google Maps API cost at runtime
 app.use("/api/plan", routePlanLimiter, planRoutes);
 app.use("/api/routes-list", routesListRoutes);
@@ -209,6 +220,7 @@ app.use("/api/v2/devices", writeLimiter, devicesV2Router);
 app.use("/api/places", placesRoutes);
 app.use("/api/shifts", writeLimiter, shiftsRoutes);
 app.use("/api/sessions", writeLimiter, sessionsRoutes);
+app.use("/api/v2/ride-sessions", writeLimiter, rideSessionsRouter, rideSessionBoardingRouter);
 app.use("/api/feedback", writeLimiter, feedbackRoutes);
 app.use("/api/v2/feedback", writeLimiter, feedbackV2Router);
 app.use("/api/users", writeLimiter, usersRoutes);
@@ -356,7 +368,7 @@ async function shutdown(signal: string) {
     httpServer.close((error) => error ? reject(error) : resolve());
     httpServer.closeIdleConnections();
   });
-  const stopBackgroundWorkers = stopWorkers?.() ?? Promise.resolve();
+  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations()]);
   const [serverResult, workerResult] = await Promise.allSettled([
     closeServer,
     stopBackgroundWorkers,

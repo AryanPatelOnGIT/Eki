@@ -253,7 +253,7 @@ Body: `{ "busId":"…", "routeId":"…", "driverId":"…", "delayMinutes":0 }`, 
 
 ### `POST /api/shifts/stop` — assigned operator or admin
 
-Body: `{ "busId":"…", "routeId":"…", "sessionId":"…" }`. Active rides cannot be manually stopped: 409 explains final-stop automatic completion. An already completed session returns `{stopped:true,alreadyCompleted:true}`. Eligible pending/armed legacy sessions can instead be interrupted, returning `{stopped:true,interrupted:true,alreadyInterrupted:boolean}`. Invalid ownership/resource returns 403/404.
+Body: `{ "busId":"…", "routeId":"…", "sessionId":"…" }`. Pending, armed and active sessions can be interrupted early; this never marks a ride completed. An already completed session returns `{stopped:true,alreadyCompleted:true}`. Interruptions return `{stopped:true,interrupted:true,alreadyInterrupted:boolean}`. Invalid ownership/resource returns 403/404.
 
 ### `DELETE /api/shifts/:sessionId/messages` — admin
 
@@ -383,3 +383,49 @@ Queues `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}`. Dri
 - 429 respects limiter headers/backoff. 500/503 may be retried with bounded exponential jitter.
 - Clients should wait for RTDB/Firestore push confirmation where UI truth depends on database state.
 - Never cache bearer/device responses or log authorization headers.
+
+
+## Versioned ride-session resources (#193)
+
+See [the lifecycle and migration contract](../docs/api/RIDE_SESSION_CONTRACT.md)
+for the state transition table and compatibility decisions. V2 responses are
+private (`Cache-Control: no-store`). Existing clients can continue using the
+legacy routes; Firebase SDK reads retain their existing authorization rules.
+
+| Method and path | Contract |
+| --- | --- |
+| `POST /api/v2/ride-sessions` | Same start body and assignment/hardware gates; requires UID-scoped `Idempotency-Key` (16-128 letters/digits/underscore/hyphen). Returns 201 new or 200 resumed and `Location`. Same key retains original session after terminal state; changed assignment 409, deleted session 410. Use a fresh key for a new ride. |
+| `GET /api/v2/ride-sessions/:sessionId` | Assigned operator, admin or manifest member; only sessionId, busId, routeId, status and direction. |
+| `PATCH /api/v2/ride-sessions/:sessionId` | Only `{delayMinutes:0..1440}`; derives assignment from session, checks path identity in the RTDB transaction and preserves durable mirror semantics. |
+| `POST /api/v2/ride-sessions/:sessionId/boarding-code` | Existing idempotent operator/admin issuance command, armed/active only. |
+| `PUT /api/v2/ride-sessions/:sessionId/passengers/me` | Existing join body; binds membership to token UID, rechecks boarding code, proximity, stop order and live state. |
+| `POST /api/v2/ride-sessions/:sessionId/messages` | Existing text/requestId body; same moderation, membership, durable rate limit and request ID replay. Reads remain Firestore listeners. |
+| `DELETE /api/v2/ride-sessions/:sessionId/messages` | Admin; messages deleted in batches of at most 400, including during live sessions under existing policy. |
+| `DELETE /api/v2/ride-sessions/:sessionId` | Admin; only terminal or absent sessions, recursive history/projection cleanup. Creation-key bindings survive deletion. |
+
+Normal completion remains telemetry-owned. `POST /api/shifts/stop` remains an
+early interruption command; this migration introduces no v2 stop/completion
+command. Browser clients can read the exposed `Location` response header.
+
+
+## Durable operation resources (#194)
+
+See `docs/api/OPERATION_RESOURCES.md` for states, retention, execution budgets,
+crash recovery and staging measurements. All new endpoints require admin auth
+and return `Cache-Control: no-store`.
+
+| Endpoint | Contract |
+| --- | --- |
+| `PUT /api/v2/routes/:routeId` | Existing saveId/versioned save body, geometry reuse, active-ride guards and durable outcome. 202 adds Location and Retry-After: 1; successful/replayed saves retain the legacy body. |
+| `GET /api/v2/routes/:routeId/save-operations/:saveId` | 200 state snapshot with operationId, routeId, status and result or redacted error; processing includes retryAfterMs. |
+| `POST /api/v2/route-geometry-previews` | Idempotency-Key (16-128 safe ASCII characters), `{waypoints:[{lat,lng},...]}`. 202 while processing, 200 terminal replay; changed payload 409. |
+| `GET /api/v2/route-geometry-previews/:operationId` | 200 state/result/error, 404 missing; never calls Google. |
+| `POST /api/v2/fleet-reconciliation-jobs` | Idempotency-Key and empty/absent body. 202 while processing; 200 terminal replay including partial per-driver outcomes. |
+| `GET /api/v2/fleet-reconciliation-jobs/:operationId` | 200 state/result/error, 404 missing; never modifies fleet state. |
+
+Preview/fleet submission exposes Location and Retry-After for polling. An
+unresolved operation past its budget reports outcomeUnknown and is never
+re-executed automatically. Retention ends the replay window (default 90 days).
+Fleet reconciliation is serialized across the new jobs, legacy endpoint and
+periodic worker; legacy `/api/fleet/reconcile` retains aggregate response bodies
+and returns 409 while another reconciliation owns the lock.
