@@ -22,9 +22,11 @@
     "verify:ui-contracts": "node scripts/verify-ui-contracts.mjs",
     "telemetry:load": "node scripts/benchmark-telemetry-ingestion.mjs",
     "telemetry:analyze": "node scripts/analyze-telemetry-trace.mjs",
+    "realtime:analyze": "node scripts/analyze-realtime-trace.mjs",
     "verify": "npm run lint && npm test && npm run build && npm audit --omit=dev --omit=optional"
   },
   "overrides": {
+    "@grpc/grpc-js": "1.14.5",
     "postcss": "^8.5.23",
     "nanoid": "^3.3.17",
     "js-yaml": "^4.3.2",

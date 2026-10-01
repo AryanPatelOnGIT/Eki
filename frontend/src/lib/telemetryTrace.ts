@@ -250,4 +250,45 @@ export function recordTelemetryRender(
   });
 }
 
+type RealtimeSource = "active_buses" | "messages";
+
+function recordRealtime(event: string, fields: TraceRecord): void {
+  if (!telemetryTraceEnabled()) return;
+  const current = ensureState();
+  appendRecord(current, { event, browserMonotonicAtMs: monotonicNow(), ...fields });
+}
+
+/** Logical application watch groups, not physical Firebase connections. */
+export function recordRealtimeWatch(source: RealtimeSource, attached: boolean): void {
+  recordRealtime("realtime_watch", { source, attached });
+}
+
+/** Application JSON size only: never store payload values or claim wire/billed bytes. */
+export function recordRealtimePayload(source: RealtimeSource, value: unknown, fromCache = false): void {
+  if (!telemetryTraceEnabled()) return;
+  let bytes: number | null = null;
+  try { bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { /* Missing estimate stays explicit. */ }
+  recordRealtime("realtime_payload", { source, bytes, fromCache });
+}
+
+export function recordRealtimeConnection(connected: boolean): void {
+  recordRealtime("realtime_connection", { connected });
+}
+
+export function beginMessageWriteTrace(sessionId: string): number | null {
+  if (!telemetryTraceEnabled()) return null;
+  const startedAtMs = monotonicNow();
+  recordRealtime("message_attempt", { sessionId, startedAtMs });
+  return startedAtMs;
+}
+
+export function recordMessageWriteTrace(sessionId: string, messageId: unknown, startedAtMs: number | null, status: number): void {
+  if (startedAtMs === null) return;
+  recordRealtime("message_write", { sessionId, messageId: readString(messageId), startedAtMs, status });
+}
+
+export function recordMessageListenerTrace(sessionId: string, messageId: string): void {
+  recordRealtime("message_listener", { sessionId, messageId });
+}
+
 if (telemetryTraceEnabled()) ensureState();
