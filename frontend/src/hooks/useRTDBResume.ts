@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { goOffline, goOnline, onValue, ref } from "firebase/database";
 import { rtdb } from "@/lib/firebaseDatabase";
+import { recordRealtimeConnection } from "@/lib/telemetryTrace";
 import { invalidateLiveBusCache } from "@/lib/liveBusStore";
 import {
   initialRTDBResumeLifecycle,
@@ -45,6 +46,7 @@ export function useRTDBResume(): RTDBResumeState {
     const connectedRef = ref(rtdb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snapshot) => {
       const connected = snapshot.val() === true;
+      recordRealtimeConnection(connected);
       if (!connected) invalidateLiveBusCache();
       dispatch({ type: "connection", connected });
     });

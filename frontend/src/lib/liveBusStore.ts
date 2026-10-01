@@ -8,6 +8,8 @@ import type { LiveBusDeliverySource } from "./liveBusDelivery";
 import { liveBusRetryDelayMs } from "./liveBusRetry";
 import {
   recordTelemetryListenerDelivery,
+  recordRealtimePayload,
+  recordRealtimeWatch,
   setTelemetryServerTimeOffset,
   telemetryTraceEnabled,
 } from "./telemetryTrace";
@@ -156,6 +158,7 @@ function scheduleExpiry(): void {
 }
 
 function detachListeners(): void {
+  if (unsubscribes.length > 0) recordRealtimeWatch("active_buses", false);
   unsubscribes.forEach((detach) => detach());
   unsubscribes = [];
 }
@@ -197,6 +200,7 @@ async function ensureListener(): Promise<void> {
     const receive = (type: "upsert" | "remove", snapshot: { key: string | null; val: () => unknown }) => {
       if (!snapshot.key) return;
       const rawValue = snapshot.val();
+      if (initialized) recordRealtimePayload("active_buses", rawValue);
       const normalizedType = type === "upsert" &&
         (typeof rawValue !== "object" || rawValue === null || Array.isArray(rawValue))
           ? "remove"
@@ -223,6 +227,7 @@ async function ensureListener(): Promise<void> {
       onChildChanged(busesRef, (snapshot) => receive("upsert", snapshot), failure),
       onChildRemoved(busesRef, (snapshot) => receive("remove", snapshot), failure),
     ];
+    recordRealtimeWatch("active_buses", true);
     if (telemetryTraceEnabled()) {
       unsubscribes.push(onValue(
         ref(rtdb, ".info/serverTimeOffset"),
@@ -232,6 +237,7 @@ async function ensureListener(): Promise<void> {
     unsubscribes.push(onValue(busesRef, (snapshot) => {
       retryAttempt = 0;
       const value = snapshot.val() as LiveBusSnapshot | null;
+      recordRealtimePayload("active_buses", value);
       cached = value ? pruneExpiredLiveBuses(value) : null;
       buffered.forEach((change) => {
         if (change.type === "upsert") {

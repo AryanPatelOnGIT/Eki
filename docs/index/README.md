@@ -33,6 +33,8 @@ Operational documents:
 - [Telemetry ingestion load test](../operations/TELEMETRY_INGESTION_LOAD_TEST.md)
 - [University deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
 - [Telemetry latency baseline](../operations/TELEMETRY_LATENCY_BASELINE.md)
+- [Realtime transport decision](../design/REALTIME_TRANSPORT_DECISION.md)
+- [Realtime transport measurements](../operations/REALTIME_TRANSPORT_MEASUREMENTS.md)
 - [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md)
 - [Storage architecture summary](../data/STORAGE_ARCHITECTURE.md)
 - [Security policy](../repository/SECURITY.md)

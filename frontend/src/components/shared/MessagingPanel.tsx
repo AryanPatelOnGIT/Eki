@@ -13,6 +13,7 @@ import {
 import { Send, X, MessageCircle, AlertCircle } from "lucide-react";
 import { auth } from "@/lib/firebaseAuth";
 import { waitForAuth } from "@/lib/authState";
+import { beginMessageWriteTrace, recordMessageWriteTrace, recordMessageListenerTrace, recordRealtimePayload, recordRealtimeWatch, telemetryTraceEnabled } from "@/lib/telemetryTrace";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 const MAX_MESSAGE_LENGTH = 500;
@@ -75,6 +76,7 @@ export default function MessagingPanel({
 
     let active = true;
     let unsubscribe: (() => void) | null = null;
+    const observed = new Set<string>();
     // Attach only after the first auth state resolves: attaching before auth
     // can hit a permanent permission-denied from a claims-less cached token;
     // onSnapshot does not retry permission-denied (see #47 F1).
@@ -86,8 +88,18 @@ export default function MessagingPanel({
           orderBy("timestamp", "asc"),
           limitToLast(200),
         ),
+        { includeMetadataChanges: telemetryTraceEnabled() },
         (snapshot) => {
             const msgs = snapshot.docs.map((message) => ({ id: message.id, ...message.data() })) as Message[];
+            recordRealtimePayload("messages", msgs, snapshot.metadata.fromCache);
+            if (telemetryTraceEnabled() && !snapshot.metadata.fromCache) {
+              for (const message of snapshot.docs) if (!message.metadata.hasPendingWrites && !observed.has(message.id)) {
+                observed.add(message.id);
+                recordMessageListenerTrace(sessionId, message.id);
+              }
+              const currentIds = new Set(snapshot.docs.map(message => message.id));
+              for (const id of observed) if (!currentIds.has(id)) observed.delete(id);
+            }
             setMessages(msgs);
             setMessagesSource(sessionId);
             setChatError(null);
@@ -111,10 +123,12 @@ export default function MessagingPanel({
           setChatError({ sessionId, message: "Could not load messages. Check your connection and try again." });
         }
       );
+      recordRealtimeWatch("messages", true);
     });
 
     return () => {
       active = false;
+      if (unsubscribe) recordRealtimeWatch("messages", false);
       unsubscribe?.();
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     };
@@ -180,6 +194,7 @@ export default function MessagingPanel({
         ? pendingMessageRef.current
         : { text, requestId: crypto.randomUUID() };
       pendingMessageRef.current = pending;
+      const traceStartedAt = beginMessageWriteTrace(sessionId);
       const response = await fetch(`${backendUrl}/api/sessions/${sessionId}/messages`, {
         method: "POST",
         headers: {
@@ -193,10 +208,12 @@ export default function MessagingPanel({
         signal: AbortSignal.timeout(10_000),
       });
       const result = await response.json().catch(() => ({})) as {
+        id?: string;
         error?: string;
         retryAfterMs?: number;
         moderated?: boolean;
       };
+      recordMessageWriteTrace(sessionId, result.id, traceStartedAt, response.status);
       if (!response.ok) {
         const error = new Error(result.error || "Unable to send message.") as Error & { status?: number };
         error.status = response.status;
