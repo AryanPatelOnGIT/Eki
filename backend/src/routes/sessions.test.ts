@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { FieldValue } from "firebase-admin/firestore";
@@ -121,7 +122,7 @@ beforeEach(() => {
 });
 
 async function join(body: Record<string, unknown>) {
-  return fetch(`${baseUrl}/api/sessions/session_1/join`, {
+  return contractFetch(`${baseUrl}/api/sessions/session_1/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -235,7 +236,7 @@ async function startShift(
   driverId?: string,
   extra: Record<string, unknown> = {},
 ) {
-  return fetch(`${baseUrl}/api/shifts/start`, {
+  return contractFetch(`${baseUrl}/api/shifts/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ busId: "bus_1", routeId: "route_1", driverId, ...extra }),
@@ -243,7 +244,7 @@ async function startShift(
 }
 
 async function stopShift() {
-  return fetch(`${baseUrl}/api/shifts/stop`, {
+  return contractFetch(`${baseUrl}/api/shifts/stop`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -384,7 +385,7 @@ describe("shift delay updates", () => {
   });
 
   async function setDelay(delayMinutes: number, driverId?: string) {
-    return fetch(`${baseUrl}/api/shifts/delay`, {
+    return contractFetch(`${baseUrl}/api/shifts/delay`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ busId: "bus_1", routeId: "route_1", delayMinutes, driverId }),

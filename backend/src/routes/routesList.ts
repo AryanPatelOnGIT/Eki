@@ -3,6 +3,7 @@ import { db } from "../lib/firebaseAdmin";
 import { requireAuth } from "../middleware/requireAuth";
 
 const router = Router();
+export const routesCollectionRoutes = Router();
 
 /**
  * GET /api/routes-list
@@ -12,7 +13,8 @@ const router = Router();
  *
  * RUNTIME COST: $0 (Firestore read, 1 req per page load)
  */
-router.get("/", requireAuth, async (_req: Request, res: Response) => {
+const listRoutes = async (_req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
   try {
     const snapshot = await db.collection("routes").limit(250).get();
     const routes = snapshot.docs.map((doc) => {
@@ -30,6 +32,9 @@ router.get("/", requireAuth, async (_req: Request, res: Response) => {
     console.error("❌ /api/routes-list error:", err);
     res.status(500).json({ error: "Failed to fetch routes" });
   }
-});
+};
+
+router.get("/", requireAuth, listRoutes);
+routesCollectionRoutes.get("/", requireAuth, listRoutes);
 
 export default router;

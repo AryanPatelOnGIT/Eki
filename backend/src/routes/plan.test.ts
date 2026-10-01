@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,11 @@ vi.mock("../middleware/requireAuth", () => ({
 vi.mock("../lib/firebaseAdmin", () => ({
   db: {
     collection: (collection: string) => ({
+      limit: (count: number) => ({
+        get: async () => ({
+          docs: [...harness.routes.entries()].slice(0, count).map(([id, data]) => ({ id, data: () => data })),
+        }),
+      }),
       doc: (id: string) => ({
         collection,
         id,
@@ -34,7 +40,8 @@ vi.mock("../lib/firebaseAdmin", () => ({
   },
 }));
 
-import planRouter from "./plan";
+import planRouter, { segmentRoutes } from "./plan";
+import routesListRouter, { routesCollectionRoutes } from "./routesList";
 
 let server: Server;
 let baseUrl = "";
@@ -47,6 +54,9 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/plan", planRouter);
+  app.use("/api/routes-list", routesListRouter);
+  app.use("/api/v2/routes", segmentRoutes);
+  app.use("/api/v2/routes", routesCollectionRoutes);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -70,7 +80,7 @@ async function plan(
   startStopId: string,
   endStopId: string,
 ): Promise<{ status: number; direction?: string; polyline?: string }> {
-  const response = await fetch(`${baseUrl}/api/plan`, {
+  const response = await contractFetch(`${baseUrl}/api/plan`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ routeId, startStopId, endStopId }),
@@ -142,5 +152,37 @@ describe("POST /api/plan directional geometry", () => {
 
     const forward = await plan("empty_route", "a", "z");
     expect(forward.status).toBe(422);
+  });
+
+  it("returns the same segment and direction through the bounded GET alias", async () => {
+    harness.routes.set("legacy_route_v2", {
+      id: "legacy_route_v2", name: "Route", color: "#000", stops: [A, Z],
+      waypoints: [], polyline: forwardPolyline,
+    });
+    const legacy = await plan("legacy_route_v2", "z", "a");
+    const v2 = await contractFetch(`${baseUrl}/api/v2/routes/legacy_route_v2/segments?from=z&to=a`);
+    expect(v2.status).toBe(legacy.status);
+    expect(v2.headers.get("cache-control")).toBe("no-store");
+    await expect(v2.json()).resolves.toMatchObject({
+      direction: legacy.direction, polyline: legacy.polyline,
+    });
+    expect((await contractFetch(`${baseUrl}/api/v2/routes/legacy_route_v2/segments?from=z&to=a&extra=1`)).status).toBe(400);
+    expect((await contractFetch(`${baseUrl}/api/v2/routes/legacy_route_v2/segments?from=z&from=a&to=a`)).status).toBe(400);
+  });
+});
+
+describe("GET /api/v2/routes projection", () => {
+  it("returns the legacy bounded metadata shape without geometry", async () => {
+    harness.routes.set("route_1", {
+      name: "Route 1", color: "#123456", stops: [A, Z], polyline: forwardPolyline,
+    });
+    const response = await contractFetch(`${baseUrl}/api/v2/routes`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const legacy = await contractFetch(`${baseUrl}/api/routes-list`);
+    expect(await legacy.json()).toEqual(await response.clone().json());
+    await expect(response.json()).resolves.toEqual({ routes: [{
+      id: "route_1", name: "Route 1", color: "#123456", stops: [A, Z],
+    }] });
   });
 });

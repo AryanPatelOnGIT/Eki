@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,7 +90,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import settingsRouter from "./settings";
+import settingsRouter, { settingsV2Router } from "./settings";
 import usersRouter from "./users";
 
 let server: Server;
@@ -100,6 +101,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api/users", usersRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api/v2/settings/global", settingsV2Router);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -130,7 +132,7 @@ beforeEach(() => {
 
 describe("profile bootstrap route", () => {
   it("creates a passenger profile only from verified token claims", async () => {
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, {
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -162,7 +164,7 @@ describe("profile bootstrap route", () => {
   it("preserves an existing privileged profile", async () => {
     harness.profile = { uid: "user_1", role: "admin", displayName: "Existing" };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "admin" });
@@ -174,7 +176,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -192,7 +194,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { role: "passenger", featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "passenger" });
@@ -209,7 +211,7 @@ describe("profile bootstrap route", () => {
       featureFlag: true,
     };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     expect(harness.setCustomClaimsCalls[0]?.claims).toEqual({
@@ -221,9 +223,9 @@ describe("profile bootstrap route", () => {
 });
 
 describe("settings route", () => {
-  async function save(body: Record<string, unknown>) {
-    return fetch(`${baseUrl}/api/settings`, {
-      method: "PUT",
+  async function save(body: Record<string, unknown>, v2 = false) {
+    return contractFetch(`${baseUrl}${v2 ? "/api/v2/settings/global" : "/api/settings"}`, {
+      method: v2 ? "PATCH" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -246,5 +248,16 @@ describe("settings route", () => {
       updatedBy: "admin_1",
     });
     expect(harness.settings.updatedAt).toBeDefined();
+  });
+
+  it("uses the same partial validation and persistence for v2 PATCH", async () => {
+    expect((await save({ role: "admin" }, true)).status).toBe(400);
+    const response = await save({ announcementText: "Updated" }, true);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ saved: true });
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", updatedBy: "admin_1" });
+    const legacy = await save({ announcementActive: true });
+    expect(legacy.status).toBe(200);
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", announcementActive: true });
   });
 });

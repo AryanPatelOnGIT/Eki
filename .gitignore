@@ -41,6 +41,7 @@ ui-debug.log
 serviceAccountKey.json
 service-account.json
 *.json
+!backend/openapi.json
 !package-lock.json
 !package.json
 !tsconfig.json

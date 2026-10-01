@@ -4,6 +4,7 @@ import { requireAdmin } from "../middleware/requireAdmin";
 import { db } from "../lib/firebaseAdmin";
 
 const router = Router();
+export const settingsV2Router = Router();
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -29,7 +30,8 @@ const STRING_LIMITS: Record<string, number> = {
  * `settings/global` from the client; the backend now validates the shape and
  * persists it (admin claim enforced by requireAdmin).
  */
-router.put("/", requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+const updateSettings = async (req: AuthenticatedRequest, res: Response) => {
+  res.set("Cache-Control", "no-store");
   try {
     const partial = req.body ?? {};
     if (typeof partial !== "object" || Array.isArray(partial) || partial === null) {
@@ -86,6 +88,10 @@ router.put("/", requireAdmin, async (req: AuthenticatedRequest, res: Response) =
     console.error("[Settings] Failed to save settings:", error);
     res.status(500).json({ error: "Unable to save settings." });
   }
-});
+};
+
+// The legacy PUT has always applied a partial update. Both paths share validation and persistence.
+router.put("/", requireAdmin, updateSettings);
+settingsV2Router.patch("/", requireAdmin, updateSettings);
 
 export default router;
