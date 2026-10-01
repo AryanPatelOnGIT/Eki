@@ -42,9 +42,11 @@ responses may also include `retryAfterMs` and `Retry-After`.
 
 1. Deploy the backend with both old and v2 routes. Run authorization, validation,
    rate-limit, and response-parity checks in staging before changing any caller.
-2. Move browser callers in a later frontend deployment. Existing settings,
-   feedback, and privacy callers still use the old URLs in this change. The
-   current frontend does not call the HTTP planning and routes-list endpoints.
+2. The frontend source now uses v2 for settings (`PATCH`), feedback status
+   (`PATCH`), and privacy deletion requests (`POST`). Deploy this frontend only
+   after the compatible backend passes step 1. Preparing these caller changes
+   does not establish that staging acceptance or frontend deployment is done.
+   The current frontend does not call the HTTP planning and routes-list endpoints.
 3. Keep legacy routes for at least 90 days after the frontend migration and
    until traffic shows 30 consecutive days without supported clients using them.
    Record the removal in a separate change with client and deployment evidence.

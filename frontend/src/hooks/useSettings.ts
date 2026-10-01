@@ -131,14 +131,14 @@ export function useSettings(): {
 
   const saveSettings = async (partial: Partial<GlobalSettings>) => {
     // Server-authoritative save: the admin panel no longer writes settings
-    // from the client; PUT /api/settings validates and persists them.
+    // from the client; PATCH /api/v2/settings/global validates partial updates.
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
     if (!backendUrl) throw new Error("Settings service is not configured.");
     await waitForAuth();
     const token = await auth.currentUser?.getIdToken();
     if (!token) throw new Error("Authentication required.");
-    const response = await fetch(`${backendUrl}/api/settings`, {
-      method: "PUT",
+    const response = await fetch(`${backendUrl}/api/v2/settings/global`, {
+      method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,

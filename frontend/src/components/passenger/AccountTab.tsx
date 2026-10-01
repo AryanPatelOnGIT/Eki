@@ -35,7 +35,7 @@ export default function AccountTab() {
     }
     try {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch(`${backendUrl}/api/privacy/deletion-request`, {
+      const response = await fetch(`${backendUrl}/api/v2/privacy-deletion-requests`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
