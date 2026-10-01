@@ -82,15 +82,17 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import sessionsRouter from "./sessions";
+import sessionsRouter, { rideSessionBoardingRouter } from "./sessions";
 
 let server: Server;
 let baseUrl = "";
+let v2 = false;
 
 beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/sessions", sessionsRouter);
+  app.use("/api/v2/ride-sessions", rideSessionBoardingRouter);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -121,14 +123,15 @@ beforeEach(() => {
 });
 
 async function send(text = "Hello", requestId = "request_12345678", extra = {}) {
-  return contractFetch(`${baseUrl}/api/sessions/session_1/messages`, {
+  return contractFetch(`${baseUrl}${v2 ? "/api/v2/ride-sessions" : "/api/sessions"}/session_1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, requestId, ...extra }),
   });
 }
 
-describe("session message route", () => {
+describe.each([false, true])("session message route v2=%s", mode => {
+  beforeEach(() => { v2 = mode; });
   it.each(["pre_departure", "in_service"])("allows member chat at zero speed while %s", async tripState => {
     Object.assign(harness.session, { tripState, speed: 0, motionState: "stopped" });
     expect((await send("Waiting at the stop")).status).toBe(201);
@@ -158,6 +161,16 @@ describe("session message route", () => {
     expect(retry.status).toBe(200);
     expect(harness.setKinds).toEqual([]);
     expect(harness.messages.size).toBe(1);
+  });
+
+  it("replays the same message after completion without another write", async () => {
+    const original = await (await send()).json();
+    harness.session.status = "completed";
+    harness.setKinds = [];
+    const retry = await send();
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(original);
+    expect(harness.setKinds).toEqual([]);
   });
 
   it("rejects request-id reuse with different content", async () => {

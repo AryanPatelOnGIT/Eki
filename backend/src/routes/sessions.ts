@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { requireAuth } from "../middleware/requireAuth";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -21,6 +21,7 @@ import {
 } from "../services/boardingPolicy";
 
 const router = Router();
+export const rideSessionBoardingRouter = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{16,128}$/;
 const BOARDING_STATUSES = new Set(["armed", "active"]);
@@ -109,10 +110,7 @@ function stableHash(value: string): string {
  * deliberately absent from RTDB and passenger-readable data. It supplies the
  * server-verifiable proof that browser geolocation alone cannot provide.
  */
-router.post("/:sessionId/boarding-code", requireAuth, async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
+async function issueBoardingCode(req: AuthenticatedRequest, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   const user = req.user;
   const isAdmin = user?.role === "admin" || user?.admin === true;
@@ -163,7 +161,7 @@ router.post("/:sessionId/boarding-code", requireAuth, async (
   } catch (error) {
     sendBoardingError(res, error, "Unable to issue the boarding code.");
   }
-});
+}
 
 /**
  * POST /api/sessions/:sessionId/join
@@ -173,10 +171,7 @@ router.post("/:sessionId/boarding-code", requireAuth, async (
  * attacker-controlled and therefore only defense in depth; the boarding code
  * is the server-verifiable authorization that closes public-session self-join.
  */
-router.post("/:sessionId/join", requireAuth, async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
+async function joinSession(req: AuthenticatedRequest, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   const user = req.user;
   if (sessionId === null || !SAFE_ID.test(sessionId)) {
@@ -337,7 +332,7 @@ router.post("/:sessionId/join", requireAuth, async (
   } catch (error) {
     sendBoardingError(res, error, "Unable to join the ride.");
   }
-});
+}
 
 /**
  * POST /api/sessions/:sessionId/messages
@@ -346,7 +341,7 @@ router.post("/:sessionId/join", requireAuth, async (
  * rate-limit docs; the backend enforces membership, the 60/hr and 10/minute
  * rolling limits, the 3s gap, and Unicode-aware moderation before persisting.
  */
-router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+async function sendMessage(req: AuthenticatedRequest, res: Response) {
   try {
     const sessionId = singleRouteParam(req.params.sessionId);
     const uid = req.user?.uid;
@@ -502,6 +497,17 @@ router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedReques
     console.error("[Sessions] Failed to send message:", error);
     res.status(500).json({ error: "Unable to send message." });
   }
-});
+}
+
+function privateResponse(_req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store");
+  next();
+}
+router.post("/:sessionId/boarding-code", requireAuth, issueBoardingCode);
+router.post("/:sessionId/join", requireAuth, joinSession);
+router.post("/:sessionId/messages", requireAuth, sendMessage);
+rideSessionBoardingRouter.post("/:sessionId/boarding-code", privateResponse, requireAuth, issueBoardingCode);
+rideSessionBoardingRouter.put("/:sessionId/passengers/me", privateResponse, requireAuth, joinSession);
+rideSessionBoardingRouter.post("/:sessionId/messages", privateResponse, requireAuth, sendMessage);
 
 export default router;

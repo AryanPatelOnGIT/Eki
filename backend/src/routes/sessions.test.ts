@@ -11,6 +11,8 @@ const harness = vi.hoisted(() => ({
   updates: [] as unknown[][],
   joinUid: "passenger_1",
   sessionDirection: "forward" as unknown,
+  sessionStatus: "active",
+  completeBeforeTransaction: false,
 }));
 
 vi.mock("../middleware/requireAuth", () => ({
@@ -30,7 +32,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     data: () => data,
   });
   const sessionData = () => ({
-    status: "active",
+    status: harness.sessionStatus,
     boardingCode: "ABCD2345",
     busId: "bus_1",
     routeId: "route_1",
@@ -60,6 +62,7 @@ vi.mock("../lib/firebaseAdmin", () => {
         }) => Promise<unknown>,
       ) => {
         if (harness.removePassengerBeforeTransaction) harness.sessionPassengers = {};
+        if (harness.completeBeforeTransaction) harness.sessionStatus = "completed";
         return callback({
           get: async () => snapshot(true, sessionData()),
           update: (...args: unknown[]) => harness.updates.push(args),
@@ -89,15 +92,17 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import sessionsRouter from "./sessions";
+import sessionsRouter, { rideSessionBoardingRouter } from "./sessions";
 
 let server: Server;
 let baseUrl = "";
+let v2 = false;
 
 beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/sessions", sessionsRouter);
+  app.use("/api/v2/ride-sessions", rideSessionBoardingRouter);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -119,11 +124,13 @@ beforeEach(() => {
   harness.updates = [];
   harness.joinUid = "passenger_1";
   harness.sessionDirection = "forward";
+  harness.sessionStatus = "active";
+  harness.completeBeforeTransaction = false;
 });
 
 async function join(body: Record<string, unknown>) {
-  return contractFetch(`${baseUrl}/api/sessions/session_1/join`, {
-    method: "POST",
+  return contractFetch(`${baseUrl}${v2 ? "/api/v2/ride-sessions/session_1/passengers/me" : "/api/sessions/session_1/join"}`, {
+    method: v2 ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       boardingCode: "ABCD2345",
@@ -134,7 +141,8 @@ async function join(body: Record<string, unknown>) {
   });
 }
 
-describe("session passenger join route", () => {
+describe.each([false, true])("session passenger join route v2=%s", mode => {
+  beforeEach(() => { v2 = mode; });
   it.each([undefined, null, "", "sideways", 123])(
     "keeps unresolved direction %p from creating forward boarding options",
     async (direction) => {
@@ -149,6 +157,12 @@ describe("session passenger join route", () => {
       expect(harness.updates).toHaveLength(0);
     },
   );
+
+  it("rejects completion between proximity validation and manifest commit", async () => {
+    harness.completeBeforeTransaction = true;
+    expect((await join({ lat: 23, lng: 72.5, accuracy: 20 })).status).toBe(409);
+    expect(harness.updates).toHaveLength(0);
+  });
 
   it("records membership in an indexable passengerIds array for privacy deletion", async () => {
     const response = await join({ lat: 23, lng: 72.5, accuracy: 20 });

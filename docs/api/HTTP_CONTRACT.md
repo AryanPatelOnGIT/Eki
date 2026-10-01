@@ -2,9 +2,9 @@
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
-human-oriented guide. The contract describes the implementation on the #197
-branch: 39 original method/path handlers plus six compatible v2 aliases, for
-45 operations. It does not claim those aliases are already deployed. Reconcile
+human-oriented guide. The contract includes #197 compatibility and #193
+ride-session resources: 39 original method/path handlers, six compatible v2 aliases and eight ride-session resources, for
+53 operations. It does not claim those aliases are already deployed. Reconcile
 against the target branch after #197 merges. Endpoint renaming alone does not
 improve latency; measure only changes in response shape, caching, or transport.
 
@@ -137,3 +137,6 @@ When adding a route, update the spec in the same change, preserve role and
 service semantics, provide a schema-backed route test for risky behavior, and
 update the human guide when client guidance changes. Avoid introducing a runtime
 validator into production just to satisfy this documentation issue.
+
+Ride-session lifecycle, creation-key retention and migration decisions are defined
+in [RIDE_SESSION_CONTRACT.md](RIDE_SESSION_CONTRACT.md).

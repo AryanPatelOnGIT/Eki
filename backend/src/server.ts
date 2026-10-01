@@ -46,8 +46,8 @@ import planRoutes, { segmentRoutes } from "./routes/plan";
 import routesListRoutes, { routesCollectionRoutes } from "./routes/routesList";
 import devicesRoutes, { devicesV2Router } from "./routes/devices";
 import placesRoutes from "./routes/places";
-import shiftsRoutes from "./routes/shifts";
-import sessionsRoutes from "./routes/sessions";
+import shiftsRoutes, { rideSessionsRouter } from "./routes/shifts";
+import sessionsRoutes, { rideSessionBoardingRouter } from "./routes/sessions";
 import feedbackRoutes, { feedbackV2Router } from "./routes/feedback";
 import usersRoutes from "./routes/users";
 import settingsRoutes, { settingsV2Router } from "./routes/settings";
@@ -136,7 +136,7 @@ const CORS_ORIGINS = [...new Set([
   ...configuredCorsOrigins,
   ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
 ])];
-app.use(cors({ origin: CORS_ORIGINS, credentials: false }));
+app.use(cors({ origin: CORS_ORIGINS, credentials: false, exposedHeaders: ["Location"] }));
 app.use((req, res, next) => {
   if (req.method === "TRACE" || req.method === "CONNECT") {
     res.status(405).json({ error: "Method not allowed." });
@@ -209,6 +209,8 @@ app.use("/api/v2/devices", writeLimiter, devicesV2Router);
 app.use("/api/places", placesRoutes);
 app.use("/api/shifts", writeLimiter, shiftsRoutes);
 app.use("/api/sessions", writeLimiter, sessionsRoutes);
+app.use("/api/v2/ride-sessions", writeLimiter, rideSessionsRouter);
+app.use("/api/v2/ride-sessions", writeLimiter, rideSessionBoardingRouter);
 app.use("/api/feedback", writeLimiter, feedbackRoutes);
 app.use("/api/v2/feedback", writeLimiter, feedbackV2Router);
 app.use("/api/users", writeLimiter, usersRoutes);

@@ -171,6 +171,10 @@ service cloud.firestore {
     match /_active_bus_locks/{busId} {
       allow read, write: if false;
     }
+    // Durable creation-key bindings survive session deletion.
+    match /_ride_session_creation_keys/{keyHash} {
+      allow read, write: if false;
+    }
     match /_worker_leases/{leaseId} {
       allow read, write: if false;
     }
