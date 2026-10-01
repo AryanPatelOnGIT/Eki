@@ -61,6 +61,14 @@ field measurements occurred. Hosting constraints remain coordinated with #122.
 
 ## Capture readiness on October 1
 
+Readiness was checked directly rather than inferred from the historical docs.
+A read-only query of `activeBuses` in the RTDB instance configured in the
+primary checkout returned zero records at `2026-10-01T09:47:21Z`. This is a
+point-in-time availability check, not a latency/usage benchmark or proof about
+other deployments. Both inspected frontend environment files configured the
+same test-backend origin; that configuration alone does not establish what a
+remote deployment is currently running.
+
 The inspected machine exposed no serial device, no local backend listener on
 the documented ports, and no signed-in Eki app tab. Its configured test-backend
 health URL returned HTTP 404. Searches of the project captures, Downloads,
