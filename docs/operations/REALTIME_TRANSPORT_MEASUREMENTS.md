@@ -5,6 +5,11 @@ Reuse the [telemetry latency baseline](TELEMETRY_LATENCY_BASELINE.md) for serial
 capture, backend health, clock correlation, and sample-to-marker analysis.
 This procedure adds chat, payload, watch, and disconnect evidence to that run.
 
+See the [evidence audit](../testing/REALTIME_TRANSPORT_EVIDENCE_AUDIT.md) for
+verified existing stationary captures and the remaining field evidence. Those
+HTTP timings do not substitute for the browser or same-window usage captures
+required below.
+
 ## Prepare and capture
 
 1. Record commit, deployed versions, Firebase project/region, browser/device,

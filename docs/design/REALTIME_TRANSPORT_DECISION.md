@@ -35,6 +35,15 @@ No comparable message delivery, physical connection count, or same-window
 Firebase usage capture is currently archived. These values remain unmeasured;
 synthetic tests below validate the measurement code only.
 
+The [October 1 evidence audit](../testing/REALTIME_TRANSPORT_EVIDENCE_AUDIT.md)
+recomputed the private bench captures: a longer stationary readiness run has
+594 parsed requests (593 accepted), with HTTP p50/p95/p99 of 450/1,065/1,271 ms;
+a separate recovery run has 208 requests (194 accepted), at 590/1,443/2,265 ms.
+Both record only stopped `device_http` events. The readiness log has one
+additional malformed trace line; the recovery window includes injected response
+faults. Neither supplies moving/weak-network browser, chat, or Firebase usage
+evidence. Separate windows are not pooled to satisfy the field sample gate.
+
 ## Preregistered experiment targets
 
 These are initial evaluation targets, not published service guarantees. Record
