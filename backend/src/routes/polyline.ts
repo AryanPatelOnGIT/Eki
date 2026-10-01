@@ -273,10 +273,14 @@ async function computePolylineChunk(waypoints: LatLng[]) {
 async function computeDirectionalPolylines(
   waypoints: LatLng[],
 ): Promise<DirectionalRouteGeometry> {
-  const [forward, reverse] = await Promise.all([
+  const outcomes = await Promise.allSettled([
     computePolyline(waypoints),
     computePolyline([...waypoints].reverse()),
   ]);
+  const [forward, reverse] = outcomes.map(outcome => {
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  });
   return {
     polyline: forward.polyline,
     forwardPolyline: forward.polyline,
