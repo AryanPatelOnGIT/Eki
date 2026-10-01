@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,11 +58,11 @@ beforeEach(() => {
 
 describe("privacy deletion request aliases", () => {
   it("queues the same UID-bound request from both paths", async () => {
-    const v2 = await fetch(`${baseUrl}/api/v2/privacy-deletion-requests`, { method: "POST" });
+    const v2 = await contractFetch(`${baseUrl}/api/v2/privacy-deletion-requests`, { method: "POST" });
     expect(v2.status).toBe(202);
     expect(v2.headers.get("cache-control")).toBe("no-store");
     await expect(v2.json()).resolves.toEqual({ accepted: true });
-    const legacy = await fetch(`${baseUrl}/api/privacy/deletion-request`, { method: "POST" });
+    const legacy = await contractFetch(`${baseUrl}/api/privacy/deletion-request`, { method: "POST" });
     expect(legacy.status).toBe(202);
     expect(harness.requests.size).toBe(1);
     expect(harness.requests.get("user_1")).toMatchObject({ status: "pending", attempts: 0 });
@@ -69,13 +70,13 @@ describe("privacy deletion request aliases", () => {
 
   it("rejects privileged accounts on both paths", async () => {
     harness.role = "admin";
-    expect((await fetch(`${baseUrl}/api/v2/privacy-deletion-requests`, { method: "POST" })).status).toBe(409);
-    expect((await fetch(`${baseUrl}/api/privacy/deletion-request`, { method: "POST" })).status).toBe(409);
+    expect((await contractFetch(`${baseUrl}/api/v2/privacy-deletion-requests`, { method: "POST" })).status).toBe(409);
+    expect((await contractFetch(`${baseUrl}/api/privacy/deletion-request`, { method: "POST" })).status).toBe(409);
     expect(harness.requests.size).toBe(0);
   });
 
   it("rejects client-supplied identity on the v2 path", async () => {
-    const response = await fetch(`${baseUrl}/api/v2/privacy-deletion-requests`, {
+    const response = await contractFetch(`${baseUrl}/api/v2/privacy-deletion-requests`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ uid: "another_user" }),
     });

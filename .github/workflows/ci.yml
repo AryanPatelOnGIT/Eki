@@ -43,6 +43,8 @@ jobs:
           key: build-cache-${{ runner.os }}-${{ hashFiles('package-lock.json', 'package.json', 'frontend/package.json', 'frontend/tsconfig.json', 'frontend/next.config.ts', 'frontend/src/**', 'frontend/public/**', 'backend/package.json', 'backend/tsconfig.json', 'backend/src/**', 'scripts/generate-sw.mjs') }}
           restore-keys: |
             build-cache-${{ runner.os }}-
+      - name: Verify OpenAPI schemas and registered route coverage
+        run: npm run verify:openapi
       - run: npm run lint
       - run: npm test
         env:

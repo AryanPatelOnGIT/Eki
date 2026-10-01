@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,7 +84,7 @@ beforeEach(() => {
 });
 
 function sendTelemetry() {
-  return fetch(`${baseUrl}/api/devices/device_1/telemetry`, {
+  return contractFetch(`${baseUrl}/api/devices/device_1/telemetry`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -94,7 +95,7 @@ function sendTelemetry() {
 }
 
 function sendDiagnostics() {
-  return fetch(`${baseUrl}/api/devices/device_1/diagnostics`, {
+  return contractFetch(`${baseUrl}/api/devices/device_1/diagnostics`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

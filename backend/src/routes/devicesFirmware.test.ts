@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -101,7 +102,7 @@ beforeEach(() => {
 
 describe("device disable aliases", () => {
   it("shares disable and credential invalidation behavior", async () => {
-    const v2 = await fetch(`${baseUrl}/api/v2/devices/device_1`, {
+    const v2 = await contractFetch(`${baseUrl}/api/v2/devices/device_1`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: false }),
     });
@@ -110,10 +111,10 @@ describe("device disable aliases", () => {
     expect(harness.disabled.get("device_1")).toMatchObject({ enabled: false });
     expect(harness.invalidated).toEqual(["device_1"]);
 
-    const legacy = await fetch(`${baseUrl}/api/devices/device_2/disable`, { method: "POST" });
+    const legacy = await contractFetch(`${baseUrl}/api/devices/device_2/disable`, { method: "POST" });
     expect(legacy.status).toBe(200);
     expect(harness.invalidated).toEqual(["device_1", "device_2"]);
-    const invalid = await fetch(`${baseUrl}/api/v2/devices/device_3`, {
+    const invalid = await contractFetch(`${baseUrl}/api/v2/devices/device_3`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: true }),
     });
@@ -123,7 +124,7 @@ describe("device disable aliases", () => {
 });
 
 function requestFirmware(sequence = "1", authorization = `Device ${"a".repeat(20)}`) {
-  return fetch(`${baseUrl}/api/devices/device_1/firmware?sequence=${sequence}`, {
+  return contractFetch(`${baseUrl}/api/devices/device_1/firmware?sequence=${sequence}`, {
     headers: { Authorization: authorization },
   });
 }
