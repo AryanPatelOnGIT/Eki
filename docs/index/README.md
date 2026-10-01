@@ -45,6 +45,7 @@ Testing and recovery reports:
 - [Stationary readiness report](../testing/STATIONARY_READINESS_REPORT.md)
 - [Non-moving recovery report](../testing/NON_MOVING_RECOVERY_REPORT.md)
 - [Live ESP32 latency result](../testing/LIVE_ESP32_LATENCY_RESULT.md)
+- [Realtime transport evidence audit](../testing/REALTIME_TRANSPORT_EVIDENCE_AUDIT.md)
 - [Postfix stationary trace](../testing/POSTFIX_STATIONARY_TRACE.md)
 - [Return route acceptance](../testing/RETURN_ROUTE_ACCEPTANCE.md)
 
