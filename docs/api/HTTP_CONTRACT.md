@@ -2,9 +2,9 @@
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
-human-oriented guide. The contract includes #197 compatibility and #193
-ride-session resources: 39 original method/path handlers, six compatible v2 aliases and eight ride-session resources, for
-53 operations. It does not claim those aliases are already deployed. Reconcile
+human-oriented guide. The contract includes #197 compatibility, #193
+ride-session resources and #194 operation resources: 39 original method/path handlers, six compatible v2 aliases, eight ride-session resources and six operation resources, for
+59 operations. It does not claim those aliases are already deployed. Reconcile
 against the target branch after #197 merges. Endpoint renaming alone does not
 improve latency; measure only changes in response shape, caching, or transport.
 
@@ -89,8 +89,8 @@ and App Check configuration for SDK reads apply independently of HTTP auth.
 | Firestore ride history and feedback queries | User/admin views constrained by query shape and rules | SDK listener reconnect; writes remain backend-authoritative |
 
 No application-owned SSE/WebSocket/GraphQL/webhook interface is introduced.
-Transport decisions and measurements remain #195; ride-session migrations
-remain #193 and durable operation contract changes remain #194/#172.
+Transport decisions and measurements remain #195. Ride-session compatibility
+is specified by #193; operation contracts extend #172 under #194.
 
 ## Compatibility and rollout
 
@@ -140,3 +140,6 @@ validator into production just to satisfy this documentation issue.
 
 Ride-session lifecycle, creation-key retention and migration decisions are defined
 in [RIDE_SESSION_CONTRACT.md](RIDE_SESSION_CONTRACT.md).
+
+Operation states, budgets, retention and crash recovery are documented in
+[OPERATION_RESOURCES.md](OPERATION_RESOURCES.md).

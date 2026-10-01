@@ -1671,6 +1671,33 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Another reconciliation is active or awaits recovery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Retry interval"
+              }
+            }
           }
         },
         "x-auth-class": "admin",
@@ -2270,7 +2297,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Geometry"
+                  "$ref": "#/components/schemas/ComputedPolyline"
                 }
               }
             }
@@ -2589,6 +2616,14 @@
                   "$ref": "#/components/schemas/RouteSaved"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "202": {
@@ -2597,6 +2632,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RouteProcessing"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Polling interval in seconds",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
                 }
               }
             }
@@ -2723,7 +2773,7 @@
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap. Route mount: 10 requests/IP/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
-        "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
+        "x-cache-policy": "Cache-Control: no-store",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Stable saveId binds the normalized route ID, mode, expectedVersion, metadata and ordered stops. Same key/payload replays stored result or failure. Changed payload conflicts. Unknown outcome/202: GET the same save-operation resource, then retry the exact same payload/key if appropriate."
@@ -2912,6 +2962,14 @@
                   "$ref": "#/components/schemas/RouteSaved"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "202": {
@@ -2920,6 +2978,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RouteProcessing"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Polling interval in seconds",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
                 }
               }
             }
@@ -3046,7 +3119,7 @@
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap.",
-        "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
+        "x-cache-policy": "Cache-Control: no-store",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Read-only reconciliation. Keep the original saveId; poll using retryAfterMs, not a fresh save key."
@@ -7409,6 +7482,997 @@
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Upserts only the verified UID manifest entry; never accepts body UID or userName as identity. Retries recheck lifecycle and boarding authorization."
       }
+    },
+    "/api/v2/routes/{routeId}": {
+      "put": {
+        "operationId": "saveRouteV2",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Save a versioned route with durable operation reconciliation",
+        "description": "create requires expectedVersion=0; edit requires current configVersion. Unique ordered stop IDs and active-ride checks rechecked at commit. Metadata-only edits reuse valid geometry; configVersion advances every edit and geometryVersion only for geometry changes. 202 is processing, never confirmed success.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "routeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteSaveInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteSaved"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted or still processing; consult operation-specific semantics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteProcessing"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "Operation status resource",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Polling interval in seconds",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid identifiers, payload, query, or JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Lifecycle, version, assignment, or idempotency conflict; reconcile before retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failure; details are redacted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream route/places service failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable, busy authentication verifier, or missing safe server configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Upstream deadline exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap. Route mount: 10 requests/IP/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
+        "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
+        "x-idempotency": "Stable saveId binds the normalized route ID, mode, expectedVersion, metadata and ordered stops. Same key/payload replays stored result or failure. Changed payload conflicts. Unknown outcome/202: GET the same save-operation resource, then retry the exact same payload/key if appropriate.",
+        "x-compatibility-alias-of": "PUT /api/routes/{routeId}"
+      }
+    },
+    "/api/v2/routes/{routeId}/save-operations/{saveId}": {
+      "get": {
+        "operationId": "getRouteSaveOperationV2",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Reconcile a route save outcome",
+        "description": "Returns saved result, 202 with retryAfterMs while processing, or recorded structured failure with its HTTP status. 404 means no matching route/save operation. Current handler does not emit Location or Retry-After for 202.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "routeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          },
+          {
+            "name": "saveId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Normalized durable operation state and redacted outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteSaveOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid identifiers, payload, query, or JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failure; details are redacted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable, busy authentication verifier, or missing safe server configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
+        "x-idempotency": "Read-only reconciliation. Keep the original saveId; poll using retryAfterMs, not a fresh save key."
+      }
+    },
+    "/api/v2/route-geometry-previews": {
+      "post": {
+        "operationId": "submitGeometryPreviewOperation",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Compute bounded directional geometry preview",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeometryPreviewOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              },
+              "Location": {
+                "description": "Status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeometryPreviewOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              },
+              "Location": {
+                "description": "Status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap. Route mount: 10 requests/IP/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "10-second upstream abort per parallel preview chunk (maximum 4 calls).",
+        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "waypoints": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "lng": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        }
+                      },
+                      "required": [
+                        "lat",
+                        "lng"
+                      ],
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "required": [
+                  "waypoints"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/route-geometry-previews/{operationId}": {
+      "get": {
+        "operationId": "getGeometryPreviewOperation",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Compute bounded directional geometry preview",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeometryPreviewOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global identity-aware limit; geometry preview status skips billable computation limiter.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "10-second upstream abort per parallel preview chunk (maximum 4 calls).",
+        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs": {
+      "post": {
+        "operationId": "submitFleetReconciliationOperation",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Rebuild driver claims and assignment mirrors",
+        "description": "Rebuilds Firebase Auth claims and RTDB mirrors from Firestore; 207 denotes per-record failures. Audit start must persist before mutation (503 if unavailable). Audit fingerprint is not an idempotency replay guarantee.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetReconciliationOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              },
+              "Location": {
+                "description": "Status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetReconciliationOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              },
+              "Location": {
+                "description": "Status resource",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap. Mount-level writeLimiter: 30 requests/identity/minute, divided by RATE_LIMIT_SHARD_FACTOR; this also covers GETs on these mounts.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
+        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs/{operationId}": {
+      "get": {
+        "operationId": "getFleetReconciliationOperation",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Rebuild driver claims and assignment mirrors",
+        "description": "Rebuilds Firebase Auth claims and RTDB mirrors from Firestore; 207 denotes per-record failures. Audit start must persist before mutation (503 if unavailable). Audit fingerprint is not an idempotency replay guarantee.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetReconciliationOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Global 200 requests/verified UID or normalized IP/minute, divided by RATE_LIMIT_SHARD_FACTOR. The edge WAF/LB is the global fleet cap. Mount-level writeLimiter: 30 requests/identity/minute, divided by RATE_LIMIT_SHARD_FACTOR; this also covers GETs on these mounts.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
+        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -9592,6 +10656,307 @@
           "busId",
           "routeId",
           "receivedAt"
+        ],
+        "additionalProperties": false
+      },
+      "OperationError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "outcomeUnknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "FleetReconciliationResult": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 500
+          },
+          "repaired": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 500
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 500
+          },
+          "records": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "properties": {
+                "driverId": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "repaired",
+                    "unchanged",
+                    "failed"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "driverId",
+                "outcome"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "checked",
+          "repaired",
+          "failed",
+          "records"
+        ],
+        "additionalProperties": false
+      },
+      "GeometryPreviewOperation": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/ComputedPolyline"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OperationError"
+          },
+          "retryAfterMs": {
+            "type": "integer",
+            "const": 1000
+          },
+          "outcomeUnknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operationId",
+          "status"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "processing"
+              }
+            },
+            "required": [
+              "retryAfterMs"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      },
+      "FleetReconciliationOperation": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/FleetReconciliationResult"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OperationError"
+          },
+          "retryAfterMs": {
+            "type": "integer",
+            "const": 1000
+          },
+          "outcomeUnknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operationId",
+          "status"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "processing"
+              }
+            },
+            "required": [
+              "retryAfterMs"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      },
+      "RouteSaveOperation": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/RouteSaved"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OperationError"
+          },
+          "retryAfterMs": {
+            "type": "integer",
+            "const": 1000
+          },
+          "outcomeUnknown": {
+            "type": "boolean"
+          },
+          "routeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "status",
+          "routeId"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "status": {
+                "const": "processing"
+              }
+            },
+            "required": [
+              "retryAfterMs"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          },
+          {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      },
+      "ComputedPolyline": {
+        "type": "object",
+        "properties": {
+          "polyline": {
+            "type": "string"
+          },
+          "distanceMeters": {
+            "type": "number"
+          },
+          "duration": {
+            "type": "string"
+          },
+          "polylineQuality": {
+            "const": "HIGH_QUALITY",
+            "type": "string"
+          }
+        },
+        "required": [
+          "polyline",
+          "distanceMeters",
+          "duration",
+          "polylineQuality"
         ],
         "additionalProperties": false
       }

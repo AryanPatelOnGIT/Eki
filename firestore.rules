@@ -184,6 +184,15 @@ service cloud.firestore {
     match /_fleet_operations/{operationId} {
       allow read, write: if false;
     }
+    match /_route_geometry_previews/{operationId} {
+      allow read, write: if false;
+    }
+    match /_fleet_reconciliation_jobs/{operationId} {
+      allow read, write: if false;
+    }
+    match /_fleet_reconciliation_locks/{lockId} {
+      allow read, write: if false;
+    }
     match /_route_save_operations/{operationId} {
       allow read, write: if false;
     }

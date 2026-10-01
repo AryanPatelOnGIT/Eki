@@ -1,6 +1,6 @@
 import { computeOrderedRouteGeometry, MAX_ROUTE_STOPS } from "../lib/orderedRouteGeometry";
 import { randomBytes } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
 import { requireAdmin } from "../middleware/requireAdmin";
@@ -14,10 +14,13 @@ import {
   routeGeometryVersion,
   routeSavePayloadHash,
 } from "../lib/routeSaveContract";
+import { OPERATION_ID, OperationConflict, OperationsUnavailable, readOperation, submitOperation } from "../services/httpOperations";
 import { invalidateTelemetryRoute } from "../services/telemetryRouteService";
 import { invalidatePlanRoute } from "./plan";
 
 const router = Router();
+export const routeSaveResourcesRouter = Router();
+export const routeGeometryPreviewsRouter = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_COLOR = /^#[0-9a-fA-F]{6}$/;
 const STORED_POLYLINE_QUALITY = "HIGH_QUALITY";
@@ -469,6 +472,7 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
 router.get(
   "/:routeId/save-operations/:saveId",
   requireAdmin,
+  saveResourceHeaders,
   async (req: Request, res: Response) => {
     const routeId = singleRouteParam(req.params.routeId);
     const saveId = singleRouteParam(req.params.saveId);
@@ -519,7 +523,7 @@ router.get(
   },
 );
 
-router.put("/:routeId", requireAdmin, async (req: Request, res: Response) => {
+async function saveRoute(req: Request, res: Response) {
   const routeId = singleRouteParam(req.params.routeId);
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
   const color = typeof req.body?.color === "string" ? req.body.color : "";
@@ -792,7 +796,8 @@ router.put("/:routeId", requireAdmin, async (req: Request, res: Response) => {
     if (claimed) await recordFailure(failure);
     sendRouteError(res, failure);
   }
-});
+}
+
 
 router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => {
   const routeId = singleRouteParam(req.params.routeId);
@@ -860,6 +865,92 @@ router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => 
       ),
     );
   }
+});
+
+function privateResponse(_req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store"); next();
+}
+
+function saveResourceHeaders(req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store");
+  const json = res.json.bind(res);
+  res.json = body => {
+    const routeId = singleRouteParam(req.params.routeId);
+    const saveId = singleRouteParam(req.params.saveId) ?? req.body?.saveId;
+    if (routeId && SAFE_ID.test(routeId) && typeof saveId === "string" && SAFE_OPERATION_ID.test(saveId) && res.statusCode < 300) {
+      const prefix = req.baseUrl.startsWith("/api/v2") ? "/api/v2/routes" : "/api/routes";
+      res.location(`${prefix}/${routeId}/save-operations/${saveId}`);
+      if (res.statusCode === 202) res.set("Retry-After", "1");
+    }
+    return json(body);
+  };
+  next();
+}
+
+async function readSaveResource(req: Request, res: Response) {
+  const routeId = singleRouteParam(req.params.routeId);
+  const saveId = singleRouteParam(req.params.saveId);
+  if (!routeId || !saveId || !SAFE_ID.test(routeId) || !SAFE_OPERATION_ID.test(saveId)) {
+    sendRouteError(res, routeError(400, "INVALID_SAVE_OPERATION", "validation", "Invalid save operation.")); return;
+  }
+  try {
+    const snapshot = await db.collection("_route_save_operations").doc(saveId).get();
+    const data = snapshot.data();
+    if (!snapshot.exists || data?.routeId !== routeId) {
+      sendRouteError(res, routeError(404, "SAVE_OPERATION_NOT_FOUND", "validation", "Save operation not found.")); return;
+    }
+    const status = data.status === "succeeded" || data.status === "failed" ? data.status : "processing";
+    if (status === "processing") res.set("Retry-After", "1");
+    res.json({ operationId: saveId, routeId, status,
+      ...(status === "succeeded" ? { result: data.result } : {}),
+      ...(status === "failed" ? { error: { code: data.error?.code ?? "ROUTE_SAVE_FAILED",
+        error: "The route save failed; reload the route before submitting a new save.",
+        ...(data.error?.outcomeUnknown ? { outcomeUnknown: true } : {}) } } : {}),
+      ...(status === "processing" ? { retryAfterMs: 1_000, ...(Number(data.leaseUntil) <= Date.now() ? { outcomeUnknown: true } : {}) } : {}) });
+  } catch (error) {
+    console.error("[Routes] Failed to read operation:", error);
+    sendRouteError(res, routeError(503, "ROUTE_RECONCILIATION_FAILED", "persistence", "The save outcome could not be checked.", { outcomeUnknown: true }));
+  }
+}
+
+routeSaveResourcesRouter.put("/:routeId", privateResponse, requireAdmin, saveResourceHeaders, saveRoute);
+routeSaveResourcesRouter.get("/:routeId/save-operations/:saveId", privateResponse, requireAdmin, readSaveResource);
+router.put("/:routeId", requireAdmin, saveResourceHeaders, saveRoute);
+
+routeGeometryPreviewsRouter.post("/", privateResponse, requireAdmin, async (req: Request, res: Response) => {
+  const id = req.get("Idempotency-Key");
+  const waypoints = validateWaypoints(req.body?.waypoints);
+  if (!id || !OPERATION_ID.test(id) || !waypoints || Object.keys(req.body).some(key => key !== "waypoints")) {
+    res.status(400).json({ error: "A valid Idempotency-Key and 2-100 waypoints are required.", code: "INVALID_PREVIEW" }); return;
+  }
+  try {
+    const snapshot = await submitOperation({ collection: "_route_geometry_previews", id,
+      adminUid: (req as Request & { user?: { uid?: string } }).user?.uid,
+      payload: { waypoints }, budgetMs: 10_000, execute: async () => {
+        try { return { result: await computePolyline(waypoints) }; }
+        catch (error) {
+          if (error instanceof RouteApiError) return { error: { code: error.payload.code, error: error.payload.error } };
+          throw error;
+        }
+      } });
+    res.location(`/api/v2/route-geometry-previews/${id}`);
+    if (snapshot.status === "processing") res.set("Retry-After", "1");
+    res.status(snapshot.status === "processing" ? 202 : 200).json(snapshot);
+  } catch (error) {
+    const conflict = error instanceof OperationConflict;
+    res.status(conflict ? 409 : 503).json({ error: conflict ? "Operation key belongs to different waypoints." : "Preview status is unavailable; retry with the same key.",
+      code: conflict ? "IDEMPOTENCY_KEY_REUSED" : error instanceof OperationsUnavailable ? "SERVER_DRAINING" : "OPERATION_UNAVAILABLE" });
+  }
+});
+routeGeometryPreviewsRouter.get("/:operationId", privateResponse, requireAdmin, async (req: Request, res: Response) => {
+  const id = singleRouteParam(req.params.operationId);
+  if (!id || !OPERATION_ID.test(id)) { res.status(400).json({ error: "Invalid operation ID.", code: "INVALID_OPERATION_ID" }); return; }
+  try {
+    const snapshot = await readOperation("_route_geometry_previews", id);
+    if (!snapshot) { res.status(404).json({ error: "Preview not found.", code: "OPERATION_NOT_FOUND" }); return; }
+    if (snapshot.status === "processing") res.set("Retry-After", "1");
+    res.json(snapshot);
+  } catch { res.status(503).json({ error: "Preview status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
 });
 
 export default router;

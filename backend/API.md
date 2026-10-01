@@ -406,3 +406,26 @@ legacy routes; Firebase SDK reads retain their existing authorization rules.
 Normal completion remains telemetry-owned. `POST /api/shifts/stop` remains an
 early interruption command; this migration introduces no v2 stop/completion
 command. Browser clients can read the exposed `Location` response header.
+
+
+## Durable operation resources (#194)
+
+See `docs/api/OPERATION_RESOURCES.md` for states, retention, execution budgets,
+crash recovery and staging measurements. All new endpoints require admin auth
+and return `Cache-Control: no-store`.
+
+| Endpoint | Contract |
+| --- | --- |
+| `PUT /api/v2/routes/:routeId` | Existing saveId/versioned save body, geometry reuse, active-ride guards and durable outcome. 202 adds Location and Retry-After: 1; successful/replayed saves retain the legacy body. |
+| `GET /api/v2/routes/:routeId/save-operations/:saveId` | 200 state snapshot with operationId, routeId, status and result or redacted error; processing includes retryAfterMs. |
+| `POST /api/v2/route-geometry-previews` | Idempotency-Key (16-128 safe ASCII characters), `{waypoints:[{lat,lng},...]}`. 202 while processing, 200 terminal replay; changed payload 409. |
+| `GET /api/v2/route-geometry-previews/:operationId` | 200 state/result/error, 404 missing; never calls Google. |
+| `POST /api/v2/fleet-reconciliation-jobs` | Idempotency-Key and empty/absent body. 202 while processing; 200 terminal replay including partial per-driver outcomes. |
+| `GET /api/v2/fleet-reconciliation-jobs/:operationId` | 200 state/result/error, 404 missing; never modifies fleet state. |
+
+Preview/fleet submission exposes Location and Retry-After for polling. An
+unresolved operation past its budget reports outcomeUnknown and is never
+re-executed automatically. Retention ends the replay window (default 90 days).
+Fleet reconciliation is serialized across the new jobs, legacy endpoint and
+periodic worker; legacy `/api/fleet/reconcile` retains aggregate response bodies
+and returns 409 while another reconciliation owns the lock.
