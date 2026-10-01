@@ -379,7 +379,10 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
   }
 });
 
-router.post("/:deviceId/disable", requireAdmin, async (req: Request, res: Response) => {
+export const devicesV2Router = Router();
+
+const disableDevice = async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
   const deviceId = singleRouteParam(req.params.deviceId);
   if (deviceId === null || !SAFE_ID.test(deviceId)) {
     res.status(400).json({ error: "Invalid device ID." });
@@ -396,6 +399,18 @@ router.post("/:deviceId/disable", requireAdmin, async (req: Request, res: Respon
     console.error("[Devices] Disable failed:", error);
     res.status(500).json({ error: "Unable to disable device." });
   }
+};
+
+router.post("/:deviceId/disable", requireAdmin, disableDevice);
+devicesV2Router.patch("/:deviceId", requireAdmin, (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const body = req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length !== 1 || body.enabled !== false) {
+    res.status(400).json({ error: "Only enabled:false is supported for device PATCH." });
+    return;
+  }
+  void disableDevice(req, res);
 });
 
 export default router;

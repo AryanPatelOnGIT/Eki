@@ -3,6 +3,7 @@ import { db } from "../lib/firebaseAdmin";
 import { requireAuth } from "../middleware/requireAuth";
 
 const router = Router();
+export const segmentRoutes = Router();
 
 const isSafeId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -86,13 +87,16 @@ async function getCachedRoute(routeId: string) {
  * RUNTIME COST: $0 — reads Firestore cache + pure math.
  * No Google Directions API calls are made.
  */
-router.post("/", requireAuth, async (req: Request, res: Response) => {
-  const { routeId, startStopId, endStopId, viaStopId } = req.body as {
-    routeId?: string;
-    startStopId?: string;
-    endStopId?: string;
-    viaStopId?: string;
-  };
+type PlanInput = {
+  routeId?: string;
+  startStopId?: string;
+  endStopId?: string;
+  viaStopId?: string;
+};
+
+const planSegment = async (res: Response, input: PlanInput) => {
+  res.set("Cache-Control", "no-store");
+  const { routeId, startStopId, endStopId, viaStopId } = input;
 
   if (!isSafeId(routeId) || !isSafeId(startStopId) || !isSafeId(endStopId) ||
       (viaStopId !== undefined && !isSafeId(viaStopId))) {
@@ -186,6 +190,28 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
     console.error("❌ /api/plan error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
+};
+
+router.post("/", requireAuth, (req: Request, res: Response) => {
+  void planSegment(res, req.body ?? {});
+});
+
+segmentRoutes.get("/:routeId/segments", requireAuth, (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const allowed = new Set(["from", "to", "via"]);
+  const { from, to, via } = req.query;
+  if (Object.keys(req.query).some((key) => !allowed.has(key)) ||
+      typeof from !== "string" || typeof to !== "string" ||
+      (via !== undefined && typeof via !== "string")) {
+    res.status(400).json({ error: "Invalid route segment query parameter." });
+    return;
+  }
+  void planSegment(res, {
+    routeId: typeof req.params.routeId === "string" ? req.params.routeId : undefined,
+    startStopId: from,
+    endStopId: to,
+    viaStopId: via,
+  });
 });
 
 export default router;

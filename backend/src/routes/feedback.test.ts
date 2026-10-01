@@ -78,7 +78,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import feedbackRouter from "./feedback";
+import feedbackRouter, { feedbackV2Router } from "./feedback";
 
 let server: Server;
 let baseUrl = "";
@@ -87,6 +87,7 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/feedback", feedbackRouter);
+  app.use("/api/v2/feedback", feedbackV2Router);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -215,5 +216,24 @@ describe("feedback routes", () => {
       body: JSON.stringify({ status: "resolved", comment: "overwrite" }),
     });
     expect(extraField.status).toBe(400);
+  });
+
+  it("applies the same status-only update through the v2 resource", async () => {
+    harness.feedbacks.set("feedback_2", { status: "new", comment: "Keep me" });
+    const response = await fetch(`${baseUrl}/api/v2/feedback/feedback_2`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    expect(response.status).toBe(200);
+    expect(harness.feedbacks.get("feedback_2")).toMatchObject({
+      status: "resolved", comment: "Keep me", reviewedBy: "admin_1",
+    });
+    const invalid = await fetch(`${baseUrl}/api/v2/feedback/feedback_2`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "new", comment: "overwrite" }),
+    });
+    expect(invalid.status).toBe(400);
   });
 });
