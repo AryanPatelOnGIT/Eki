@@ -260,7 +260,7 @@ describe("production security configuration", () => {
     expect(messagingPanel).toContain("limitToLast(200)");
     expect(messagingPanel).toContain("requestId: pending.requestId");
     expect(messagingPanel).not.toContain("currentUserName");
-    expect(feedbackPage).toContain("/api/feedback/${encodeURIComponent(id)}/status");
+    expect(feedbackPage).toContain("/api/v2/feedback/${encodeURIComponent(id)}");
     expect(feedbackPage).toContain("apiRequest(");
     expect(feedbackPage).not.toContain("updateDoc(");
   });
@@ -509,7 +509,7 @@ describe("production security configuration", () => {
     expect(authHook).toContain("claimsUpdated === true");
     expect(authHook).toContain("firebaseUser.getIdToken(true)");
     expect(authHook).not.toContain("setDoc(userDocRef");
-    expect(settingsHook).toContain("/api/settings");
+    expect(settingsHook).toContain("/api/v2/settings/global");
     expect(settingsHook).not.toContain('setDoc(doc(db, "settings"');
   });
 

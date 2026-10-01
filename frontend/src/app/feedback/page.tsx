@@ -292,7 +292,7 @@ export default function FeedbackPage({ embedded = false }: { embedded?: boolean 
     try {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error("Feedback admin service is unavailable.");
-      await apiRequest(`/api/feedback/${encodeURIComponent(id)}/status`, {
+      await apiRequest(`/api/v2/feedback/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
