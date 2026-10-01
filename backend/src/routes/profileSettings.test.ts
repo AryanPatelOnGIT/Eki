@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -131,7 +132,7 @@ beforeEach(() => {
 
 describe("profile bootstrap route", () => {
   it("creates a passenger profile only from verified token claims", async () => {
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, {
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -163,7 +164,7 @@ describe("profile bootstrap route", () => {
   it("preserves an existing privileged profile", async () => {
     harness.profile = { uid: "user_1", role: "admin", displayName: "Existing" };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "admin" });
@@ -175,7 +176,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -193,7 +194,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { role: "passenger", featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "passenger" });
@@ -210,7 +211,7 @@ describe("profile bootstrap route", () => {
       featureFlag: true,
     };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     expect(harness.setCustomClaimsCalls[0]?.claims).toEqual({
@@ -223,7 +224,7 @@ describe("profile bootstrap route", () => {
 
 describe("settings route", () => {
   async function save(body: Record<string, unknown>, v2 = false) {
-    return fetch(`${baseUrl}${v2 ? "/api/v2/settings/global" : "/api/settings"}`, {
+    return contractFetch(`${baseUrl}${v2 ? "/api/v2/settings/global" : "/api/settings"}`, {
       method: v2 ? "PATCH" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

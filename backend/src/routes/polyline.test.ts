@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,7 +134,7 @@ import polylineRouter from "./polyline";
 
 let server: Server;
 let baseUrl = "";
-const networkFetch = globalThis.fetch;
+const networkFetch = contractFetch;
 const encodedPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@";
 const stops = [
   { id: "a", name: "A", shortName: "A", lat: 23, lng: 72 },

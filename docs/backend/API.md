@@ -1,6 +1,11 @@
 # Backend API reference
 
-Last updated: 2026-09-30.
+Last updated: 2026-10-01.
+
+The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
+See [HTTP contract checks and rollout](../api/HTTP_CONTRACT.md) for schema
+validation, policy extensions, Firebase listener channels, and compatibility.
+Run `npm run verify:openapi` from the repository root.
 
 Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
 
@@ -52,15 +57,15 @@ available during the rollout.
 | Health | `GET /health`; `GET /api/health` | Public readiness; admin diagnostics |
 | Live buses | `GET /api/buses`, `GET /api/buses/:busId` | Authenticated |
 | Device ingestion/update | `POST /api/devices/:deviceId/telemetry`, `POST /api/devices/:deviceId/diagnostics`, `GET /api/devices/:deviceId/firmware` | Device credential |
-| Device administration | `GET/PUT /api/devices/:deviceId/diagnostics`, `PUT /api/devices/:deviceId`, `POST /api/devices/:deviceId/disable` | Admin |
+| Device administration | `GET /api/devices/:deviceId/diagnostics`, `PUT /api/devices/:deviceId`, `POST /api/devices/:deviceId/disable` | Admin |
 | Ride operations | `POST /api/shifts/start`, `PATCH /api/shifts/delay`, `POST /api/shifts/stop` | Assigned operator or admin |
 | Boarding and chat | Session boarding-code, join and messages endpoints | Session member/operator/admin as applicable |
 | Passenger/account | Feedback, bootstrap, privacy deletion, requests | Authenticated/admin as noted below |
 | Fleet and settings | Fleet, analytics, route, settings and places endpoints | Admin unless noted below |
 | Route planning | `POST /api/plan`, `GET /api/routes-list` | Authenticated |
 
-The sections below are the contract source of truth for each request body,
-response, status code and side effect.
+The sections below provide human-oriented request, response and side-effect
+guidance; the OpenAPI contract and schema-backed tests check HTTP conformance.
 
 ## Authentication
 
@@ -248,7 +253,7 @@ Body: `{ "busId":"…", "routeId":"…", "driverId":"…", "delayMinutes":0 }`, 
 
 ### `POST /api/shifts/stop` — assigned operator or admin
 
-Body: `{ "busId":"…", "routeId":"…", "sessionId":"…" }`. Active rides cannot be manually stopped: 409 explains final-stop automatic completion. An already completed session returns `{stopped:true,alreadyCompleted:true}`. Invalid ownership/resource returns 403/404.
+Body: `{ "busId":"…", "routeId":"…", "sessionId":"…" }`. Active rides cannot be manually stopped: 409 explains final-stop automatic completion. An already completed session returns `{stopped:true,alreadyCompleted:true}`. Eligible pending/armed legacy sessions can instead be interrupted, returning `{stopped:true,interrupted:true,alreadyInterrupted:boolean}`. Invalid ownership/resource returns 403/404.
 
 ### `DELETE /api/shifts/:sessionId/messages` — admin
 
@@ -293,7 +298,7 @@ Creates a missing `users/{uid}` passenger profile transactionally from verified 
 Accepts a non-empty partial object containing only `serviceStartTime`, `noBusesMessage`, `noBusesSubMessage`, `announcementText`, and/or boolean `announcementActive`. Values are bounded and stored with server audit metadata.
 
 ## Fleet/admin endpoints
-All `/api/fleet/*` handlers are behind `requireAdmin` plus an idempotency/fingerprint guard for mutations.
+All `/api/fleet/*` handlers are behind `requireAdmin` plus a persisted audit record before mutation. Audit fingerprints are not a durable HTTP idempotency/replay guarantee.
 
 ### `POST /api/fleet/reconcile`
 
@@ -347,7 +352,7 @@ Body: `{ "routeId":"…", "startStopId":"…", "endStopId":"…", "viaStopId":"�
 
 ### `GET /api/routes-list` — authenticated
 
-Returns bounded cached route metadata/configuration used by clients. Firestore errors return 500.
+Returns up to 250 route metadata/configuration records from Firestore per request, omitting geometry. Firestore errors return 500.
 
 ### `GET /api/places/search?q=…` — admin
 

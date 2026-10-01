@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +121,7 @@ beforeEach(() => {
 });
 
 async function send(text = "Hello", requestId = "request_12345678", extra = {}) {
-  return fetch(`${baseUrl}/api/sessions/session_1/messages`, {
+  return contractFetch(`${baseUrl}/api/sessions/session_1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, requestId, ...extra }),
