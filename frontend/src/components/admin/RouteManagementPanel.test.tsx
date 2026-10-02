@@ -28,10 +28,10 @@ describe("route editing and operation recovery", () => {
   });
   it("swaps endpoints and cancels the draft without changing the original route", async () => {
     const user = await edit(); await user.click(screen.getByRole("button", { name: "Swap A & B" }));
-    expect(screen.getAllByTitle("Click to rename").map(button => button.querySelector("span")?.textContent)).toEqual(["Beta", "Alpha"]);
+    expect(screen.getAllByRole("button", { name: /^(Alpha|Beta)/ }).map(button => button.textContent?.split(/\d/)[0].trim())).toEqual(["Beta", "Alpha"]);
     await user.click(screen.getByRole("button", { name: "Cancel route editing" }));
     await user.click(screen.getByRole("button", { name: "Edit route QA route" }));
-    expect(screen.getAllByTitle("Click to rename").map(button => button.querySelector("span")?.textContent)).toEqual(["Alpha", "Beta"]);
+    expect(screen.getAllByRole("button", { name: /^(Alpha|Beta)/ }).map(button => button.textContent?.split(/\d/)[0].trim())).toEqual(["Alpha", "Beta"]);
     expect(mocks.save).not.toHaveBeenCalled();
   });
   it("disables save after removing a stop and never deploys an empty route", async () => {

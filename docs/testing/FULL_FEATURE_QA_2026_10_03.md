@@ -9,7 +9,7 @@ Base: `testing` at `a12368f7cc19f1f3db77f09474dca5eb8e1cf1f2`. Fix branch: `code
 | [216](https://github.com/notnamansinha/Eki/issues/216) | A visible live route card received no action because an opacity-hidden tracking overlay intercepted its pointer click. Chrome DOM hit-testing identified the overlay. Hidden views also exposed controls to keyboard/accessibility navigation. | Inactive home, tracking, map and profile subtrees are inert and aria-hidden. Chat unmounts when leaving tracking so a hidden dialog cannot retain its focus handlers. |
 | [217](https://github.com/notnamansinha/Eki/issues/217) | Feedback reported Thank you and started a cooldown for an HTTP 200 HTML proxy page. Several writes omitted the ngrok header or a bounded timeout. | Shared transport for feedback/chat/boarding/settings/privacy/bootstrap; documented write acknowledgements; uncertain-response errors preserve retry semantics; message ID/status traces remain correlated. |
 | [218](https://github.com/notnamansinha/Eki/issues/218) | Hardware availability was an enabled dead button. Route fields and colour controls, and feedback search, lacked accessible names or selection state. | Disable unarmed availability; associate labels and IDs; name colour controls with aria-pressed; label feedback search. |
-| [219](https://github.com/notnamansinha/Eki/issues/219) | History deletion removed its focused trigger; Escape did not close its inline confirmation. Verified without deleting live data. | Shared confirmation dialog; persistent trigger for focus restoration; Cancel first; focus containment; Escape; in-flight dismissal protection. |
+| [219](https://github.com/notnamansinha/Eki/issues/219) | History deletion removed its focused trigger; Escape did not close its inline confirmation. Verified without deleting live data. | Shared confirmation dialog; persistent trigger for cancellation focus restoration; connected history-heading fallback after successful deletion; Cancel first; focus containment; Escape; in-flight dismissal protection. |
 | [220](https://github.com/notnamansinha/Eki/issues/220) | Feedback status PATCH serialized JSON without its content-type header, causing the backend parser/handler to reject the update. | Explicit JSON content type and component regression with a server-equivalent header/body check. |
 | [221](https://github.com/notnamansinha/Eki/issues/221) | Settings fields remained editable during a save; successful completion cleared later unsaved edits. | Lock the draft fields and announcement switch during the bounded save, then enable them again on success/failure. |
 
@@ -35,7 +35,7 @@ The original localhost:3000 server stopped responding during the final browser p
 
 ## Results and reproduction
 
-- 290 frontend tests, including 69 additional regression cases; 549 backend tests plus seven separate emulator rules tests; 50 script tests; 52 native firmware cases.
+- 290 frontend tests, including 69 additional regression cases; 550 backend tests plus seven separate emulator rules tests; 50 script tests; 52 native firmware cases.
 - Frontend/backend lint, TypeScript through the strict production build, static export, service worker generation and CSP/backend contract passed locally.
 - `npm audit --omit=dev --omit=optional`: zero reported vulnerabilities.
 - Browser fixture: `npx vite --config e2e/fixtures/vite.config.mts`. See [fixture instructions](../../e2e/fixtures/README.md).

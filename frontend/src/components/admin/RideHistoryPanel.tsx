@@ -164,6 +164,7 @@ export default function RideHistoryPanel() {
   const [deleteStates, setDeleteStates] = useState<Record<string, RideHistoryDeletionState>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
   const deletionInFlight = useRef(new Set<string>());
+  const historyHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const busNames = useMemo(
     () => new Map(buses.map((bus) => [bus.id, bus.name])),
@@ -264,7 +265,7 @@ export default function RideHistoryPanel() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4 animate-slide-up sm:p-6">
-      <h2 className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
+      <h2 ref={historyHeadingRef} tabIndex={-1} className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
       {sessions.length === 0 ? (
         <div className="py-10 text-center text-sm text-white/50">
           No rides recorded yet.
@@ -450,6 +451,7 @@ export default function RideHistoryPanel() {
                           confirmText="Permanently delete"
                           variant="danger"
                           loading={deleteState === "deleting"}
+                          returnFocusRef={historyHeadingRef}
                           onCancel={() => cancelDeleteConfirmation(session.id)}
                           onConfirm={() => handleDeleteHistory(session.id)}
                         />

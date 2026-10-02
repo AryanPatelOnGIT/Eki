@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { lazy, Suspense, type ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, configure, render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PassengerWorkspace from "./PassengerWorkspace";
 import { setScenario } from "../../../../e2e/fixtures/state";
+configure({ asyncUtilTimeout: 5_000 });
 vi.mock("@/hooks/useAuth", async () => import("../../../../e2e/fixtures/state"));
 vi.mock("@/hooks/useRoutes", async () => import("../../../../e2e/fixtures/state"));
 vi.mock("@/hooks/useSettings", async () => import("../../../../e2e/fixtures/state"));
@@ -20,7 +21,7 @@ vi.mock("@/components/passenger/AccountTab", () => ({ default: () => <button>QA 
 vi.mock("@/components/shared/MessagingPanel", () => ({ default: () => <div>QA chat</div> }));
 vi.mock("@/components/shared/FeedbackModal", () => ({ default: () => <div>QA feedback</div> }));
 beforeEach(() => setScenario("pending"));
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("passenger workspace navigation", () => {
   it("unmounts the chat dialog when leaving tracking so hidden dialog focus handlers cannot remain active", async () => {
     setScenario("forward"); render(<PassengerWorkspace />); const user = userEvent.setup();
@@ -63,7 +64,9 @@ describe("passenger workspace navigation", () => {
   it("does not ask an unjoined passenger for post-ride feedback", async () => {
     render(<PassengerWorkspace />); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    vi.useFakeTimers();
     act(() => setScenario("completed"));
-    await waitFor(() => expect(screen.queryByText("QA feedback")).toBeNull());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_001); });
+    expect(screen.queryByText("QA feedback")).toBeNull();
   });
 });

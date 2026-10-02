@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId } from "react";
+import React, { useId, type RefObject } from "react";
 import { AlertTriangle, ShieldAlert, Info, Loader2 } from "lucide-react";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 
@@ -14,6 +14,7 @@ interface ConfirmModalProps {
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 export default function ConfirmModal({
@@ -26,12 +27,13 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
   loading = false,
+  returnFocusRef,
 }: ConfirmModalProps) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useDialogFocus<HTMLDivElement>(isOpen, () => {
     if (!loading) onCancel();
-  });
+  }, returnFocusRef);
 
   if (!isOpen) return null;
 

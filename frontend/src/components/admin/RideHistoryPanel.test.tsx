@@ -44,6 +44,7 @@ describe("ride-history controls", () => {
     await user.keyboard("{Escape}"); expect(screen.getByRole("dialog")).toBeTruthy();
     await act(async () => resolve(new Response(null, { status: 204 })));
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Ride History" }));
   });
   it("keeps the record and error available after a failed delete", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"active ride cannot be deleted"}', { status: 409 })));

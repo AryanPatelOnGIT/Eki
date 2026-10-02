@@ -491,13 +491,13 @@ function RouteEditor({
         </div>
 
         <div className="flex flex-col gap-1 flex-1 min-w-[220px]">
-          <label className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Search Stop</label>
+          <span className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Search Stop</span>
           <PlacesSearchBox onPlaceSelect={handlePlaceSelect} />
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Colour</label>
-          <div className="flex items-center gap-1.5 h-11">
+          <span id={`${editorId}-colour`} className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Colour</span>
+          <div role="group" aria-labelledby={`${editorId}-colour`} className="flex items-center gap-1.5 h-11">
             {ROUTE_COLORS.map(c => (
               <button
                 key={c}
