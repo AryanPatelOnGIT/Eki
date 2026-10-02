@@ -296,6 +296,7 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ status }),
         fallbackError: "Unable to update feedback status.",
@@ -348,7 +349,7 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
           <div className="flex flex-col">
             <span
               className="font-black text-sm uppercase tracking-[0.18em] text-white leading-none"
-             
+
             >
               Feedback Console
             </span>
@@ -428,6 +429,7 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 pointer-events-none" />
             <input
               type="text"
+              aria-label="Search feedback"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by user, bus, driver, or route…"

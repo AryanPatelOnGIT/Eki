@@ -22,6 +22,7 @@ import {
 import { auth } from "@/lib/firebaseAuth";
 import { apiRequest } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errors";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Bus, Loader2, MapPin, Trash2, User, Users, AlertCircle } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
@@ -163,6 +164,7 @@ export default function RideHistoryPanel() {
   const [deleteStates, setDeleteStates] = useState<Record<string, RideHistoryDeletionState>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
   const deletionInFlight = useRef(new Set<string>());
+  const historyHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const busNames = useMemo(
     () => new Map(buses.map((bus) => [bus.id, bus.name])),
@@ -263,7 +265,7 @@ export default function RideHistoryPanel() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4 animate-slide-up sm:p-6">
-      <h2 className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
+      <h2 ref={historyHeadingRef} tabIndex={-1} className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
       {sessions.length === 0 ? (
         <div className="py-10 text-center text-sm text-white/50">
           No rides recorded yet.
@@ -432,61 +434,27 @@ export default function RideHistoryPanel() {
                   )}
                   {canDeleteRideHistory(session.status) && (
                     <div className="mt-4 border-t border-red-500/20 pt-4">
-                      {deleteState === "idle" ? (
                         <button
                           type="button"
+                          disabled={deleteState !== "idle"}
                           onClick={() => openDeleteConfirmation(session.id)}
                           className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20"
                         >
                           <Trash2 className="size-4" aria-hidden="true" />
                           Delete ride history
                         </button>
-                      ) : (
-                        <div
-                          className="rounded-lg border border-red-500/30 bg-red-500/10 p-3"
-                          role="alertdialog"
-                          aria-labelledby={`delete-history-title-${session.id}`}
-                          aria-describedby={`delete-history-warning-${session.id}`}
-                        >
-                          <h5
-                            className="text-balance text-sm font-semibold text-red-200"
-                            id={`delete-history-title-${session.id}`}
-                          >
-                            Permanently delete ride history?
-                          </h5>
-                          <p
-                            className="mt-1 text-pretty text-xs text-red-200/70"
-                            id={`delete-history-warning-${session.id}`}
-                          >
-                            {RIDE_HISTORY_DELETE_WARNING}
-                          </p>
-                          <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                            <button
-                              type="button"
-                              onClick={() => cancelDeleteConfirmation(session.id)}
-                              disabled={deleteState === "deleting"}
-                              className="min-h-10 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteHistory(session.id)}
-                              disabled={deleteState === "deleting"}
-                              className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-500/40 bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {deleteState === "deleting" && (
-                                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                              )}
-                              {deleteState === "deleting" ? "Deleting…" : "Permanently delete"}
-                            </button>
-                          </div>
-                          {deleteErrors[session.id] && (
-                            <p className="mt-2 text-pretty text-xs text-red-200" role="alert">
-                              {deleteErrors[session.id]}
-                            </p>
-                          )}
-                        </div>
+                      {deleteState !== "idle" && (
+                        <ConfirmModal
+                          isOpen
+                          title="Permanently delete ride history?"
+                          description={[RIDE_HISTORY_DELETE_WARNING, deleteErrors[session.id]].filter(Boolean).join(" ")}
+                          confirmText="Permanently delete"
+                          variant="danger"
+                          loading={deleteState === "deleting"}
+                          returnFocusRef={historyHeadingRef}
+                          onCancel={() => cancelDeleteConfirmation(session.id)}
+                          onConfirm={() => handleDeleteHistory(session.id)}
+                        />
                       )}
                     </div>
                   )}

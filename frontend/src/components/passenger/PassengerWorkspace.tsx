@@ -321,7 +321,7 @@ export default function PassengerWorkspace() {
       <div className="absolute inset-0 flex flex-col overflow-hidden">
 
         {/* Map layer — only present on tracking */}
-        <div className={`absolute inset-0 z-0 transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+        <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-0 transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
           {visibleView === "tracking" && directedRoute && targetStop && (
             <PassengerTrackingMap
               targetStop={targetStop}
@@ -334,7 +334,7 @@ export default function PassengerWorkspace() {
 
 
         {/* ── HOME VIEW ── */}
-        <div className={`absolute inset-0 z-20 flex flex-col pt-safe transition-[opacity,transform] duration-500 ${visibleView === "home" ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8 pointer-events-none"}`}>
+        <div inert={visibleView !== "home"} aria-hidden={visibleView !== "home"} className={`absolute inset-0 z-20 flex flex-col pt-safe transition-[opacity,transform] duration-500 ${visibleView === "home" ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8 pointer-events-none"}`}>
 
           {/* Top spacer to frame the bus illustration near the top of the screen */}
           <div className="shrink-0" style={passengerTopSpacerStyle} aria-hidden="true" />
@@ -407,7 +407,7 @@ export default function PassengerWorkspace() {
         </div>
 
         {/* ── TRACKING VIEW ── */}
-        <div className={`absolute inset-0 z-20 pointer-events-none transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0"}`}>
+        <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-20 pointer-events-none transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0"}`}>
           {!endedMessage && activeBusOnRoute && rideDirectionState === "pending" ? (
             <div
               className="absolute inset-0 z-30 flex flex-col px-4 pt-safe pointer-events-auto"
@@ -577,7 +577,7 @@ export default function PassengerWorkspace() {
               {/* Passenger Boarding View was moved to the header above */}
 
               {/* Messaging Overlay */}
-              {isMessagingOpen && isLiveChatDeviceOnline(activeBusOnRoute) && (
+              {visibleView === "tracking" && isMessagingOpen && isLiveChatDeviceOnline(activeBusOnRoute) && (
                 <div className="absolute inset-x-0 top-16 bottom-[80px] z-50 animate-slide-up flex flex-col pointer-events-auto">
                    <MessagingPanel
                     key={activeSessionId || "online-no-session"}
@@ -626,7 +626,7 @@ export default function PassengerWorkspace() {
         </div>
 
         {/* ── PROFILE VIEW ── */}
-        <div className={`absolute inset-0 z-30 flex flex-col transition-[opacity,transform] duration-500 ${visibleView === "profile" ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-8 pointer-events-none"}`}>
+        <div inert={visibleView !== "profile"} aria-hidden={visibleView !== "profile"} className={`absolute inset-0 z-30 flex flex-col transition-[opacity,transform] duration-500 ${visibleView === "profile" ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-8 pointer-events-none"}`}>
           {visibleView === "profile" && <AccountTab />}
         </div>
       </div>

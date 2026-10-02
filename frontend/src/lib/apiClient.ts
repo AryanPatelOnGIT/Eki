@@ -3,6 +3,7 @@ const API_TIMEOUT_MS = 10_000;
 type ApiRequestOptions = RequestInit & {
   fallbackError?: string;
   timeoutMs?: number;
+  onResponseStatus?: (status: number) => void;
 };
 
 export class ApiError extends Error {
@@ -12,6 +13,7 @@ export class ApiError extends Error {
     readonly status: number | null,
     readonly phase?: string,
     readonly outcomeUnknown = false,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -44,6 +46,7 @@ export async function apiRequest<T>(
     fallbackError = "Request failed.",
     signal,
     timeoutMs = API_TIMEOUT_MS,
+    onResponseStatus,
     ...init
   }: ApiRequestOptions = {},
 ): Promise<T> {
@@ -77,15 +80,26 @@ export async function apiRequest<T>(
       headers,
       signal: requestController.signal,
     });
+    onResponseStatus?.(response.status);
     if (response.status === 204) return undefined as T;
-    let result: T & { error?: unknown; code?: unknown; phase?: unknown };
+    let result: T & { error?: unknown; code?: unknown; phase?: unknown; retryAfterMs?: unknown };
     try {
       result = await response.json() as T & { error?: unknown };
     } catch (error) {
-      if (response.ok) throw error;
+      if (response.ok) {
+        if (requestController.signal.aborted) throw error;
+        throw new ApiError(
+          "The backend returned an invalid response. Retry to reconcile the operation.",
+          "INVALID_RESPONSE",
+          response.status,
+          "network",
+          true,
+        );
+      }
       result = {} as T & { error?: string };
     }
     if (!response.ok) {
+      if (!result || typeof result !== "object") result = {} as typeof result;
       const message = typeof result.error === "string" && result.error.trim()
         ? result.error
         : `${fallbackError} (HTTP ${response.status})`;
@@ -94,6 +108,10 @@ export async function apiRequest<T>(
         typeof result.code === "string" ? result.code : "HTTP_ERROR",
         response.status,
         typeof result.phase === "string" ? result.phase : undefined,
+        false,
+        typeof result.retryAfterMs === "number" && Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0
+          ? result.retryAfterMs
+          : undefined,
       );
     }
     return result;

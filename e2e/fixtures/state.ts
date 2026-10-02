@@ -1,0 +1,39 @@
+import { useSyncExternalStore } from "react";
+const subscribers = new Set<() => void>();
+export const route = {
+  id: "qa-route", name: "QA route", color: "#3B82F6", duration: "600s", waypoints: [],
+  stops: [{ id: "a", name: "Alpha", shortName: "A", lat: 23, lng: 72 }, { id: "b", name: "Beta", shortName: "B", lat: 23.01, lng: 72.01 }],
+};
+export function fixtureBus(direction: string | null = null, sessionId = "qa-session", busId = "qa-bus") {
+  return { busId, routeId: route.id, sessionId, driverId: "qa-driver", lat: 23, lng: 72, timestamp: Date.now(), backendReceivedAt: Date.now(), seq: 1, deviceState: "online", status: "active", tripState: "in_service", direction, directionState: direction ? "resolved" : "pending", motionState: "stopped", speed: 0 };
+}
+let snapshot: Record<string, unknown> = { bus: fixtureBus() };
+const liveSubscribers = new Set<(change: unknown) => void>();
+let scenario = "pending";
+const subscribe = (fn: () => void) => { subscribers.add(fn); return () => { subscribers.delete(fn); }; };
+export function setScenario(next: string) {
+  scenario = next;
+  const bus = fixtureBus(next === "pending" ? null : next === "reverse" ? "reverse" : "forward");
+  snapshot = next === "empty" ? {} : next === "device" ? { bus: { busId: bus.busId, routeId: bus.routeId, deviceState: "online", status: "offline", timestamp: Date.now(), speed: 0, motionState: "stopped" } } : next === "multiple" ? { bus, second: fixtureBus("reverse", "qa-session-2", "qa-bus-2") } : { bus };
+  if (next === "completed") snapshot = { bus: { ...bus, tripState: "completed" } };
+  subscribers.forEach(fn => fn());
+  liveSubscribers.forEach(fn => fn({ type: "reset", snapshot, source: "listener" }));
+}
+export function useScenario() { return useSyncExternalStore(subscribe, () => scenario); }
+export function subscribeLiveBusChanges(fn: (change: unknown) => void) {
+  liveSubscribers.add(fn);
+  fn({ type: "reset", snapshot, source: "listener" });
+  return () => { liveSubscribers.delete(fn); };
+}
+export function useAuth() { return { user: { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger" }, logout: async () => {} }; }
+export function useRoutes() { return { routes: [route], error: null, retry: () => {} }; }
+let settings = { noBusesMessage: "No buses running", noBusesSubMessage: "Service starts at {time}", serviceStartTime: "8:00 am", announcementActive: false, announcementText: "" };
+export function useSettings() {
+  const current = useSyncExternalStore(subscribe, () => settings);
+  return { settings: current, loading: false, saveSettings: async (partial: Partial<typeof settings>) => {
+    settings = { ...settings, ...partial };
+    subscribers.forEach(fn => fn());
+  } };
+}
+const markSnapshotReceived = () => {};
+export function useRTDBResume() { return { isResuming: false, resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
