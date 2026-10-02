@@ -69,12 +69,46 @@ test("correlates device, listener, and render phases without mixing clocks", () 
     backendToRtdbMs: 60,
     rtdbToBrowserListenerMs: 40,
     browserListenerToRenderMs: 30,
+    browserListenerToMarkerSettledMs: null,
+    markerAnimationMs: null,
+    endToEndMarkerSettledMs: null,
     endToEndMs: 330,
     captureUpdateGapMs: null,
     backendIngressUpdateGapMs: null,
     browserListenerUpdateGapMs: null,
     browserRenderUpdateGapMs: null,
   });
+});
+
+test("held targets do not count as arrivals and settled timing stays in the listener's run", () => {
+  const device = [{ seq: 1, sampledAtDeviceMs: 900, deviceSentAtDeviceMs: 1000, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150, deviceReceivedAtDeviceMs: 1250, httpStatus: 202 }];
+  const common = { seq: 1, sampledAtDeviceMs: 900, runId: "current", displayKind: "raw" };
+  const browser = [
+    { ...common, event: "browser_listener", browserMonotonicAtMs: 50 },
+    { ...common, event: "browser_render", displayKind: "held", browserMonotonicAtMs: 60 },
+    { ...common, event: "browser_render", browserMonotonicAtMs: 80 },
+    { ...common, event: "browser_marker_settled", runId: "other", browserMonotonicAtMs: 100 },
+    { ...common, event: "browser_marker_settled", displayKind: "held", browserMonotonicAtMs: 110 },
+    { ...common, event: "browser_marker_settled", browserMonotonicAtMs: 210, browserEstimatedServerAtMs: 1400 },
+  ];
+  const { rows } = analyzeTelemetryTraces(device, browser);
+  assert.equal(rows[0].browserListenerToRenderMs, 30);
+  assert.equal(rows[0].browserListenerToMarkerSettledMs, 160);
+  assert.equal(rows[0].markerAnimationMs, 130);
+  assert.equal(rows[0].endToEndMarkerSettledMs, 500);
+});
+
+test("does not mix another ride or route's arrival in the same browser run", () => {
+  const common = { seq: 8, sampledAtDeviceMs: 1900, runId: "browser", nodeKey: "bus_route", sessionId: "ride" };
+  const device = [{ ...common, deviceSentAtDeviceMs: 2000, serverReceivedAtMs: 2100, serverRespondedAtMs: 2150, deviceReceivedAtDeviceMs: 2250, httpStatus: 202 }];
+  const browser = [
+    { ...common, event: "browser_listener", browserMonotonicAtMs: 50 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", nodeKey: "bus_other_route", browserMonotonicAtMs: 55 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", sessionId: "old-ride", browserMonotonicAtMs: 60 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", browserMonotonicAtMs: 150 },
+  ];
+  assert.equal(analyzeTelemetryTraces(device, browser).rows[0].browserListenerToMarkerSettledMs, 100);
+  assert.equal(analyzeTelemetryTraces(device, browser.slice(0, 3)).rows[0].browserListenerToMarkerSettledMs, null);
 });
 
 test("uses nearest-rank percentiles", () => {

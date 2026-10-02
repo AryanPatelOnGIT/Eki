@@ -56,7 +56,7 @@ function BusMarker({
 }) {
   const markerSelection = useLiveBusMarkerPosition(bus);
   const markerPoint = useSmoothPosition(markerSelection.position);
-  useTelemetryRenderTrace(bus, "passenger", markerPoint !== null);
+  useTelemetryRenderTrace(bus, "passenger", markerPoint !== null, { position: markerPoint, selection: markerSelection });
 
   const [displayHeading, setDisplayHeading] = useState(() =>
     normalizeHeading(bus.heading),

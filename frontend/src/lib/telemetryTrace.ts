@@ -227,7 +227,8 @@ export function recordTelemetryListenerDelivery(
 export function recordTelemetryRender(
   entry: ActiveBusEntry,
   consumer: "admin" | "passenger",
-  displayKind: "matched" | "raw" | "none",
+  displayKind: "matched" | "raw" | "held" | "none",
+  event: "browser_render" | "browser_marker_settled" = "browser_render",
 ): void {
   if (!telemetryTraceEnabled()) return;
   const current = ensureState();
@@ -235,7 +236,8 @@ export function recordTelemetryRender(
   const serverOffset = current.firebaseServerTimeOffsetMs;
   const routeId = entry.routeId ?? "unknown-route";
   appendRecord(current, {
-    event: "browser_render",
+    event,
+    ...(event === "browser_marker_settled" ? { markerToleranceMeters: 0.05 } : {}),
     consumer,
     displayKind,
     ...liveTimingFields(
