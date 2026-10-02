@@ -74,6 +74,16 @@ afterEach(() => {
 });
 
 describe("activeRouteGeometry", () => {
+  it.each(["?", "~", "!", "?".repeat(500_001)])(
+    "handles malformed or oversized geometry without rejecting the fetch",
+    async (polyline) => {
+      harness.data.set("activeRouteGeometry/bus_01_route_1/3", { polyline });
+      expect(await fetchActiveRouteGeometry("bus_01_route_1", 3)).toBeNull();
+      expect(cachedActiveRouteGeometry("bus_01_route_1", 3)).toBeNull();
+      harness.data.set("activeRouteGeometry/bus_01_route_1/4", { polyline: validPolyline });
+      expect(await fetchActiveRouteGeometry("bus_01_route_1", 4)).not.toBeNull();
+    },
+  );
   it("builds the live-node key for an active bus", () => {
     expect(activeBusNodeKey("bus_01", "route_1")).toBe("bus_01_route_1");
   });

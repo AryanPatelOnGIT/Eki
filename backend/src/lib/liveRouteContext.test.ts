@@ -20,6 +20,8 @@ describe("withoutLiveRouteContext", () => {
       routeMatchHistory: [{ lat: 23.2, lng: 72.7 }],
       offRouteSampleCount: 4,
       mapMatchUpdatedAt: 1_000,
+      mapMatchSeq: 4,
+      mapMatchSampledAt: 900,
       matchConfidence: 0.8,
       distanceToActiveRoute: 42,
       matchedLocation: { lat: 23.2, lng: 72.7 },
@@ -42,5 +44,15 @@ describe("withoutLiveRouteContext", () => {
     });
     expect(hasLiveRouteContext(result)).toBe(false);
     expect(hasLiveRouteContext(null)).toBe(false);
+    expect(live.mapMatchSeq).toBe(4);
   });
+
+  it.each(["mapMatchSeq", "mapMatchSampledAt"])(
+    "clears a leftover %s even when no other route context exists",
+    (field) => {
+      const live = { [field]: 123, sessionId: "s1", seq: 123, timestamp: 456 };
+      expect(hasLiveRouteContext(live)).toBe(true);
+      expect(withoutLiveRouteContext(live)).toEqual({ sessionId: "s1", seq: 123, timestamp: 456 });
+    },
+  );
 });

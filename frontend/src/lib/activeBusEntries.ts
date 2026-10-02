@@ -18,7 +18,8 @@ export interface ActiveBusEntry {
   deviceSentAt?: number;
   backendReceivedAt?: number;
   receivedAt?: number;
-  rtdbCommittedAt?: number;
+  /** Historical commit-time alias; canonical live telemetry uses receivedAt. */
+  rtdbCommittedAt?: unknown;
   status?: "active" | "offline";
   deviceState?: "online" | "offline";
   motionState?: "moving" | "stopped" | "uncertain";
@@ -174,7 +175,6 @@ const OPTIONAL_NUMBER_FIELDS = [
   "deviceSentAt",
   "backendReceivedAt",
   "receivedAt",
-  "rtdbCommittedAt",
   "currentStopIndex",
   "delayMinutes",
   "matchConfidence",
