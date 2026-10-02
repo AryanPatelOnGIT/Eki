@@ -22,7 +22,7 @@ const FleetManagementPanel = dynamic(() => import("@/components/admin/FleetManag
 const DashboardPanel = dynamic(() => import("@/components/admin/DashboardPanel"), { ssr: false, loading: loadingPanel });
 const SettingsPanel = dynamic(() => import("@/components/admin/SettingsPanel"), { ssr: false, loading: loadingPanel });
 const RideHistoryPanel = dynamic(() => import("@/components/admin/RideHistoryPanel"), { ssr: false, loading: loadingPanel });
-const FeedbackPanel = dynamic(() => import("@/app/feedback/page"), { ssr: false, loading: loadingPanel });
+const FeedbackPanel = dynamic(() => import("@/components/admin/FeedbackPanel"), { ssr: false, loading: loadingPanel });
 
 type AdminTab = "operations" | "routes" | "fleet" | "history" | "feedback" | "settings";
 

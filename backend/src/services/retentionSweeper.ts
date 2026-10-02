@@ -1,5 +1,7 @@
 import { FieldPath, Timestamp, type Query } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
+import { firebaseRtdbRetentionStore } from "./firebaseRtdbRetention";
+import { runRtdbRetentionSweep } from "./rtdbRetention";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 200;
@@ -103,6 +105,12 @@ async function runRetentionSweep(now = Date.now()): Promise<void> {
     fleetOperations,
     routeSaveOperations, previews, reconciliationJobs,
   });
+  const rtdbSummary = await runRtdbRetentionSweep(firebaseRtdbRetentionStore(), {
+    now,
+    dryRun: false,
+    legacyRetired: process.env.LEGACY_RTDB_RETIRED === "true",
+  });
+  console.log("[Retention] RTDB sweep complete", rtdbSummary);
 }
 
 export function startRetentionSweeper(): () => void {
