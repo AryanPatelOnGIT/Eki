@@ -225,6 +225,10 @@ Fields: `status` (`pending` plus worker terminal/retry states), `attempts`, `req
 
 Backend-only retry reference with `requestedAt` (Firestore Timestamp). The session ID is the document ID; the worker always derives the fixed `ride_sessions/{sessionId}` target itself. It commits this job before a terminal ride's recursive deletion and removes it only after every descendant is deleted. Startup/daily retention sweeps replay pending jobs even when the parent ride was already removed by a partial failure. The default-deny client rules cover this internal collection. Jobs are removed on successful cleanup, not aged out while child records remain.
 
+### `_ride_history_deletion_jobs/{sessionId}`
+
+Independent backend-only retry reference with `requestedAt` for an Admin-requested terminal history deletion. This job remains until both recursive session cleanup and all matching completed-trip projections are removed. The manual endpoint and startup/daily retention worker can resume it even without the ride parent. It is kept separate from age-based deletion jobs so concurrent manual/retention requests cannot acknowledge each other's incomplete projection cleanup. Ongoing session status is rechecked before each attempt; client access is denied by the default rules.
+
 ### `_fleet_operations/{operationId}`
 
 Idempotency/reconciliation operation metadata such as stable request fingerprint, result/status and `createdAt`. Admin fleet guard prevents conflicting request reuse; opt-in retention deletes old entries.

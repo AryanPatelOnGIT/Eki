@@ -1,5 +1,6 @@
 import { FieldPath, Timestamp, type DocumentReference, type Query } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
+import { deleteTerminalRideHistory } from "./rideHistoryDeletion";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 200;
@@ -51,6 +52,19 @@ async function resumeRideDeletions(): Promise<number> {
   }
 }
 
+async function resumeManualHistoryDeletions(): Promise<number> {
+  let resumed = 0;
+  while (true) {
+    const jobs = await db.collection("_ride_history_deletion_jobs")
+      .orderBy(FieldPath.documentId()).limit(BATCH_SIZE).get();
+    if (jobs.empty) return resumed;
+    for (const job of jobs.docs) {
+      await deleteTerminalRideHistory(db, job.id);
+      resumed += 1;
+    }
+  }
+}
+
 export function isRetentionSweeperEnabled(
   value: string | undefined,
   nodeEnv = process.env.NODE_ENV,
@@ -73,6 +87,7 @@ export function assertRetentionConfiguration(
 
 export async function runRetentionSweep(now = Date.now()): Promise<void> {
   const resumedRideDeletions = await resumeRideDeletions();
+  const resumedManualHistoryDeletions = await resumeManualHistoryDeletions();
   const rideDays = readDays(process.env.RIDE_SESSION_RETENTION_DAYS, 180);
   const feedbackDays = readDays(process.env.FEEDBACK_RETENTION_DAYS, 180);
   const tripDays = readDays(process.env.COMPLETED_TRIP_RETENTION_DAYS, 180);
@@ -124,6 +139,7 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
   ]);
   console.log("[Retention] Sweep complete", {
     resumedRideDeletions,
+    resumedManualHistoryDeletions,
     sessions,
     feedback,
     trips,

@@ -37,10 +37,12 @@ vi.mock("../lib/firebaseAdmin", () => {
     ref: ref(path),
   });
   type Ref = { path: string; id: string; get: () => Promise<ReturnType<typeof snapshot>>;
+    delete: () => Promise<void>;
     set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void>;
     collection: (name: string) => ReturnType<typeof collection> };
   function ref(path: string): Ref {
     return { path, id: path.split("/").at(-1)!, get: async () => snapshot(path),
+      delete: async () => { state.docs.delete(path); },
       set: async (data, options) => { state.docs.set(path, options?.merge ? { ...state.docs.get(path), ...data } : data); },
       collection: name => collection(`${path}/${name}`) };
   }
@@ -264,6 +266,7 @@ describe("versioned session identity and lifecycle", () => {
     expect((await cleanup.json()).deleted).toBe(805); expect(state.batchSizes).toEqual([400, 400, 5]);
     end(); state.docs.set(`completed_trips/${sessionId}`, { sessionId });
     expect((await request(`/${sessionId}`, "DELETE")).status).toBe(200);
+    expect(state.docs.has(`_ride_history_deletion_jobs/${sessionId}`)).toBe(false);
     expect((await request(`/${sessionId}`, "DELETE")).status).toBe(200);
     state.user = { uid: "driver_uid", role: "driver", driverId: "driver_1", assignedBusId: "bus_1" };
     expect((await start()).status).toBe(410);
