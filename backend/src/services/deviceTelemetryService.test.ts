@@ -304,6 +304,12 @@ describe("live telemetry ordering", () => {
       heading: 90,
       timestamp: 4_000,
       seq: 4,
+      rtdbCommittedAt: 4_100,
+      activeRoutePolyline: "retired-geometry".repeat(10_000),
+      routeVersion: 7,
+      mapMatchSeq: 4,
+      mapMatchSampledAt: 4_000,
+      extensionFromNewerReplica: { preserve: true },
       matchedLocation: { seq: 4, sampledAt: 4_000, lat: 23, lng: 72 },
     };
     const next = nextTelemetryValue(live, {
@@ -332,7 +338,17 @@ describe("live telemetry ordering", () => {
       matchedLocation: live.matchedLocation,
       rawLocation: { seq: 5, sampledAt: 5_000 },
       backendReceivedAt: 5_200,
+      receivedAt: { ".sv": "timestamp" },
+      routeVersion: 7,
+      mapMatchSeq: 4,
+      mapMatchSampledAt: 4_000,
+      extensionFromNewerReplica: { preserve: true },
     });
+    expect(next).not.toHaveProperty("rtdbCommittedAt");
+    expect(next).not.toHaveProperty("activeRoutePolyline");
+    expect(live.rtdbCommittedAt).toBe(4_100);
+    expect(live.activeRoutePolyline).toHaveLength(160_000);
+    expect(JSON.stringify(next).length).toBeLessThan(JSON.stringify(live).length - 150_000);
   });
 
   it("aborts a stale raw write before it can overwrite lifecycle state", () => {

@@ -195,7 +195,8 @@ function liveTimingFields(
     sampledAtDeviceMs: readNumber(raw?.sampledAt) ?? readNumber(value.timestamp),
     deviceSentAtDeviceMs: readNumber(value.deviceSentAt),
     backendReceivedAtMs: readNumber(value.backendReceivedAt),
-    rtdbCommittedAtMs: readNumber(value.rtdbCommittedAt) ?? readNumber(value.receivedAt),
+    // Keep the export schema stable and accept historical alias-only captures.
+    rtdbCommittedAtMs: readNumber(value.receivedAt) ?? readNumber(value.rtdbCommittedAt),
   };
 }
 

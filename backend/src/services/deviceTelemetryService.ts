@@ -689,10 +689,16 @@ export function nextTelemetryValue(
     ? sample
     : previous;
 
+  // Retire only verified obsolete fields. Preserve lifecycle, current matching
+  // state, and unknown fields so a rolling deployment cannot erase new state.
+  const currentState: Record<string, unknown> = { ...(current ?? initialDevicePresenceState()) };
+  delete currentState.rtdbCommittedAt; // Same server timestamp as receivedAt.
+  delete currentState.activeRoutePolyline; // Geometry lives in the versioned sibling store.
+
   return {
     // Device presence is not a ride. Lifecycle fields are introduced only by
     // the transactional arm/direction-resolution path.
-    ...(current ?? initialDevicePresenceState()),
+    ...currentState,
     ...acceptedSample,
     // Keep the authenticated GNSS fix independently observable even when
     // plausibility filtering retains the previous accepted live position.
@@ -725,7 +731,6 @@ export function nextTelemetryValue(
         : "connected",
     backendReceivedAt,
     receivedAt: { ".sv": "timestamp" },
-    rtdbCommittedAt: { ".sv": "timestamp" },
   };
 }
 

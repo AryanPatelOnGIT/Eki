@@ -1,6 +1,7 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-02. RTDB field necessity and compatibility decisions are
+recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
 ## Reading this document
 
@@ -48,7 +49,9 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | `gpsHdop` | number/null | Receiver horizontal dilution of precision; null for staged legacy firmware |
 | `motionState` | `moving` / `stopped` / `uncertain` | Firmware; uncertain means trustworthy GNSS lost |
 | `timestamp` | epoch ms | NTP-synchronised device measurement time |
+| `seq`, `deviceSentAt`, `backendReceivedAt` | number / epoch ms | Sample tie-breaker, device send time, and backend ingress/freshness boundary |
 | `receivedAt` | RTDB server epoch ms | Backend commit time |
+| `plausibilityAnchor` | object | Last physically accepted `{lat,lng,speed,gpsHdop,timestamp}`; held outliers do not advance its timestamp |
 | `deviceState` | `online` / `offline` | Ingestion/worker connectivity projection; `online` is trusted by clients only while `timestamp` is fresh |
 | `signalState` | `connected` / `gnss_lost` / `lost` | Derived signal explanation |
 | `status` | `active` / `offline` | Ride lifecycle ownership, not hardware power; initial device-only nodes are `offline` |
@@ -60,12 +63,24 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | `directionFirestoreSynced` | boolean | `false` only while a telemetry-resolved session direction still needs its one-time Firestore projection; `true` after synchronization |
 | `originStopId`, `destinationStopId` | string | Endpoints for this direction |
 | `completedAt`, `turnaroundEligibleAt` | epoch ms | Completion and earliest automatic opposite-direction arm time; removed when the next session activates |
+| `turnaroundSampledAt` | epoch ms | Minimum fresh device sample for automatic return; separate from the dwell deadline |
 | `turnaroundClaimId`, `turnaroundClaimedAt` | string / epoch ms | Short-lived cross-replica automatic-turnaround claim; removed after activation or failed durable claim |
 | `automaticTurnaround`, `previousSessionId` | boolean / string | Identifies a backend-armed return session and its completed predecessor |
 | `currentStopIndex` | integer | Zero-based next/current ordered stop progress |
 | `hasDepartedOrigin` | boolean | Prevents repeated origin activation |
 | `delayMinutes` | number | Driver API value, 0–1440 |
+| `delayUpdatedAt` | epoch ms | Delay revision for conflict-safe recovery/projection |
 | `lifecycleUpdatedAt` | RTDB server epoch ms | Server lifecycle/status mutation time |
+
+`rtdbCommittedAt` is a retired alias of `receivedAt`; new accepted telemetry
+removes it while browser trace exports keep the historical `rtdbCommittedAtMs`
+key. `activeRoutePolyline` is a retired inline geometry field; the versioned
+sibling store below is authoritative. Route context also owns
+`offRouteSampleCount`, `mapMatchUpdatedAt`, `rerouteRequestId`,
+`lastRerouteAttemptAt`, `rerouteError`, `rerouteCompletedAt` and
+`rerouteFailedAt`; the field audit explains their hysteresis/ownership/diagnostic
+roles. Context reset clears `mapMatchSeq` and `mapMatchSampledAt` as well as the
+previous match result.
 
 Read: any authenticated Firebase user (`.read: auth != null`); App Check is enforced through the Firebase console. Write: denied to all clients; server only. Indexed by `routeId`, `busId`. Active rides survive stale hardware and are marked offline; stale non-active nodes can be removed.
 
@@ -87,7 +102,11 @@ Server-only authorization mirror used with Auth claims/driver records. It is wri
 
 ### `users/{uid}` and `messages`
 
-RTDB `users/{uid}` is a denied-write legacy/read-owner perimeter; active application profiles are in Firestore. Top-level RTDB `messages` is fully denied; current messages live under Firestore ride sessions. No new feature should use either legacy tree.
+RTDB `users/{uid}` and top-level `messages` are legacy trees with all client
+reads/writes denied by the current default rules. Active profiles and ride
+messages are in Firestore. No new feature should use either legacy tree.
+Existing legacy copies and historical reroute versions are not covered by the
+Firestore retention sweeper; migration/cleanup is tracked in issue #214.
 
 ## Firestore client-visible collections
 
