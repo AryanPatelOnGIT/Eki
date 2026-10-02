@@ -256,7 +256,7 @@ describe("production security configuration", () => {
     expect(feedbackService).toContain("sessionCompleted");
     expect(feedbackService).toContain("isSessionPassenger");
     const messagingPanel = workspaceFile("frontend/src/components/shared/MessagingPanel.tsx");
-    const feedbackPage = workspaceFile("frontend/src/app/feedback/page.tsx");
+    const feedbackPage = workspaceFile("frontend/src/components/admin/FeedbackPanel.tsx");
     expect(messagingPanel).toContain("limitToLast(200)");
     expect(messagingPanel).toContain("requestId: pending.requestId");
     expect(messagingPanel).not.toContain("currentUserName");
