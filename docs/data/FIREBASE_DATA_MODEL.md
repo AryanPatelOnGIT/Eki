@@ -167,7 +167,7 @@ Durable ride record and parent of messages.
 | `boardingCode` | eight-character string | Driver-visible session proof; never projected into RTDB |
 | `boardingCodeIssuedAt` | Firestore Timestamp | Server issuance time |
 | `stopsReached` | map keyed zero-based index | Ordered server evidence |
-| `stopsReached.{i}` | `{stopIndex,stopId,stopName,timestamp}` | Stop evidence |
+| `stopsReached.{i}` | `{stopIndex,stopId,stopName,timestamp,evidence?}` | Stop evidence; new `evidence` is `gnss_progress` or `recovered_checkpoint`, whose timestamp denotes repair time rather than original arrival |
 | `automaticTurnaround`, `previousSessionId` | boolean / string | Present on an automatically armed opposite-direction session |
 | `path` | legacy map/array | Older history tolerated/read/deleted; no current per-fix writes |
 
@@ -221,6 +221,10 @@ Coordinator ownership/expiry fields include `ownerId` and lease timing. Transact
 
 Fields: `status` (`pending` plus worker terminal/retry states), `attempts`, `requestedAt`, `updatedAt`, and worker error/claim markers as applicable. Passenger API queues; leader worker claims, deletes personal collection-group/session fields/profile/cooldown/request/auth user in pages, and records retry state on failure.
 
+### `_retention_deletion_jobs/{sessionId}`
+
+Backend-only retry reference with `requestedAt` (Firestore Timestamp). The session ID is the document ID; the worker always derives the fixed `ride_sessions/{sessionId}` target itself. It commits this job before a terminal ride's recursive deletion and removes it only after every descendant is deleted. Startup/daily retention sweeps replay pending jobs even when the parent ride was already removed by a partial failure. The default-deny client rules cover this internal collection. Jobs are removed on successful cleanup, not aged out while child records remain.
+
 ### `_fleet_operations/{operationId}`
 
 Idempotency/reconciliation operation metadata such as stable request fingerprint, result/status and `createdAt`. Admin fleet guard prevents conflicting request reuse; opt-in retention deletes old entries.
@@ -255,7 +259,7 @@ credential-cache entries. Browser rules deny all reads and writes.
 - Driver API authority requires agreement among Auth claims, `drivers`, `buses`, and the requested bus/route.
 - Terminal history deletion recursively removes the ride session/subcollections and all matching `completed_trips`; active states return 409.
 - Privacy deletion removes one user's profile, feedback/cooldown/request, session passenger entries/messages, and Auth account while leaving non-personal operational ride facts according to policy.
-- Retention defaults: terminal sessions 90 days, feedback 180, completed projections 180, fleet operation logs 90. Production startup requires `RETENTION_SWEEPER_ENABLED=true`; development and tests remain non-destructive when omitted.
+- Retention defaults: terminal sessions 180 days after `endTime`, feedback 180, completed projections 180 days after `completedAt`, fleet operation logs 90. Session deletion recursively removes passenger/message subcollections. The daily sweep deletes records strictly older than the cutoff, so removal occurs on the next successful sweep after day 180. Production startup requires `RETENTION_SWEEPER_ENABLED=true`; development and tests remain non-destructive when omitted. Deployment overrides must agree with the approved schedule.
 
 ## Indexes
 

@@ -1,8 +1,9 @@
-import { FieldPath, Timestamp, type Query } from "firebase-admin/firestore";
+import { FieldPath, Timestamp, type DocumentReference, type Query } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 200;
+const DELETION_JOBS = "_retention_deletion_jobs";
 
 function readDays(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -15,7 +16,7 @@ async function deleteDocuments(query: Query, recursive = false): Promise<number>
     const snapshot = await query.limit(BATCH_SIZE).get();
     if (snapshot.empty) break;
     if (recursive) {
-      for (const document of snapshot.docs) await db.recursiveDelete(document.ref);
+      for (const document of snapshot.docs) await deleteRideSession(document.ref);
     } else {
       const batch = db.batch();
       snapshot.docs.forEach((document) => batch.delete(document.ref));
@@ -24,6 +25,30 @@ async function deleteDocuments(query: Query, recursive = false): Promise<number>
     deleted += snapshot.size;
   }
   return deleted;
+}
+
+async function deleteRideSession(sessionRef: DocumentReference): Promise<void> {
+  const jobRef = db.collection(DELETION_JOBS).doc(sessionRef.id);
+  // recursiveDelete can remove the parent even when a descendant fails. Keep
+  // an independent durable reference until every descendant was removed, so
+  // the next sweep can retry even when the age query no longer finds a parent.
+  await jobRef.set({ requestedAt: Timestamp.now() }, { merge: true });
+  await db.recursiveDelete(sessionRef);
+  await jobRef.delete();
+}
+
+async function resumeRideDeletions(): Promise<number> {
+  let resumed = 0;
+  while (true) {
+    const jobs = await db.collection(DELETION_JOBS)
+      .orderBy(FieldPath.documentId()).limit(BATCH_SIZE).get();
+    if (jobs.empty) return resumed;
+    for (const job of jobs.docs) {
+      await db.recursiveDelete(db.collection("ride_sessions").doc(job.id));
+      await job.ref.delete();
+      resumed += 1;
+    }
+  }
 }
 
 export function isRetentionSweeperEnabled(
@@ -46,8 +71,9 @@ export function assertRetentionConfiguration(
   void isRetentionSweeperEnabled(value, nodeEnv);
 }
 
-async function runRetentionSweep(now = Date.now()): Promise<void> {
-  const rideDays = readDays(process.env.RIDE_SESSION_RETENTION_DAYS, 90);
+export async function runRetentionSweep(now = Date.now()): Promise<void> {
+  const resumedRideDeletions = await resumeRideDeletions();
+  const rideDays = readDays(process.env.RIDE_SESSION_RETENTION_DAYS, 180);
   const feedbackDays = readDays(process.env.FEEDBACK_RETENTION_DAYS, 180);
   const tripDays = readDays(process.env.COMPLETED_TRIP_RETENTION_DAYS, 180);
   const operationDays = readDays(process.env.OPERATION_LOG_RETENTION_DAYS, 90);
@@ -97,6 +123,7 @@ async function runRetentionSweep(now = Date.now()): Promise<void> {
     ),
   ]);
   console.log("[Retention] Sweep complete", {
+    resumedRideDeletions,
     sessions,
     feedback,
     trips,

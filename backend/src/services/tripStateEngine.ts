@@ -11,6 +11,7 @@ import {
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
 import { SerializedChangeWriter } from "./serializedChangeWriter";
 import { reduceTripState } from "./tripStateReducer";
+import { missingStopHistory } from "./rideProgressHistory";
 import {
   normalizeRideDirection,
   stopsInRideDirection,
@@ -55,6 +56,11 @@ interface TelemetrySample {
   timestamp: number;
   lat: number;
   lng: number;
+}
+interface RideCheckpoint {
+  tripState: "pre_departure" | "in_service";
+  currentStopIndex: number;
+  hasDepartedOrigin: boolean;
 }
 const processedTelemetry = new LruCache<string, TelemetrySample>(MAX_CACHE_ENTRIES);
 
@@ -541,7 +547,8 @@ function persistActiveRideLifecycle(
   tripState: "pre_departure" | "in_service",
   currentStopIndex: number,
   hasDepartedOrigin: boolean,
-): Promise<void> {
+  stops: RouteStop[],
+): Promise<RideCheckpoint | undefined> {
   const documentId = activeRideDocumentId(data);
   const busId = normalizeIdentifier(data.busId);
   const sessionId = normalizeIdentifier(data.sessionId);
@@ -554,7 +561,7 @@ function persistActiveRideLifecycle(
     typeof data.driverId !== "string" ||
     !direction
   ) {
-    return Promise.resolve();
+    return Promise.resolve(undefined);
   }
   const delayUpdatedAt = delayRevision(data.delayUpdatedAt);
   const delayMinutes = normalizedDelayMinutes(data.delayMinutes);
@@ -578,11 +585,13 @@ function persistActiveRideLifecycle(
   return activeRideWrites.enqueue(documentId, fingerprint, async () => {
     const activeRideRef = db.collection("active_rides").doc(documentId);
     const lockRef = db.collection("_active_bus_locks").doc(busId);
+    const sessionRef = db.collection("ride_sessions").doc(sessionId);
     try {
       const persisted = await db.runTransaction(async (transaction) => {
-        const [activeRide, lock] = await Promise.all([
+        const [activeRide, lock, session] = await Promise.all([
           transaction.get(activeRideRef),
           transaction.get(lockRef),
+          transaction.get(sessionRef),
         ]);
         if (
           !lock.exists ||
@@ -591,8 +600,38 @@ function persistActiveRideLifecycle(
           return false;
         }
         const durableRevision = delayRevision(activeRide.data()?.delayUpdatedAt);
+        const durable = activeRide.data();
+        const sameSession = durable?.sessionId === sessionId;
+        const durableIndex = sameSession && Number.isSafeInteger(durable?.currentStopIndex) &&
+          durable.currentStopIndex >= 0 && durable.currentStopIndex < stops.length
+          ? Number(durable.currentStopIndex) : 0;
+        const checkpoint: RideCheckpoint = {
+          tripState: sameSession && durable?.tripState === "in_service" ? "in_service" : tripState,
+          currentStopIndex: Math.max(currentStopIndex, durableIndex),
+          hasDepartedOrigin: hasDepartedOrigin || (sameSession && durable?.hasDepartedOrigin === true),
+        };
+        const sessionData = session.data();
+        if (session.exists && ["pending", "armed", "active"].includes(sessionData?.status)) {
+          const stopsReached = missingStopHistory(
+            stops, checkpoint.tripState, checkpoint.currentStopIndex, sessionData?.stopsReached,
+            FieldValue.serverTimestamp(), Number(data.currentStopIndex),
+          );
+          const activating = checkpoint.tripState === "in_service" && sessionData?.status !== "active";
+          if (activating || Object.keys(stopsReached).length > 0) {
+            transaction.set(sessionRef, {
+              ...(activating ? {
+                status: "active",
+                startTime: sessionData?.startTime ?? Date.now(),
+                activatedAt: FieldValue.serverTimestamp(),
+              } : {}),
+              ...(Object.keys(stopsReached).length > 0 ? { stopsReached } : {}),
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+        }
         transaction.set(activeRideRef, {
           ...state,
+          ...checkpoint,
           ...(durableRevision > delayUpdatedAt
             ? {
                 delayMinutes: normalizedDelayMinutes(activeRide.data()?.delayMinutes),
@@ -601,11 +640,16 @@ function persistActiveRideLifecycle(
             : {}),
           updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
-        return true;
+        return checkpoint;
       });
       // The lock check failed, so this state was not persisted. Allow a later
       // identical event to retry instead of suppressing it as a no-change.
       if (!persisted) activeRideWrites.retry(documentId, fingerprint);
+      else if (
+        persisted.tripState !== tripState || persisted.currentStopIndex !== currentStopIndex ||
+        persisted.hasDepartedOrigin !== hasDepartedOrigin
+      ) activeRideWrites.retry(documentId, fingerprint);
+      return persisted || undefined;
     } catch (error) {
       activeRideWrites.retry(documentId, fingerprint);
       console.warn(
@@ -616,23 +660,6 @@ function persistActiveRideLifecycle(
       throw error;
     }
   });
-}
-
-/** Activates an armed ride without delaying the telemetry hot path. */
-function activateRideSession(sessionId: string): void {
-  const sessionRef = db.collection("ride_sessions").doc(sessionId);
-  trackBackgroundTask(db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(sessionRef);
-    const session = snapshot.data();
-    if (!snapshot.exists || session?.status === "active") return;
-    if (session?.status !== "armed" && session?.status !== "pending") return;
-    transaction.set(sessionRef, {
-      status: "active",
-      startTime: Date.now(),
-      activatedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-  }), `[TripState] Failed to activate session ${sessionId}:`);
 }
 
 /** Starts the leader-owned trip engine and returns its idempotent async stop hook. */
@@ -737,15 +764,7 @@ export function startTripStateEngine(): () => Promise<void> {
     const isNewTelemetry =
       Number.isFinite(telemetryTimestamp) &&
       (!previousTelemetry || telemetryTimestamp > previousTelemetry.timestamp);
-    if (isNewTelemetry) {
-      processedTelemetry.set(nodeKey, {
-        timestamp: telemetryTimestamp,
-        lat: data.lat,
-        lng: data.lng,
-      });
-    }
-
-    const { tripState, currentStopIndex, hasDepartedOrigin } = isNewTelemetry
+    let { tripState, currentStopIndex, hasDepartedOrigin } = isNewTelemetry
       ? reduceTripState({
       lat: data.lat,
       lng: data.lng,
@@ -764,9 +783,13 @@ export function startTripStateEngine(): () => Promise<void> {
           hasDepartedOrigin: data.hasDepartedOrigin === true,
         };
 
-    const liveStateChanged =
-      tripState !== data.tripState ||
-      currentStopIndex !== data.currentStopIndex ||
+    if (tripState === "pre_departure" || tripState === "in_service") {
+      // Commit lifecycle and all crossed-stop history together before exposing
+      // the next index. A failed write leaves the same sample retryable.
+      const checkpoint = await persistActiveRideLifecycle(data, tripState, currentStopIndex, hasDepartedOrigin, stops);
+      if (checkpoint) ({ tripState, currentStopIndex, hasDepartedOrigin } = checkpoint);
+    }
+    const liveStateChanged = tripState !== data.tripState || currentStopIndex !== data.currentStopIndex ||
       hasDepartedOrigin !== (data.hasDepartedOrigin === true);
     if (liveStateChanged && tripState !== "completed") {
       try {
@@ -807,50 +830,15 @@ export function startTripStateEngine(): () => Promise<void> {
       }
     }
 
-    if (
-      data.tripState === "pre_departure" &&
-      tripState === "in_service" &&
-      typeof data.sessionId === "string"
-    ) {
-      activateRideSession(data.sessionId);
-    }
-
-    const reachedStopIndex =
-      data.tripState === "pre_departure" && tripState === "in_service"
-        ? 0
-        : tripState === "completed" && data.tripState !== "completed"
-        ? currentStopIndex
-        : currentStopIndex !== data.currentStopIndex
-          ? Math.max(0, currentStopIndex - 1)
-          : null;
-    if (
-      typeof data.sessionId === "string" &&
-      reachedStopIndex !== null &&
-      tripState !== "completed" &&
-      stops[reachedStopIndex]
-    ) {
-      const stop = stops[reachedStopIndex];
-      trackBackgroundTask(db.collection("ride_sessions").doc(data.sessionId).set({
-        stopsReached: {
-          [reachedStopIndex]: {
-            stopIndex: reachedStopIndex,
-            stopId: stop.id,
-            stopName: stop.name,
-            timestamp: FieldValue.serverTimestamp(),
-          },
-        },
-      }, { merge: true }),
-      `[TripState] Failed to record stop ${reachedStopIndex} for session ${data.sessionId}:`);
-    }
-
     if (data.tripState !== "completed" && completedTimeouts.has(nodeKey)) {
       clearTimeout(completedTimeouts.get(nodeKey)!.timeoutId);
       completedTimeouts.delete(nodeKey);
     }
 
     if (tripState === "completed" && data.tripState !== "completed") {
-      const completionTimeMs = Date.now();
-      const completionTimestamp = new Date(completionTimeMs).toISOString();
+      let completionTimeMs = Date.now();
+      let completionTimestamp = new Date(completionTimeMs).toISOString();
+      let turnaroundEligibleAt = completionTimeMs + AUTOMATIC_TURNAROUND_DWELL_MS;
       const completionId =
         typeof data.sessionId === "string" && data.sessionId
           ? data.sessionId
@@ -866,13 +854,38 @@ export function startTripStateEngine(): () => Promise<void> {
           const sessionRef = typeof data.sessionId === "string"
             ? db.collection("ride_sessions").doc(data.sessionId)
             : null;
-          const [activeRide, lock, session] = await Promise.all([
+          const [activeRide, lock, session, existingCompletion] = await Promise.all([
             activeRideRef ? transaction.get(activeRideRef) : Promise.resolve(null),
             transaction.get(lockRef),
             sessionRef ? transaction.get(sessionRef) : Promise.resolve(null),
+            transaction.get(completedRef),
           ]);
           if (sessionRef) {
             const sessionStatus = session?.data()?.status;
+            if (sessionStatus === "completed") {
+              // Firestore completion and RTDB publication are separate commits.
+              // Recover the original terminal projection after a lost RTDB
+              // response or process crash, without moving its retention date or
+              // touching a replacement ride's lock.
+              const completed = existingCompletion.data();
+              const completedAtMs = Date.parse(completed?.completedAt);
+              if (
+                !existingCompletion.exists ||
+                completed?.sessionId !== data.sessionId ||
+                completed?.busId !== data.busId ||
+                completed?.routeId !== data.routeId ||
+                completed?.direction !== direction ||
+                !Number.isFinite(completedAtMs) ||
+                (lock.exists && lock.data()?.sessionId !== data.sessionId) ||
+                (activeRide?.exists && activeRide.data()?.sessionId !== data.sessionId)
+              ) return null;
+              return {
+                completedAtMs,
+                eligibleAt: Number.isFinite(completed?.automaticTurnaroundEligibleAt)
+                  ? Number(completed?.automaticTurnaroundEligibleAt)
+                  : completedAtMs + AUTOMATIC_TURNAROUND_DWELL_MS,
+              };
+            }
             if (
               !session?.exists ||
               lock.data()?.sessionId !== data.sessionId ||
@@ -880,7 +893,7 @@ export function startTripStateEngine(): () => Promise<void> {
                 sessionStatus !== "armed" &&
                 sessionStatus !== "active")
             ) {
-              return false;
+              return null;
             }
           }
           transaction.set(completedRef, {
@@ -899,22 +912,14 @@ export function startTripStateEngine(): () => Promise<void> {
             sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
           }, { merge: true });
           if (typeof data.sessionId === "string") {
-            const finalStop = stops[currentStopIndex];
+            const stopsReached = missingStopHistory(
+              stops, tripState, currentStopIndex, session?.data()?.stopsReached,
+              FieldValue.serverTimestamp(), Number(data.currentStopIndex),
+            );
             transaction.set(sessionRef!, {
               status: "completed",
               endTime: Date.now(),
-              ...(finalStop
-                ? {
-                    stopsReached: {
-                      [currentStopIndex]: {
-                        stopIndex: currentStopIndex,
-                        stopId: finalStop.id,
-                        stopName: finalStop.name,
-                        timestamp: FieldValue.serverTimestamp(),
-                      },
-                    },
-                  }
-                : {}),
+              ...(Object.keys(stopsReached).length > 0 ? { stopsReached } : {}),
               updatedAt: FieldValue.serverTimestamp(),
             }, { merge: true });
           }
@@ -928,11 +933,14 @@ export function startTripStateEngine(): () => Promise<void> {
           ) {
             transaction.delete(lockRef);
           }
-          return true;
+          return { completedAtMs: completionTimeMs, eligibleAt: turnaroundEligibleAt };
         });
         // A concurrent manual termination or replacement session won. Do not
         // overwrite its interrupted history or publish a stale completion.
         if (!persistedCompletion) return;
+        completionTimeMs = persistedCompletion.completedAtMs;
+        completionTimestamp = new Date(completionTimeMs).toISOString();
+        turnaroundEligibleAt = persistedCompletion.eligibleAt;
         if (activeRideId) {
           activeRideWrites.invalidate(activeRideId);
         }
@@ -945,11 +953,10 @@ export function startTripStateEngine(): () => Promise<void> {
             currentStopIndex,
             hasDepartedOrigin,
             completedAt: completionTimeMs,
-            turnaroundEligibleAt:
-              completionTimeMs + AUTOMATIC_TURNAROUND_DWELL_MS,
+            turnaroundEligibleAt,
             turnaroundSampledAt: AUTOMATIC_TURNAROUND_DWELL_MS === 0
               ? Number(data.timestamp)
-              : completionTimeMs + AUTOMATIC_TURNAROUND_DWELL_MS,
+              : turnaroundEligibleAt,
             turnaroundClaimId: null,
             turnaroundClaimedAt: null,
           };
@@ -1010,13 +1017,8 @@ export function startTripStateEngine(): () => Promise<void> {
       }
     }
 
-    if (tripState === "pre_departure" || tripState === "in_service") {
-      await persistActiveRideLifecycle(
-        data,
-        tripState,
-        currentStopIndex,
-        hasDepartedOrigin,
-      );
+    if (isNewTelemetry) {
+      processedTelemetry.set(nodeKey, { timestamp: telemetryTimestamp, lat: data.lat, lng: data.lng });
     }
     persistFleetState({ ...data, tripState }, new Date().toISOString());
   };

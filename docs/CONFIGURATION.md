@@ -36,9 +36,9 @@ runtime secret/configuration system.
 | `WORKER_INSTANCE_ID` | No | Stable diagnostic identity for a runtime instance | Do not use credentials or personal data |
 | `ABANDONED_RIDE_THRESHOLD_HOURS` | No | Age before conservative abandoned-ride reconciliation; minimum `1`, default `12` | Obtain privacy/operations approval before changing it |
 | `RETENTION_SWEEPER_ENABLED` | Required in production | Must be exactly `true`; development/test remain disabled when omitted | Production refuses to start until the retention schedule is explicitly enforced |
-| `RIDE_SESSION_RETENTION_DAYS` | No | Terminal ride-session retention period | Must match the approved retention schedule |
+| `RIDE_SESSION_RETENTION_DAYS` | No | Terminal ride-session retention period; default `180` | Set `180` for the approved ride-history schedule; measured from `endTime` |
 | `FEEDBACK_RETENTION_DAYS` | No | Feedback retention period | Must match privacy approval |
-| `COMPLETED_TRIP_RETENTION_DAYS` | No | Completed-trip projection retention period | Must match reporting requirements and approval |
+| `COMPLETED_TRIP_RETENTION_DAYS` | No | Completed-trip projection retention period; default `180` | Set `180` for the approved ride-history schedule; measured from `completedAt` |
 | `OPERATION_LOG_RETENTION_DAYS` | No | Operational log retention period | Avoid putting secrets or personal data in logs |
 
 The exact defaults and comments are maintained in [`backend/.env.example`](../backend/.env.example).
