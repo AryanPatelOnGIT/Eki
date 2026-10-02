@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import FeedbackModal from "@/components/shared/FeedbackModal";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { auth } from "@/lib/firebaseAuth";
+import { apiRequest } from "@/lib/apiClient";
 
 export default function AccountTab() {
   const {
@@ -35,12 +36,12 @@ export default function AccountTab() {
     }
     try {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch(`${backendUrl}/api/v2/privacy-deletion-requests`, {
+      const result = await apiRequest<{ accepted?: boolean }>("/api/v2/privacy-deletion-requests", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
+        fallbackError: "Deletion request failed.",
       });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Deletion request failed.");
+      if (result?.accepted !== true) throw new Error("Deletion acknowledgement is missing.");
       setDeletionStatus("Deletion queued. Your account will be removed shortly.");
       setShowDeleteConfirm(false);
     } catch (error) {

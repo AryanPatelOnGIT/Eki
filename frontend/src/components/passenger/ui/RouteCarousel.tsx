@@ -62,6 +62,7 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
             key={route.id}
             className="w-full flex items-stretch text-left transition-all duration-300 ease-out disabled:cursor-default"
             onClick={() => hasService && onClick(route.id)}
+            disabled={!hasService}
             aria-label={hasService
               ? `Track ${route.name}`
               : `${route.name}: ${availableCount} vehicle available, service not started`}

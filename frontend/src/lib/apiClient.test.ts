@@ -2,6 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, apiRequest } from "./apiClient";
 
 describe("apiRequest", () => {
+  it.each([null, {}, { retryAfterMs: -1 }, { retryAfterMs: "100" }, { retryAfterMs: 5000 }])("handles cooldown and malformed HTTP error bodies: %j", async body => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 429 })));
+    const status = vi.fn();
+    await expect(apiRequest("/api/test", { onResponseStatus: status }))
+      .rejects.toMatchObject({ status: 429, retryAfterMs: body && "retryAfterMs" in body && body.retryAfterMs === 5000 ? 5000 : undefined });
+    expect(status).toHaveBeenCalledWith(429);
+  });
   it.each(["ngrok-free.dev", "ngrok-free.app", "ngrok.io"])("requests API responses from %s while preserving auth headers", async domain => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", `https://test.${domain}`);
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}'));
@@ -158,6 +166,6 @@ describe("apiRequest", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response("not-json", { status: 200 }),
     ));
-    await expect(apiRequest("/api/test")).rejects.toBeInstanceOf(SyntaxError);
+    await expect(apiRequest("/api/test")).rejects.toMatchObject({ code: "INVALID_RESPONSE", status: 200, outcomeUnknown: true });
   });
 });
