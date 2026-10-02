@@ -3,11 +3,14 @@
 ## Scope and review order
 
 The earlier full feature audit was completed first in PR #222, followed by the
-legacy/geometry 180-day retention fix in PR #223 (issue #214). Neither was merged
-or deployed. This follow-up starts from PR #210's durable ride/stop checkpoints
-and retention implementation and targets `testing`. It addresses issues #224
-(RTC-only cold recovery) and #225 (underreported/cancelled marker traces).
-PR #215 contains the separate RTDB field-contract and geometry-reader safeguards.
+legacy/geometry 180-day retention fix in PR #223 (issue #214). PR #226 now
+integrates PR #210's durable ride/stop checkpoints, PR #215's RTDB field/geometry
+safeguards, PR #222 and PR #223 on one branch targeting `testing`. Local integration
+resolved shared feedback headers/labels, test configuration, dependency lockfile,
+and retention-worker conflicts. The 180-day ride default and legacy-retirement
+gate are both retained. No GitHub PR was merged and nothing was deployed.
+The additional follow-up addresses issues #224 (RTC-only cold recovery) and
+#225 (underreported/cancelled marker traces).
 
 ## Cold recovery
 
@@ -63,11 +66,14 @@ tracing. See [fixture instructions](../e2e/motion/README.md).
 
 ## Validation and limits
 
-Local clean-install validation: 574 backend tests, 231 frontend tests, script
+Combined local validation: 595 backend tests, 309 frontend tests, 52 script
 checks, lint, strict production export/SW/CSP checks, zero production dependency
 audit findings, 62 native firmware cases, and both firmware build environments.
 Seven Firebase rule tests are separately exercised by CI; the ordinary local
 backend suite skips emulator-dependent cases.
+Integration regressions also verify that an RTDB outage after completed Firestore
+deletion does not resurrect its retry job, and that geometry cleanup runs while
+legacy roots remain gated until retirement is declared.
 
 Private raw logs, all browser captures, screenshots and SHA-256 evidence are
 kept in ignored `temp/live-audit-2026-10-02/validation/cold-power-motion` in the

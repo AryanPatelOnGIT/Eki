@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   filters: new Map<string, unknown[][]>(),
   recursiveDelete: vi.fn(async () => undefined),
+  rtdbRoots: [] as string[],
 }));
+vi.mock("./firebaseRtdbRetention", () => ({ firebaseRtdbRetentionStore: () => ({
+  async *entries(path: string) { mocks.rtdbRoots.push(path); yield* []; },
+  async read() { return null; }, async observe() { return Date.now(); },
+  async removeIfUnchanged() { return false; }, async forget() {}, async cleanOrphans() {},
+}) }));
 vi.mock("../lib/firebaseAdmin", () => ({ db: {
   collection: (name: string) => {
     const filters: unknown[][] = [];
@@ -23,6 +29,11 @@ import { runRetentionSweep } from "./retentionSweeper";
 afterEach(() => vi.unstubAllEnvs());
 
 describe("retention query boundaries", () => {
+  it.each([false, true])("runs geometry cleanup and gates legacy roots on retirement=%s", async retired => {
+    mocks.rtdbRoots.length = 0; vi.stubEnv("LEGACY_RTDB_RETIRED", String(retired));
+    await runRetentionSweep(Date.UTC(2026, 9, 2, 10));
+    expect(mocks.rtdbRoots).toEqual(retired ? ["users", "messages", "activeRouteGeometry"] : ["activeRouteGeometry"]);
+  });
   it("keeps both ride stores for 180 days and excludes ongoing rides", async () => {
     vi.stubEnv("RIDE_SESSION_RETENTION_DAYS", "");
     vi.stubEnv("COMPLETED_TRIP_RETENTION_DAYS", "");

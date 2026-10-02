@@ -8,8 +8,15 @@ const state = vi.hoisted(() => ({
   children: new Set<string>(),
   failDescendant: false,
   failJobWrite: false,
+  rtdbFailure: false,
   deletions: [] as string[],
 }));
+
+vi.mock("./firebaseRtdbRetention", () => ({ firebaseRtdbRetentionStore: () => ({
+  async *entries() { if (state.rtdbFailure) throw new Error("RTDB unavailable"); yield* []; },
+  async read() { return null; }, async observe() { return Date.now(); },
+  async removeIfUnchanged() { return false; }, async forget() {}, async cleanOrphans() {},
+}) }));
 
 vi.mock("./rideHistoryDeletion", () => ({
   async deleteTerminalRideHistory(_db: unknown, sessionId: string) {
@@ -57,6 +64,7 @@ beforeEach(() => {
   state.manualJobs.clear(); state.resumedManual.length = 0;
   state.deletions.length = 0;
   state.failDescendant = false; state.failJobWrite = false;
+  state.rtdbFailure = false;
 });
 
 it("retries orphaned descendants on the next sweep after a partial recursive deletion", async () => {
@@ -95,4 +103,12 @@ it("discovers interrupted manual deletions independently of terminal parent quer
   await runRetentionSweep();
   expect(state.resumedManual).toEqual(["manually-deleted-ride"]);
   expect(state.manualJobs.size).toBe(0);
+});
+
+it("retries an RTDB outage after completed Firestore deletion without resurrecting its job", async () => {
+  state.parents.add("old-ride"); state.children.add("old-ride"); state.rtdbFailure = true;
+  await expect(runRetentionSweep()).rejects.toThrow("RTDB unavailable");
+  expect(state.parents.size).toBe(0); expect(state.children.size).toBe(0); expect(state.jobs.size).toBe(0);
+  state.rtdbFailure = false; await runRetentionSweep();
+  expect(state.deletions).toEqual(["old-ride"]);
 });
