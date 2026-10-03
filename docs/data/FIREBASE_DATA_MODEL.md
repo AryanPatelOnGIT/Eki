@@ -52,6 +52,7 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | `seq`, `deviceSentAt`, `backendReceivedAt` | number / epoch ms | Sample tie-breaker, device send time, and backend ingress/freshness boundary |
 | `receivedAt` | RTDB server epoch ms | Backend commit time |
 | `plausibilityAnchor` | object | Last physically accepted `{lat,lng,speed,gpsHdop,timestamp}`; held outliers do not advance its timestamp |
+| `plausibilityReacquisition` | optional object | Temporary `{count,startedAt}` for three coherent, good-quality fixes after a 60–300 second accepted-position gap. Uses existing `rawLocation` as the preceding candidate, requires 0.5–5 second spacing and the full bounded travel envelope. Clears on acceptance or an ineligible fix; it is not ride progress/history. |
 | `deviceState` | `online` / `offline` | Ingestion/worker connectivity projection; `online` is trusted by clients only while `timestamp` is fresh |
 | `signalState` | `connected` / `gnss_lost` / `lost` | Derived signal explanation |
 | `status` | `active` / `offline` | Ride lifecycle ownership, not hardware power; initial device-only nodes are `offline` |

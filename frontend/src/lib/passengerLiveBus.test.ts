@@ -28,6 +28,25 @@ function telemetry(overrides: Record<string, unknown> = {}) {
 }
 
 describe("passenger live-bus normalization", () => {
+  it.each([-1, 201])("rejects out-of-range speed %s at both passenger boundaries", speed => {
+    const service = telemetry({ status: "active", sessionId: "session_1", direction: "forward", speed });
+    expect(normalizePassengerLiveBus("Bus01_route_1", service, now)).toBeNull();
+    expect(normalizePassengerMapBus("Bus01_route_1", telemetry({speed}), now)).toBeNull();
+  });
+  it.each([0, 200])("accepts speed endpoint %s and recovers after an invalid snapshot", speed => {
+    const service = telemetry({ status: "active", sessionId: "session_1", direction: "forward", speed });
+    expect(normalizePassengerLiveBus("Bus01_route_1", {...service,speed:201}, now)).toBeNull();
+    expect(normalizePassengerLiveBus("Bus01_route_1", service, now)?.speed).toBe(speed);
+    expect(normalizePassengerMapBus("Bus01_route_1", telemetry({speed}), now)?.speed).toBe(speed);
+  });
+  it.each([{speed:-1}, {speed:201}, {heading:-1}, {heading:360}])("rejects invalid raw motion ranges %j", invalid => {
+    const rawLocation = {lat:23.03,lng:72.47,speed:22,heading:70,gpsHdop:1,motionState:"moving",seq:1,sampledAt:now-1000,...invalid};
+    expect(normalizePassengerLiveBus("Bus01_route_1",telemetry({status:"active",sessionId:"session_1",direction:"forward",rawLocation}),now)).toBeNull();
+    expect(normalizePassengerMapBus("Bus01_route_1",telemetry({rawLocation}),now)).toBeNull();
+  });
+  it.each([-1,360])("rejects top-level heading %s", heading => {
+    expect(normalizePassengerMapBus("Bus01_route_1",telemetry({heading}),now)).toBeNull();
+  });
   it("does not advertise a fresh powered device as passenger service", () => {
     const bus = normalizePassengerLiveBus("Bus01_route_1", telemetry(), now);
     expect(bus).toBeNull();

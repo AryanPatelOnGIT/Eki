@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { createConcurrencyLimiter } from "../lib/concurrency";
 import { recordBackgroundFailure } from "../lib/backgroundFailureTracker";
-import { isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
+import { evaluateOutageReacquisition, isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
 import { normalizeRideDirection } from "../lib/rideDirection";
 import type { TelemetryPayload } from "./telemetryPayload";
@@ -671,7 +671,11 @@ export function nextTelemetryValue(
           timestamp: previousTimestamp,
         }
       : null;
-  const transitionIsPlausible = isPlausibleTelemetryTransition(previous, sample);
+  const ordinaryTransition = isPlausibleTelemetryTransition(previous, sample);
+  const reacquisition = ordinaryTransition ? { accepted: false } : evaluateOutageReacquisition(
+    previous, sample, current?.rawLocation, current?.plausibilityReacquisition,
+  );
+  const transitionIsPlausible = ordinaryTransition || reacquisition.accepted;
   const acceptedSample = transitionIsPlausible || !previous
     ? sample
     : {
@@ -694,12 +698,14 @@ export function nextTelemetryValue(
   const currentState: Record<string, unknown> = { ...(current ?? initialDevicePresenceState()) };
   delete currentState.rtdbCommittedAt; // Same server timestamp as receivedAt.
   delete currentState.activeRoutePolyline; // Geometry lives in the versioned sibling store.
+  delete currentState.plausibilityReacquisition;
 
   return {
     // Device presence is not a ride. Lifecycle fields are introduced only by
     // the transactional arm/direction-resolution path.
     ...currentState,
     ...acceptedSample,
+    ...(reacquisition.pending ? { plausibilityReacquisition: reacquisition.pending } : {}),
     // Keep the authenticated GNSS fix independently observable even when
     // plausibility filtering retains the previous accepted live position.
     // Map matching writes a separate matchedLocation and never mutates this.
