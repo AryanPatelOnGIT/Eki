@@ -204,8 +204,8 @@ function validRawLocation(value: unknown): boolean {
   if (value === undefined) return true;
   if (!validLatLngRecord(value)) return false;
   return (
-    typeof value.speed === "number" && Number.isFinite(value.speed) &&
-    typeof value.heading === "number" && Number.isFinite(value.heading) &&
+    typeof value.speed === "number" && Number.isFinite(value.speed) && value.speed >= 0 && value.speed <= 200 &&
+    typeof value.heading === "number" && Number.isFinite(value.heading) && value.heading >= 0 && value.heading < 360 &&
     (value.gpsHdop === undefined || value.gpsHdop === null ||
       (typeof value.gpsHdop === "number" && Number.isFinite(value.gpsHdop) &&
         value.gpsHdop >= 0 && value.gpsHdop <= 99)) &&
@@ -251,6 +251,8 @@ function hasValidOptionalFields(bus: Record<string, unknown>): boolean {
   }
   if (typeof bus.lat === "number" && (bus.lat < -90 || bus.lat > 90)) return false;
   if (typeof bus.lng === "number" && (bus.lng < -180 || bus.lng > 180)) return false;
+  if (typeof bus.speed === "number" && (bus.speed < 0 || bus.speed > 200)) return false;
+  if (typeof bus.heading === "number" && (bus.heading < 0 || bus.heading >= 360)) return false;
   if (
     bus.directionState !== undefined &&
     bus.directionState !== "pending" &&
