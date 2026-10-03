@@ -11,6 +11,7 @@ This follows the full feature, RTDB field-contract and cold-power audits already
 | #230 | Successful HTTP response accepted without operation confirmation; uncertain legacy start retries; fabricated card timetable | Validate operation-specific acknowledgements, retain history on failure, use v2 creation with stable retry keys including server failures, block pending starts; show route duration rather than a made-up scheduled clock. |
 | #231 | Operator subscription failure indistinguishable from empty personnel; missing keyboard controls | Scoped metadata error/retry, auth/late-callback guards, roving administration tabs and native timeline toggle/Escape/focus/inert content. |
 | #232 | Timeline header partly underneath bottom navigation | Sheet clears the full navigation height and safe area. Desktop DOM rectangles confirmed clearance. |
+| #233 | Firebase Admin transitively installed vulnerable `@fastify/busboy@3.2.0` | Override and lockfile upgrade to patched 3.2.2; no live exploit attempted. Advisories: [oversized boundary](https://github.com/advisories/GHSA-xjh9-v7x6-24jw), [prototype-named header](https://github.com/advisories/GHSA-x8mw-p69m-v3mx). |
 
 ## Coverage and evidence levels
 
@@ -29,7 +30,7 @@ Live checks used the user's testing checkout on port 3000. Patched passenger che
 | Settings | Draft time updates preview; leave without Save | Existing draft/live-snapshot protection, pending lock and failure handling; synthetic settings persistence |
 | Keyboard administration | Six tabs accessible by pointer | All six panels, ArrowLeft/Right wrapping, Home/End focus, matching aria-controls and one tab stop |
 
-Final local frontend suite: **354 tests**. Backend suite: **595 tests**, with seven emulator-only tests skipped in ordinary unit runs. Script suite: **52 checks**. Lint, TypeScript and strict production export/SW/CSP validation pass; production dependency audit reports zero findings. PR CI also runs Firebase rules emulators, backend container boot and the unchanged firmware's native/development/signed build gates. CI status must be read for the final pushed commit.
+Final local frontend suite: **354 tests**. Backend suite: **595 tests**, with seven emulator-only tests skipped in ordinary unit runs. Script suite: **52 checks**. Lint, TypeScript and strict production export/SW/CSP validation pass; production dependency audit reports zero findings after the parser update. The full development-tool audit still reports five affected packages from one [unpatched braces advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), through the Next lint toolchain. Its current consumers are repository lint globs, not application network input. Issue #234 tracks the compatible upstream fix; forcing npm's suggested Next lint downgrade was not treated as a verified repair. PR CI also runs Firebase rules emulators, backend container boot and the unchanged firmware's native/development/signed build gates. CI status must be read for the final pushed commit.
 
 ## Network and developer diagnostics
 
@@ -50,3 +51,4 @@ Ignored evidence: `temp/user-webapp-qa-2026-10-03/` (copied to the primary works
 Run the fixture as described in `e2e/fixtures/README.md`. Choose Device for stationary preview, Pending for unresolved direction, Mixed for a service beside an unarmed device, and Multiple for selection after service acquisition. Empty/Completed must not expose an active ride. Select a fresh scenario before quiet-loss experiments; timestamps intentionally expire. Backend mutations are unit/integration tested with synthetic data rather than performed on live history.
 
 Research references informing the interaction review: [user-visible browser assertions](https://playwright.dev/docs/best-practices), [WAI tab keyboard pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), [Next development indicators](https://nextjs.org/docs/pages/api-reference/config/next-config-js/devIndicators), and [ngrok local inspection](https://github.com/ngrok/ngrok-docs/blob/main/share-localhost/inspection.mdx).
+
