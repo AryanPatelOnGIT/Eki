@@ -92,7 +92,7 @@ at continuous ten-second writes it rotates about 16.9 times daily, roughly
 a new fleet endurance guarantee. Confirm `ready=true` and successful checkpoint
 writes on the actual board before performing the power-cut steps below.
 
-The current audit builds firmware but does not flash boards or modify fuses.
+Automated CI builds firmware but does not flash boards or modify fuses.
 Native tests discard all volatile/RTC state, inject writes interrupted at every
 byte boundary, interrupt an old-page erase, wrap the ring and generation, corrupt
 records, change configuration, exhaust failing writes, and check stale/warm recovery.
