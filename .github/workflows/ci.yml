@@ -79,6 +79,8 @@ jobs:
       # Slow-3G/Offline browser acceptance remains a manual deployment gate;
       # see docs/operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md.
       - run: npm audit --omit=dev --omit=optional
+      - name: Audit development tooling as well as runtime dependencies
+        run: npm audit
 
   backend-image:
     # Issue #28: the backend runs as replicated containers, so the exact image
