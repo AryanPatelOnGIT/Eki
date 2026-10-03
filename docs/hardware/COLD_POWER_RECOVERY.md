@@ -61,7 +61,38 @@ the actual flash chip's rated endurance and duty cycle before fleet deployment.
 
 ## Stationary acceptance procedure after installation
 
-The current audit builds firmware but does not flash boards or modify fuses.
+### Older development boards with flash crash dumps enabled
+
+The stock Arduino-only `esp32dev` SDK enables flash core dumps. On an older
+partition table without `gps_log`, `FlashStorage` therefore refuses its
+`coredump` fallback and reports `ready=false`. A successful application build
+alone does not establish power-loss recovery on that layout. Never remove the
+compile-time dump guard: precompiled IDF libraries could overwrite the journal.
+
+Use `platformio run --project-dir hardware -e esp32dev-journal` for app-only
+acceptance on an existing unsecured Eki development board. This environment
+rebuilds IDF with flash core dumps disabled, preserves credential handling and
+OTA restrictions, and uses a separate development configuration. It never
+inherits the fleet Secure Boot or flash-encryption provisioning defaults.
+Compile-time guards reject a build that accidentally enables flash dumps or
+fleet provisioning. The signed fleet environment retains its existing defaults.
+
+Before installing, read the board's security flags and partition table, back up
+and validate its existing app, and back up the reserved coredump partition.
+Confirm its original Eki layout has app0 at `0x10000` with size `0x300000` and
+coredump at `0x3f0000` with size `0x10000`. For that exact layout, write only the
+reviewed `esp32dev-journal/firmware.bin` at `0x10000`, then verify the written
+image. Do not use a general PlatformIO upload, write a new bootloader/partition
+table, erase NVS or filesystem regions, or change security fuses. A secured or
+different-layout board needs its normal reviewed provisioning workflow.
+
+The legacy 64 KiB journal has half the capacity of the 128 KiB fleet journal:
+at continuous ten-second writes it rotates about 16.9 times daily, roughly
+6,170 erases per sector yearly. This is a development compatibility path, not
+a new fleet endurance guarantee. Confirm `ready=true` and successful checkpoint
+writes on the actual board before performing the power-cut steps below.
+
+Automated CI builds firmware but does not flash boards or modify fuses.
 Native tests discard all volatile/RTC state, inject writes interrupted at every
 byte boundary, interrupt an old-page erase, wrap the ring and generation, corrupt
 records, change configuration, exhaust failing writes, and check stale/warm recovery.

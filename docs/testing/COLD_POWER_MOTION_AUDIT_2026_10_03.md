@@ -1,5 +1,9 @@
 # Cold power and moving-marker follow-up — 2026-10-03
 
+Later acceptance: [physical power cuts, installed journal firmware, merged CI,
+phone-width Google Maps and remaining gates](TESTING_ACCEPTANCE_2026_10_03.md).
+The measurements and pending statements below describe this earlier capture.
+
 ## Scope and review order
 
 The earlier full feature audit was completed first in PR #222, followed by the

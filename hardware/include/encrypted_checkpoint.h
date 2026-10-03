@@ -7,6 +7,13 @@
 #include <mbedtls/md.h>
 #include <cstring>
 
+#if defined(EKI_LEGACY_JOURNAL_BUILD) && (defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) || defined(CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH) || defined(CONFIG_SECURE_BOOT) || defined(CONFIG_SECURE_FLASH_ENC_ENABLED))
+#error "Legacy journal acceptance requires rebuilt IDF with flash dumps and fleet provisioning disabled"
+#endif
+#if defined(EKI_LEGACY_JOURNAL_BUILD) && (!defined(CONFIG_PARTITION_TABLE_OFFSET) || CONFIG_PARTITION_TABLE_OFFSET != 0x8000)
+#error "Legacy journal acceptance requires the original 0x8000 partition table"
+#endif
+
 namespace eki { namespace checkpoint {
 class FlashStorage {
  public:
