@@ -39,8 +39,8 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
         const directedRoute = hasService
           ? routeInRideDirectionState(route, directionState)
           : null;
-        const stops = directedRoute?.stops ?? [];
-        const durationSeconds = Number.parseFloat(directedRoute?.duration ?? "");
+        const stops = directedRoute?.stops ?? route.stops ?? [];
+        const durationSeconds = Number.parseFloat(directedRoute?.duration ?? route.duration ?? "");
         const durationMins = Number.isFinite(durationSeconds) && durationSeconds > 0
           ? Math.max(1, Math.round(durationSeconds / 60)) : null;
 
@@ -83,7 +83,7 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
                   <div className="flex items-center gap-2">
 
                     <div className="flex items-baseline gap-1.5 text-[11.5px] font-black whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>
-                      <span>{directedRoute ? `${stops.length} stops` : "Stops pending"}</span>
+                      <span>{stops.length ? `${stops.length} stops` : "Stops pending"}</span>
                       <span className="text-[10px] opacity-30 self-center">&bull;</span>
                       <span className="text-white">{durationMins ? `${durationMins} min route` : "Duration pending"}</span>
                     </div>

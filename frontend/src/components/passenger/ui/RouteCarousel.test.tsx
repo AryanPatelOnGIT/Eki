@@ -27,6 +27,8 @@ describe("passenger route-card controls", () => {
     await userEvent.setup().click(card);
     expect(select).toHaveBeenCalledWith("qa-route");
     expect(screen.queryByText(/Scheduled:/)).toBeNull();
+    expect(screen.getByText("2 stops")).toBeTruthy();
+    expect(screen.getByText("10 min route")).toBeTruthy();
   });
 
   it.each(["600s", "invalid", "0s"])("labels configured duration without inventing a scheduled arrival: %s", duration => {

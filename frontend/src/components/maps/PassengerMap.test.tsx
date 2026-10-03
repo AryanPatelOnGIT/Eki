@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import PassengerMap from "./PassengerMap";
@@ -9,9 +9,9 @@ import { SIGNAL_LOST_MS } from "@/lib/liveBusFreshness";
 import { route, fixtureBus } from "../../../../e2e/fixtures/state";
 const state = vi.hoisted(() => ({
   geometries: new Map(), snapshot: {} as Record<string, unknown>, listener: undefined as undefined | ((value: Record<string, unknown>) => void),
-  unsubscribe: vi.fn(), arrivals: vi.fn(), panTo: vi.fn(), setZoom: vi.fn(),
+  unsubscribe: vi.fn(), arrivals: vi.fn(), panTo: vi.fn(), setZoom: vi.fn(), fitBounds: vi.fn(),
 }));
-const map = { panTo: state.panTo, setZoom: state.setZoom };
+const map = { panTo: state.panTo, setZoom: state.setZoom, fitBounds: state.fitBounds };
 vi.mock("@vis.gl/react-google-maps", () => ({
   Map: ({ children }: { children: ReactNode }) => <div aria-label="Map">{children}</div>,
   AdvancedMarker: ({ children, position }: { children: ReactNode; position: unknown }) => <div data-marker={JSON.stringify(position)}>{children}</div>,
@@ -37,12 +37,38 @@ describe("passenger map device and ride contexts", () => {
     state.snapshot = { bus: { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, speed: 0 } };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview selectedBusKey="bus:qa-route:qa-bus" />);
     expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
-    expect(state.panTo).toHaveBeenLastCalledWith({ lat: 23, lng: 72 });
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.01, south: 23, east: 72.01, west: 72 }, expect.any(Object));
+    expect(state.panTo).not.toHaveBeenCalled();
     await userEvent.setup().click(screen.getByRole("button", { name: "Configured route" }));
     expect(screen.getByText("Alpha")).toBeTruthy();
     expect(screen.queryByText("Next Stop")).toBeNull();
     expect(screen.queryByText("Boarding Stop")).toBeNull();
     expect(state.arrivals).not.toHaveBeenCalled();
+  });
+  it("frames an off-route stationary bus with the route, then lets the passenger focus the bus", async () => {
+    const device = { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, lat: 23.1, lng: 72.1 };
+    state.snapshot = { bus: device };
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} preview />);
+    expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.1, south: 23, east: 72.1, west: 72 }, expect.any(Object));
+    const fitted = state.fitBounds.mock.calls.length;
+    act(() => state.listener?.({ bus: { ...device, lat: 23.11, seq: 2 } }));
+    expect(state.fitBounds).toHaveBeenCalledTimes(fitted);
+    fireEvent.pointerDown(screen.getByLabelText("Map").parentElement!);
+    act(() => state.listener?.({ bus: { ...device, lat: 23.12, seq: 3 } }));
+    expect(state.fitBounds).toHaveBeenCalledTimes(fitted);
+    expect(state.panTo).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Center on bus" }));
+    expect(state.panTo).toHaveBeenLastCalledWith({ lat: 23.12, lng: 72.1 });
+    expect(state.setZoom).toHaveBeenLastCalledWith(16);
+  });
+  it("frames the route while GPS is missing and includes the first fix without resetting on every update", async () => {
+    state.snapshot = {};
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} preview />);
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.01, south: 23, east: 72.01, west: 72 }, expect.any(Object));
+    act(() => state.listener?.({ bus: { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, lat: 23.1, lng: 72.1 } }));
+    expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.1, south: 23, east: 72.1, west: 72 }, expect.any(Object));
   });
   it("keeps a direction-pending session visible as raw GPS without inferred progress", async () => {
     state.snapshot = { bus: fixtureBus() };

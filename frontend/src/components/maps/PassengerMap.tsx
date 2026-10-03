@@ -125,14 +125,37 @@ function BusMarker({
 
 // ── Traffic layer rendered imperatively ──────────────────────────────────────
 // ── Pan/zoom controller ──────────────────────────────────────────────────────
-function MapCenterer({ target, isCentered }: { target: { lat: number; lng: number } | null, isCentered: boolean }) {
+function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
+  target: { lat: number; lng: number } | null;
+  isCentered: boolean;
+  previewPoints?: { lat: number; lng: number }[];
+  hasBus: boolean;
+}) {
   const map = useMap();
+  const fittedStage = useRef<string | null>(null);
   useEffect(() => {
+    if (!map || !isCentered) return;
+    if (previewPoints) {
+      // Fit once for the route, and once when its first GPS fix arrives.
+      // Subsequent fixes must not repeatedly zoom or override a manual drag.
+      const stage = hasBus ? "bus" : "route";
+      if (fittedStage.current === stage) return;
+      const points = [...previewPoints, ...(hasBus && target ? [target] : [])]
+        .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+      if (points.length === 0) return;
+      const bounds = points.reduce((result, point) => ({
+        north: Math.max(result.north, point.lat), south: Math.min(result.south, point.lat),
+        east: Math.max(result.east, point.lng), west: Math.min(result.west, point.lng),
+      }), { north: -Infinity, south: Infinity, east: -Infinity, west: Infinity });
+      map.fitBounds(bounds, { top: 220, bottom: 160, left: 48, right: 72 });
+      fittedStage.current = stage;
+      return;
+    }
     if (isCentered && target && map) {
       map.panTo(target);
       map.setZoom(16);
     }
-  }, [isCentered, target, map]);
+  }, [isCentered, target, map, previewPoints, hasBus]);
   return null;
 }
 
@@ -168,6 +191,7 @@ function PassengerMapInner({
   const [passengerLocation, setPassengerLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [geolocationNotice, setGeolocationNotice] = useState<string | null>(null);
   const [isCentered, setIsCentered] = useState(true);
+  const [focusBus, setFocusBus] = useState(false);
   const arrivalTimestampsRef = useRef<Record<string, number>>({});
   const routeStops = useMemo(() => {
     return route.stops?.map(s => ({ lat: s.lat, lng: s.lng })) ?? [];
@@ -523,7 +547,9 @@ function PassengerMapInner({
           style={{ width: "100%", height: "100%" }}
           {...MAP_OPTIONS}
         >
-          <MapCenterer target={centerTarget} isCentered={isCentered} />
+          <MapCenterer target={centerTarget} isCentered={isCentered}
+            previewPoints={preview && !focusBus ? (routePath.length ? routePath : routeStops) : undefined}
+            hasBus={Boolean(firstBusMarker.position)} />
           <DirectionsRoute
             key={`${route.id}:${route.rideDirection}:${activeRoute?.version ?? "configured"}`}
             routeId={route.id}
@@ -633,7 +659,7 @@ function PassengerMapInner({
 
       <div className="absolute top-[220px] right-4 z-40">
         <button
-          onClick={() => setIsCentered(true)}
+          onClick={() => { setFocusBus(true); setIsCentered(true); }}
           className="flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 border active:scale-95 shadow-lg"
           style={{
             background: isCentered ? "rgba(59, 130, 246, 0.15)" : "var(--surface-2)",
