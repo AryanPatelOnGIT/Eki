@@ -21,8 +21,10 @@ async function prepare() {
   const joined = vi.fn(); render(<PassengerBoardingView sessionId="qa-session" route={route} tripState="in_service" onJoined={joined} />);
   const user = userEvent.setup();
   expect((screen.getByRole("button", { name: "Board" }) as HTMLButtonElement).disabled).toBe(true);
-  await user.selectOptions(screen.getByLabelText("Boarding stop"), "alpha");
-  await user.selectOptions(screen.getByLabelText("Destination station"), "beta");
+  await user.click(screen.getByRole("combobox", { name: "Boarding stop" }));
+  await user.click(screen.getByRole("option", { name: "Alpha" }));
+  await user.click(screen.getByRole("combobox", { name: "Destination station" }));
+  await user.click(screen.getByRole("option", { name: "Beta" }));
   await user.type(screen.getByLabelText("Boarding code"), "abcdefgh");
   return { user, joined };
 }

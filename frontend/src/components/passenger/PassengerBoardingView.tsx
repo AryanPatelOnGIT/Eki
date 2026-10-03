@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RouteData } from "@/hooks/useRoutes";
-import CustomSelect from "@/components/ui/CustomSelect";
+import InAppSelect from "@/components/ui/InAppSelect";
 import { errorMessage } from "@/lib/errors";
 import { auth } from "@/lib/firebaseAuth";
 import { apiRequest } from "@/lib/apiClient";
@@ -165,7 +165,7 @@ export default function PassengerBoardingView({
       >
         {tripState === "in_service" ? "Ride in service" : "Ride armed · awaiting stop 1"}
       </p>
-      <CustomSelect
+      <InAppSelect
         name="boarding-stop"
         ariaLabel="Boarding stop"
         placeholder="Boarding..."
@@ -178,7 +178,7 @@ export default function PassengerBoardingView({
         options={[{ value: "", label: "Boarding..." }, ...stopOptions]}
         style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
       />
-      <CustomSelect
+      <InAppSelect
         name="destination-station"
         ariaLabel="Destination station"
         placeholder="Choose destination station..."

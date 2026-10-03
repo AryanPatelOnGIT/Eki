@@ -50,7 +50,8 @@ describe("passenger workspace navigation", () => {
     setScenario("multiple"); render(<PassengerWorkspace />); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));
     expect(await screen.findByText("Boarding qa-session")).toBeTruthy();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Live bus" }), screen.getByRole("option", { name: "Bus qa-bus-2 · B → A" }));
+    await user.click(screen.getByRole("combobox", { name: "Live bus" }));
+    await user.click(screen.getByRole("option", { name: "Bus qa-bus-2 · B → A" }));
     expect(await screen.findByText("Boarding qa-session-2")).toBeTruthy();
     expect(screen.queryByText("Boarding qa-session")).toBeNull();
   });
@@ -80,6 +81,11 @@ describe("device preview lifecycle", () => {
     expect(screen.getByText("Bus online · service not started")).toBeTruthy();
     expect(screen.queryByText(/Boarding qa-session/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Open live chat" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Destination station" }));
+    expect(screen.getByRole("listbox", { name: "Destination station" })).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: "Beta" }));
+    expect(screen.getByRole("combobox", { name: "Destination station" }).textContent).toContain("Beta");
+    expect(screen.queryByRole("listbox")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Back to home" }));
     expect(await screen.findByRole("button", { name: "Track QA route" })).toBeTruthy();
   });
@@ -106,7 +112,8 @@ describe("selected bus identity during service start", () => {
   it("keeps the selected device when it acquires a new session alongside another bus", async () => {
     setScenario("mixed"); render(<PassengerWorkspace />); const user=userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Live bus" }), screen.getByRole("option", { name: "Bus qa-bus-2 · Service not started" }));
+    await user.click(screen.getByRole("combobox", { name: "Live bus" }));
+    await user.click(screen.getByRole("option", { name: "Bus qa-bus-2 · Service not started" }));
     expect(screen.getByText("Bus online · service not started")).toBeTruthy();
     act(() => setScenario("multiple"));
     expect(await screen.findByText("Boarding qa-session-2")).toBeTruthy();
