@@ -9,7 +9,7 @@ import {
   Activity,
   MessageSquare,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const loadingPanel = () => (
   <div className="h-full grid place-items-center text-white/50" role="status" aria-label="Loading panel">
@@ -36,6 +36,7 @@ const TABS: { id: AdminTab; label: string; Icon: React.FC<{ className?: string }
 ];
 
 export default function AdminPage() {
+  const tabButtons = useRef(new Map<AdminTab, HTMLButtonElement>());
   const [activeTab, setActiveTab] = useState<AdminTab>("operations");
 
   const selectTab = (tab: AdminTab) => {
@@ -62,11 +63,23 @@ export default function AdminPage() {
       <div className="shrink-0 w-full border-b border-white/5 bg-brand-surface/30 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex items-stretch overflow-x-auto hide-scrollbar" role="tablist" aria-label="Administration sections">
-            {TABS.map(({ id, label, Icon, secondary }) => (
+            {TABS.map(({ id, label, Icon, secondary }, index) => (
               <button
                 key={id}
                 id={`admin-tab-${id}`}
+                ref={button => { if (button) tabButtons.current.set(id, button); else tabButtons.current.delete(id); }}
                 role="tab"
+                tabIndex={activeTab === id ? 0 : -1}
+                onKeyDown={event => {
+                  const nextIndex = event.key === "ArrowRight" ? (index + 1) % TABS.length
+                    : event.key === "ArrowLeft" ? (index + TABS.length - 1) % TABS.length
+                    : event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : null;
+                  if (nextIndex === null) return;
+                  event.preventDefault();
+                  const nextTab = TABS[nextIndex].id;
+                  selectTab(nextTab);
+                  tabButtons.current.get(nextTab)?.focus();
+                }}
                 aria-selected={activeTab === id}
                 aria-controls={`admin-panel-${id}`}
                 onClick={() => selectTab(id)}

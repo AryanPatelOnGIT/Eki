@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiRequest } from "./apiClient";
+import { ApiError, apiRequest, acknowledgedField } from "./apiClient";
 
 describe("apiRequest", () => {
+  it.each([{}, null, { saved: false }, { saved: "true" }])("rejects missing write acknowledgements: %j", async body => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    await expect(apiRequest("/api/test", { validateResponse: value => acknowledgedField(value, "saved") }))
+      .rejects.toMatchObject({ code: "INVALID_ACKNOWLEDGEMENT", outcomeUnknown: true });
+  });
+  it("does not treat a no-content write as confirmed when acknowledgement is required", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    await expect(apiRequest("/api/test", { validateResponse: value => acknowledgedField(value, "saved") }))
+      .rejects.toMatchObject({ outcomeUnknown: true });
+  });
   it.each([null, {}, { retryAfterMs: -1 }, { retryAfterMs: "100" }, { retryAfterMs: 5000 }])("handles cooldown and malformed HTTP error bodies: %j", async body => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 429 })));

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Timestamp } from "firebase/firestore";
 import { auth } from "@/lib/firebaseAuth";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, isApiRecord } from "@/lib/apiClient";
 import { useBuses } from "@/hooks/useBuses";
 import { useCollection } from "@/hooks/useCollection";
 import { useDrivers } from "@/hooks/useDrivers";
@@ -300,6 +300,7 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
         },
         body: JSON.stringify({ status }),
         fallbackError: "Unable to update feedback status.",
+        validateResponse: value => isApiRecord(value) && typeof value.updated === "boolean" && value.status === status,
       });
     } catch (e) {
       console.error("Status update failed:", e);

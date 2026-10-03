@@ -9,8 +9,9 @@ import { getDistanceMeters } from "@/lib/mapUtils";
 import { isLiveBusSignalLost, liveBusFreshnessTimestamp } from "@/lib/liveBusFreshness";
 import { subscribeLiveBusesByRoute } from "@/lib/liveBusStore";
 import {
-  normalizePassengerLiveBus,
-  type PassengerLiveBus,
+  normalizePassengerMapBus,
+  passengerLiveBusSelectionKey,
+  type PassengerMapBus,
 } from "@/lib/passengerLiveBus";
 import { passengerRerouteNotice } from "@/lib/passengerRouteStatus";
 
@@ -37,9 +38,11 @@ export interface PassengerMapProps {
   targetStop: RouteStop;
   route: DirectedRouteData | null;
   resumeGeneration?: number;
+  preview?: boolean;
+  selectedBusKey?: string;
 }
 
-type IncomingBusData = PassengerLiveBus;
+type IncomingBusData = PassengerMapBus;
 
 const WALKING_KMH = 5;
 const WALKING_M_PER_MIN = (WALKING_KMH * 1000) / 60;
@@ -137,16 +140,18 @@ function PassengerMapInner({
   targetStop,
   route,
   resumeGeneration = 0,
+  preview = false,
+  selectedBusKey,
 }: {
   targetStop: RouteStop;
   route: DirectedRouteData;
   resumeGeneration?: number;
+  preview?: boolean;
+  selectedBusKey?: string;
 }) {
   const [buses, setBuses] = useState<Map<string, IncomingBusData>>(new Map<string, IncomingBusData>());
   const [stopETAs, setStopETAs] = useState<Record<string, number>>({});
   const [uiNow, setUiNow] = useState(() => Date.now());
-  const [signalLostBuses, setSignalLostBuses] = useState<Set<string>>(new Set());
-  const [signalLostLastSeen, setSignalLostLastSeen] = useState<number | null>(null);
   const [activeBusStopIndex, setActiveBusStopIndex] = useState<number | undefined>(undefined);
   const lastBuzzedStopIdRef = useRef<string | null>(null);
   const lastStopIndexRef = useRef<Record<string, number>>({});
@@ -162,7 +167,7 @@ function PassengerMapInner({
 
   const [passengerLocation, setPassengerLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [geolocationNotice, setGeolocationNotice] = useState<string | null>(null);
-  const [isCentered, setIsCentered] = useState(false);
+  const [isCentered, setIsCentered] = useState(true);
   const arrivalTimestampsRef = useRef<Record<string, number>>({});
   const routeStops = useMemo(() => {
     return route.stops?.map(s => ({ lat: s.lat, lng: s.lng })) ?? [];
@@ -226,38 +231,29 @@ function PassengerMapInner({
 
         if (!allData) {
           setBuses(new Map());
-          setSignalLostBuses(new Set());
+          setActiveBusStopIndex(undefined);
           return;
         }
 
         const activeBuses = new Map<string, IncomingBusData>();
-        const newSignalLost = new Set<string>();
-        let oldestTimestamp: number | null = null;
 
         Object.entries(allData).forEach(([key, incoming]) => {
-          const normalized = normalizePassengerLiveBus(key, incoming, now);
+          const normalized = normalizePassengerMapBus(key, incoming, now);
           if (
             !normalized ||
             normalized.routeId !== currentRoute.id ||
-            !directionsMatch(normalized.direction, currentRoute.rideDirection)
+            (selectedBusKey && passengerLiveBusSelectionKey(normalized) !== selectedBusKey) ||
+            (!preview && !directionsMatch(normalized.direction, currentRoute.rideDirection))
           ) return;
           const bus: IncomingBusData = {
             ...normalized,
+            ...(preview ? { direction: undefined, matchedLocation: undefined, mapMatchSeq: undefined, mapMatchSampledAt: undefined, routeSource: undefined } : {}),
             heading: normalizeHeading(normalized.heading),
           };
 
           activeBuses.set(bus.busId, bus);
 
-          if (
-            isLiveBusSignalLost(liveBusFreshnessTimestamp(bus), now) ||
-            bus.deviceState === "offline"
-          ) {
-            newSignalLost.add(bus.busId);
-            const receivedAt = liveBusFreshnessTimestamp(bus) ?? bus.timestamp;
-            if (oldestTimestamp === null || receivedAt < oldestTimestamp) {
-              oldestTimestamp = receivedAt;
-            }
-          }
+          if (preview) return;
 
           if (!currentRoute.stops?.length) return;
 
@@ -341,14 +337,10 @@ function PassengerMapInner({
           }
         });
         setBuses(activeBuses);
-        setSignalLostBuses(newSignalLost);
-        setSignalLostLastSeen(oldestTimestamp);
         // Update activeBusStopIndex reactively from the first bus
         const firstEntry = activeBuses.values().next().value as IncomingBusData | undefined;
-        if (firstEntry) {
-          const idx = lastStopIndexRef.current[firstEntry.busId] ?? 0;
-          setActiveBusStopIndex(idx);
-        }
+        setActiveBusStopIndex(firstEntry && !preview
+          ? lastStopIndexRef.current[firstEntry.busId] ?? 0 : undefined);
       }, (error) => {
         console.warn("[RTDB] activeBuses read failed:", error.message);
       });
@@ -356,7 +348,7 @@ function PassengerMapInner({
     return () => {
       unsubscribe();
     };
-  }, [route.id, resumeGeneration]);
+  }, [route.id, resumeGeneration, preview, selectedBusKey]);
 
   // ── High-Frequency Speed-Aware ETA Fallback (Haversine) ──────────────────
   const updateUI = useCallback(() => {
@@ -370,7 +362,7 @@ function PassengerMapInner({
   }, []);
 
   useEffect(() => {
-    if (!route.stops || route.stops.length === 0 || buses.size === 0) {
+    if (preview || !route.stops || route.stops.length === 0 || buses.size === 0) {
       // No bus to compute arrivals for (route empty or bus gone): clear any
       // previous route's arrival timestamps so stale countdowns never outlive
       // the bus that produced them (#67).
@@ -389,6 +381,7 @@ function PassengerMapInner({
       const newArrivals: Record<string, number> = {};
 
       for (const bus of Array.from(buses.values())) {
+        if (bus.deviceState !== "online" || isLiveBusSignalLost(liveBusFreshnessTimestamp(bus), now)) continue;
         const closestStopIdx = lastStopIndexRef.current[bus.busId] ?? 0;
         const remainingStops = route.stops.slice(closestStopIdx);
         if (remainingStops.length === 0) continue;
@@ -420,18 +413,22 @@ function PassengerMapInner({
       }
 
       arrivalTimestampsRef.current = newArrivals;
-      // Immediately trigger UI update for the new values
-      updateUI();
+      // Publish arrival labels without advancing the clock from this effect.
+      // The independent timer advances uiNow; feeding it back here loops.
+      setStopETAs(Object.fromEntries(Object.entries(newArrivals).map(([id, time]) =>
+        [id, Math.max(0, Math.ceil((time - now) / 60_000))],
+      )));
     };
 
     calculateETAs();
   }, [
     buses,
+    uiNow,
+    preview,
     route.id,
     route.stops,
     routePath,
     dynamicGeometries,
-    updateUI,
   ]);
 
   // ── ETA Smooth Interpolation ───────────────────────────────────────────────
@@ -440,6 +437,13 @@ function PassengerMapInner({
     return () => clearInterval(interval);
   }, [updateUI]);
 
+  // Evaluate silence on the UI clock too: a missing update cannot refresh
+  // presence or prevent the lost-signal banner from appearing.
+  const signalLostBuses = [...buses.values()].filter(bus =>
+    bus.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(bus), uiNow),
+  );
+  const signalLostLastSeen = signalLostBuses.length
+    ? Math.min(...signalLostBuses.map(bus => liveBusFreshnessTimestamp(bus) ?? bus.timestamp)) : null;
   const signalLostMinutes = signalLostLastSeen
     ? Math.max(0, Math.round((uiNow - signalLostLastSeen) / 60_000))
     : null;
@@ -456,9 +460,14 @@ function PassengerMapInner({
 
   return (
     <>
+      {preview && buses.size === 0 && (
+        <div className="absolute top-[190px] left-4 right-4 z-40 rounded-xl bg-zinc-950/90 p-3 text-sm" role="status">
+          Waiting for a valid GPS fix. The configured route remains available.
+        </div>
+      )}
       {/* ── Signal Lost Banner ── */}
-      {signalLostBuses.size > 0 && (
-        <div className="absolute top-10 left-4 right-4 z-50 animate-slide-down">
+      {signalLostBuses.length > 0 && (
+        <div className="absolute top-10 left-4 right-4 z-50 animate-slide-down" role="status" aria-live="polite">
           <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
             style={{ 
               background: "var(--status-warning-bg)", 
@@ -475,7 +484,7 @@ function PassengerMapInner({
           </div>
         </div>
       )}
-      {rerouteNotice && signalLostBuses.size === 0 && (
+      {rerouteNotice && signalLostBuses.length === 0 && (
         <div className="absolute top-10 left-4 right-4 z-50" role="status">
           <div
             className="flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
@@ -490,7 +499,7 @@ function PassengerMapInner({
           </div>
         </div>
       )}
-      {geolocationNotice && signalLostBuses.size === 0 && !rerouteNotice && (
+      {geolocationNotice && signalLostBuses.length === 0 && !rerouteNotice && (
         <div className="absolute top-10 left-4 right-4 z-50" role="status">
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
@@ -509,7 +518,7 @@ function PassengerMapInner({
       <div className="absolute inset-0 z-0" style={{ background: "var(--surface-0)" }} onPointerDown={() => setIsCentered(false)} onTouchStart={() => setIsCentered(false)}>
         <GoogleMap
           mapId={MAPS_MAP_ID}
-          defaultCenter={mapCenter}
+          defaultCenter={centerTarget}
           defaultZoom={15}
           style={{ width: "100%", height: "100%" }}
           {...MAP_OPTIONS}
@@ -640,6 +649,7 @@ function PassengerMapInner({
 
       <RouteTimelineSheet
         route={route}
+        preview={preview}
         targetStopId={targetStop.id}
         activeBusId={null}
         stopETAs={stopETAs}
@@ -657,10 +667,12 @@ export default function PassengerMap(props: PassengerMapProps) {
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <PassengerMapInner
-        key={props.route.id}
+        key={`${props.route.id}:${props.route.rideDirection}:${props.preview ? "preview" : "ride"}:${props.selectedBusKey ?? "all"}`}
         targetStop={props.targetStop}
         route={props.route}
         resumeGeneration={props.resumeGeneration}
+        preview={props.preview}
+        selectedBusKey={props.selectedBusKey}
       />
     </div>
   );

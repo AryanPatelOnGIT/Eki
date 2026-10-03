@@ -32,6 +32,7 @@ import {
   directionLabelState,
   normalizeRideDirection,
   routeInRideDirectionState,
+  routeInRideDirection,
 } from "@/lib/rideDirection";
 import CustomSelect from "@/components/ui/CustomSelect";
 import { isLiveChatDeviceOnline } from "@/lib/activeBusEntries";
@@ -56,9 +57,11 @@ const POST_RIDE_FEEDBACK_DELAY_MS = 10_000;
 
 type ActiveBusData = PassengerLiveBus;
 
+type VisibleBusData = ActiveBusData | PassengerBusAvailability;
+
 type ActiveSessionBusData = ActiveBusData & { sessionId: string };
 
-function hasSessionId(bus: ActiveBusData): bus is ActiveSessionBusData {
+function hasSessionId(bus: VisibleBusData): bus is ActiveSessionBusData {
   return typeof bus.sessionId === "string" && bus.sessionId.length > 0;
 }
 
@@ -76,6 +79,7 @@ export default function PassengerWorkspace() {
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [selectedDestinationStopId, setSelectedDestinationStopId] = useState("");
   const [selectedLiveBusKey, setSelectedLiveBusKey] = useState("");
+  const [selectedBusId, setSelectedBusId] = useState("");
   const [activeBuses, setActiveBuses] = useState<ActiveBusData[]>([]);
   const [availableBuses, setAvailableBuses] = useState<PassengerBusAvailability[]>([]);
   const [isMessagingOpen, setIsMessagingOpen] = useState(false);
@@ -94,8 +98,8 @@ export default function PassengerWorkspace() {
 
   // Listen to Firebase Realtime Database for active buses using the existing
   // Firebase session established by the root auth provider.
-  // Passenger visibility requires a complete server-owned ride lifecycle.
-  // Device-only and direction-pending nodes remain admin diagnostics.
+  // Ride actions require a server-owned lifecycle. Online assigned devices
+  // also expose a read-only route/location preview.
   useEffect(() => {
     const unsubscribe = subscribeLiveBusChanges((change) => {
         const trackedRideSessionId =
@@ -163,6 +167,16 @@ export default function PassengerWorkspace() {
     };
   }, [connectionGeneration, markSnapshotReceived, resumeGeneration]);
 
+  // Presence expires without another RTDB event after power/network loss.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAvailableBuses(passengerBusAvailabilities(
+        Object.fromEntries(rawLiveBusesRef.current), Date.now(),
+      ));
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const visibleRouteIds = new Set([
     ...activeBuses.map((bus) => bus.routeId),
     ...availableBuses.map((bus) => bus.routeId),
@@ -175,30 +189,35 @@ export default function PassengerWorkspace() {
     ? selectedRouteId
     : displayRoutes[0]?.id ?? "";
   const activeRoute = displayRoutes.find(route => route.id === effectiveRouteId);
-  const busesOnRoute = activeBuses.filter(
+  const busesOnRoute: VisibleBusData[] = [...activeBuses, ...availableBuses].filter(
     (bus) => bus.routeId === effectiveRouteId,
   );
   const activeBusOnRoute =
     busesOnRoute.find((bus) => bus.sessionId === trackedSessionId) ??
     busesOnRoute.find((bus) => passengerLiveBusSelectionKey(bus) === selectedLiveBusKey) ??
+    busesOnRoute.find((bus) => bus.busId === selectedBusId) ??
     busesOnRoute[0];
   const activeBusOnRouteId = activeBusOnRoute?.busId;
   const activeSessionId = activeBusOnRoute?.sessionId;
-  const rideDirectionState = normalizeRideDirection(activeBusOnRoute?.direction);
+  const rideDirectionState = activeBusOnRoute?.directionState === "pending"
+    ? "pending" : normalizeRideDirection(activeBusOnRoute?.direction);
   const directedRoute = routeInRideDirectionState(activeRoute, rideDirectionState);
+  // Forward order is only the configured preview, never a resolved direction.
+  const preview = !directedRoute;
+  const mapRoute = directedRoute ?? (activeRoute ? routeInRideDirection(activeRoute, "forward") : undefined);
   const effectiveDestinationStopId =
-    directedRoute?.stops?.some((stop) => stop.id === selectedDestinationStopId)
+    mapRoute?.stops?.some((stop) => stop.id === selectedDestinationStopId)
       ? selectedDestinationStopId
       : "";
-  const targetStop = directedRoute?.stops?.find(
+  const targetStop = mapRoute?.stops?.find(
     (stop) => stop.id === effectiveDestinationStopId,
   ) ||
-    (directedRoute?.stops && directedRoute.stops.length > 0
-      ? directedRoute.stops[directedRoute.stops.length - 1]
-      : (directedRoute?.waypoints && directedRoute.waypoints.length > 0 ? {
+    (mapRoute?.stops && mapRoute.stops.length > 0
+      ? mapRoute.stops[mapRoute.stops.length - 1]
+      : (mapRoute?.waypoints && mapRoute.waypoints.length > 0 ? {
         id: "terminus",
-        lat: directedRoute.waypoints[directedRoute.waypoints.length - 1].lat,
-        lng: directedRoute.waypoints[directedRoute.waypoints.length - 1].lng,
+        lat: mapRoute.waypoints[mapRoute.waypoints.length - 1].lat,
+        lng: mapRoute.waypoints[mapRoute.waypoints.length - 1].lng,
         name: "Final Destination",
         shortName: "TERMINUS"
       } : null));
@@ -280,6 +299,7 @@ export default function PassengerWorkspace() {
     setSelectedRouteId(routeId);
     setSelectedDestinationStopId("");
     setSelectedLiveBusKey("");
+    setSelectedBusId("");
     setIsMessagingOpen(false);
     setUnreadCount(0);
     setCurrentView("tracking");
@@ -322,11 +342,13 @@ export default function PassengerWorkspace() {
 
         {/* Map layer — only present on tracking */}
         <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-0 transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
-          {visibleView === "tracking" && directedRoute && targetStop && (
+          {visibleView === "tracking" && mapRoute && targetStop && (
             <PassengerTrackingMap
               targetStop={targetStop}
-              route={directedRoute}
+              route={mapRoute}
               resumeGeneration={resumeGeneration}
+              preview={preview}
+              selectedBusKey={activeBusOnRoute ? passengerLiveBusSelectionKey(activeBusOnRoute) : undefined}
             />
           )}
         </div>
@@ -349,7 +371,7 @@ export default function PassengerWorkspace() {
                 Live Routes
               </h1>
               <p className="text-[15px] font-medium mt-2" style={{ color: "var(--text-secondary)" }}>
-                Select a route to view schedules.
+                Select a route to view the live bus location.
               </p>
             </div>
 
@@ -376,9 +398,10 @@ export default function PassengerWorkspace() {
                      onClick={handleRouteSelect}
                      getActiveBusesCount={(routeId) => activeBuses.filter(b => b.routeId === routeId).length}
                      getAvailableBusesCount={(routeId) => availableBuses.filter(b => b.routeId === routeId).length}
-                     getDirectionState={(routeId) => normalizeRideDirection(
-                       activeBuses.find((bus) => bus.routeId === routeId)?.direction,
-                     )}
+                     getDirectionState={(routeId) => {
+                       const bus = activeBuses.find((entry) => entry.routeId === routeId);
+                       return bus?.directionState === "pending" ? "pending" : normalizeRideDirection(bus?.direction);
+                     }}
                    />
                 </>
               ) : (
@@ -408,49 +431,7 @@ export default function PassengerWorkspace() {
 
         {/* ── TRACKING VIEW ── */}
         <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-20 pointer-events-none transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0"}`}>
-          {!endedMessage && activeBusOnRoute && rideDirectionState === "pending" ? (
-            <div
-              className="absolute inset-0 z-30 flex flex-col px-4 pt-safe pointer-events-auto"
-              style={{ background: "var(--surface-0)" }}
-            >
-              <div className="mx-auto flex w-full max-w-lg items-start gap-4 pt-12">
-                <button
-                  onClick={() => setCurrentView("home")}
-                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90"
-                  style={{ backgroundColor: "var(--surface-3)", border: "1px solid var(--border-subtle)" }}
-                  aria-label="Back to home"
-                >
-                  <ArrowLeft className="w-5 h-5" style={{ color: "var(--text-secondary)" }} />
-                </button>
-                <div className="min-w-0 flex-1 rounded-2xl p-4" style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
-                  {busesOnRoute.length > 1 && (
-                    <select
-                      value={passengerLiveBusSelectionKey(activeBusOnRoute)}
-                      onChange={(event) => setSelectedLiveBusKey(event.target.value)}
-                      className="mb-3 w-full rounded-lg px-3 py-2 text-xs font-semibold outline-none"
-                      style={{ background: "var(--surface-3)", color: "var(--text-primary)" }}
-                      aria-label="Live bus"
-                    >
-                      {busesOnRoute.map((bus) => (
-                        <option key={passengerLiveBusSelectionKey(bus)} value={passengerLiveBusSelectionKey(bus)}>
-                          Bus {bus.busId} · {directionLabelState(normalizeRideDirection(bus.direction), activeRoute?.stops ?? [])}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-                    Direction pending
-                  </p>
-                  <p className="mt-1 text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>
-                    Waiting for the bus to reach a route endpoint.
-                  </p>
-                  <p className="mt-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
-                    Stops, destinations, route progress, timeline and ETAs will appear once travel direction is resolved.
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : !endedMessage && directedRoute && targetStop ? (
+          {!endedMessage && mapRoute && targetStop ? (
             <>
               {/* Top bar: back + route info */}
               <div className="absolute top-0 w-full z-40 pt-safe px-4 pb-6 pointer-events-auto"
@@ -477,6 +458,7 @@ export default function PassengerWorkspace() {
                           value={passengerLiveBusSelectionKey(activeBusOnRoute)}
                           onChange={(event) => {
                             setSelectedLiveBusKey(event.target.value);
+                            setSelectedBusId(busesOnRoute.find(bus => passengerLiveBusSelectionKey(bus) === event.target.value)?.busId ?? "");
                             setIsMessagingOpen(false);
                           }}
                           className="w-full rounded-lg px-3 py-2 text-xs font-semibold outline-none"
@@ -489,12 +471,12 @@ export default function PassengerWorkspace() {
                         >
                           {busesOnRoute.map((bus) => (
                             <option key={passengerLiveBusSelectionKey(bus)} value={passengerLiveBusSelectionKey(bus)}>
-                              Bus {bus.busId} · {directionLabelState(normalizeRideDirection(bus.direction), activeRoute?.stops ?? [])}
+                              Bus {bus.busId} · {hasSessionId(bus) ? directionLabelState(bus.directionState === "pending" ? "pending" : normalizeRideDirection(bus.direction), activeRoute?.stops ?? []) : "Service not started"}
                             </option>
                           ))}
                         </select>
                       )}
-                      {hasSessionId(activeBusOnRoute) ? (
+                      {!preview && directedRoute && hasSessionId(activeBusOnRoute) ? (
                         <PassengerBoardingView
                           key={activeBusOnRoute.sessionId}
                           sessionId={activeBusOnRoute.sessionId}
@@ -516,6 +498,15 @@ export default function PassengerWorkspace() {
                           }}
                         />
                       ) : (
+                        <div>
+                          <p className="text-xs font-semibold" style={{ color: "var(--accent)" }}>
+                            {hasSessionId(activeBusOnRoute) ? "Direction pending" : "Bus online · service not started"}
+                          </p>
+                          <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                            {hasSessionId(activeBusOnRoute)
+                              ? "Live location and configured route shown. Travel order and ETAs appear once direction is resolved."
+                              : "Live location and configured route shown. Boarding and ETAs appear when service starts."}
+                          </p>
                         <CustomSelect
                           name="destination-station"
                           ariaLabel="Destination station"
@@ -524,7 +515,7 @@ export default function PassengerWorkspace() {
                           onChange={setSelectedDestinationStopId}
                           options={[
                             { value: "", label: "Choose destination station…" },
-                            ...(directedRoute.stops ?? []).map((stop) => ({
+                            ...(mapRoute.stops ?? []).map((stop) => ({
                               value: stop.id,
                               label: stop.name,
                             })),
@@ -534,6 +525,7 @@ export default function PassengerWorkspace() {
                             border: "1px solid var(--border-subtle)",
                           }}
                         />
+                        </div>
                       )}
                     </div>
                   ) : (
@@ -542,7 +534,7 @@ export default function PassengerWorkspace() {
                         Live
                       </p>
                       <p className="text-[17px] font-semibold truncate leading-tight" style={{ color: "var(--text-primary)" }}>
-                        {directedRoute.name} · {directionLabelState(rideDirectionState, activeRoute?.stops ?? [])}
+                        {mapRoute.name} · {directionLabelState(rideDirectionState, activeRoute?.stops ?? [])}
                       </p>
                     </div>
                   )}
@@ -550,7 +542,7 @@ export default function PassengerWorkspace() {
               </div>
 
               {/* Messaging FAB */}
-              {isLiveChatDeviceOnline(activeBusOnRoute) && !isMessagingOpen && (
+              {activeSessionId && isLiveChatDeviceOnline(activeBusOnRoute) && !isMessagingOpen && (
                 <div className="absolute top-[160px] right-4 z-50 animate-scale-in pointer-events-auto">
                   <button
                     onClick={handleOpenMessaging}
@@ -577,7 +569,7 @@ export default function PassengerWorkspace() {
               {/* Passenger Boarding View was moved to the header above */}
 
               {/* Messaging Overlay */}
-              {visibleView === "tracking" && isMessagingOpen && isLiveChatDeviceOnline(activeBusOnRoute) && (
+              {visibleView === "tracking" && activeSessionId && isMessagingOpen && isLiveChatDeviceOnline(activeBusOnRoute) && (
                 <div className="absolute inset-x-0 top-16 bottom-[80px] z-50 animate-slide-up flex flex-col pointer-events-auto">
                    <MessagingPanel
                     key={activeSessionId || "online-no-session"}

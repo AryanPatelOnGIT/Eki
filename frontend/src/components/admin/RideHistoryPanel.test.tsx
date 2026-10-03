@@ -42,7 +42,7 @@ describe("ride-history controls", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
     await user.keyboard("{Escape}"); expect(screen.getByRole("dialog")).toBeTruthy();
-    await act(async () => resolve(new Response(null, { status: 204 })));
+    await act(async () => resolve(new Response('{"deleted":true}', { status: 200 })));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Ride History" }));
   });
@@ -50,6 +50,15 @@ describe("ride-history controls", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"active ride cannot be deleted"}', { status: 409 })));
     const user = await openConfirmation(); await user.click(screen.getByRole("button", { name: "Permanently delete" }));
     expect(await screen.findByText(/active ride cannot be deleted/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Delete ride history" })).toBeTruthy();
+  });
+  it.each([{}, { deleted: false }, null])("keeps history after an unconfirmed successful HTTP response: %j", async body => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    const user = await openConfirmation();
+    await user.click(screen.getByRole("button", { name: "Permanently delete" }));
+    expect(await screen.findByText(/did not confirm/)).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Delete ride history" })).toBeTruthy();
   });

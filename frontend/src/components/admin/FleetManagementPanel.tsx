@@ -14,7 +14,7 @@ import {
 import CustomSelect from "@/components/ui/CustomSelect";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { errorMessage } from "@/lib/errors";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { validateOperatorInput, validateVehicleInput } from "@/lib/adminValidation";
 import {
   devicePresence,
@@ -33,6 +33,7 @@ async function fleetRequest(path: string, method: "PUT" | "DELETE", body?: objec
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
     fallbackError: "Fleet operation failed.",
+    validateResponse: value => acknowledgedField(value, method === "DELETE" ? "deleted" : "saved"),
   });
 }
 
@@ -67,7 +68,7 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
     error: busesError,
     retry: retryBuses,
   } = useBuses();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { drivers, loading: driversLoading, error: driversError, retry: retryDrivers } = useDrivers();
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
   const activeEntries = useActiveBuses();
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
@@ -262,17 +263,18 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const liveDrivers = drivers.filter((d) => liveDriverIds.has(d.id));
 
   // â”€â”€ Fleet summary stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  if (busesError || routesError) {
+  if (busesError || routesError || driversError) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-center gap-3 p-12 text-center text-red-300" role="alert">
         <AlertCircle className="size-9" aria-hidden="true" />
         <p className="text-sm font-semibold">Fleet data could not be loaded.</p>
-        <p className="text-xs text-red-300/70">{busesError || routesError}</p>
+        <p className="text-xs text-red-300/70">{busesError || routesError || driversError}</p>
         <button
           type="button"
           onClick={() => {
             if (busesError) retryBuses();
             if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
           }}
           className="mt-1 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white"
         >

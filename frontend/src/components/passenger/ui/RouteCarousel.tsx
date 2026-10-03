@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { RouteData } from '@/hooks/useRoutes';
 import {
   routeInRideDirectionState,
@@ -16,15 +16,6 @@ interface RouteCarouselProps {
 }
 
 export default function RouteCarousel({ routes, selectedRouteId, onClick, getActiveBusesCount, getAvailableBusesCount, getDirectionState }: RouteCarouselProps) {
-  const [now, setNow] = useState<number | null>(null);
-
-  useEffect(() => {
-    const refresh = () => setNow(Date.now());
-    refresh();
-    const intervalId = window.setInterval(refresh, 60_000);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
   const liveRoutes = routes.filter((route) =>
     getActiveBusesCount(route.id) > 0 || getAvailableBusesCount(route.id) > 0
   );
@@ -49,23 +40,17 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
           ? routeInRideDirectionState(route, directionState)
           : null;
         const stops = directedRoute?.stops ?? [];
-        const durationMins = directedRoute?.duration
-          ? Math.round(parseInt(directedRoute.duration) / 60)
-          : (stops.length * 2);
-        const scheduleTime = directedRoute && now
-          ? new Date(now + durationMins * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : '--:--';
+        const durationSeconds = Number.parseFloat(directedRoute?.duration ?? "");
+        const durationMins = Number.isFinite(durationSeconds) && durationSeconds > 0
+          ? Math.max(1, Math.round(durationSeconds / 60)) : null;
 
         return (
           <button
             type="button"
             key={route.id}
             className="w-full flex items-stretch text-left transition-all duration-300 ease-out disabled:cursor-default"
-            onClick={() => hasService && onClick(route.id)}
-            disabled={!hasService}
-            aria-label={hasService
-              ? `Track ${route.name}`
-              : `${route.name}: ${availableCount} vehicle available, service not started`}
+            onClick={() => onClick(route.id)}
+            aria-label={`Track ${route.name}`}
           >
             <div
               className="w-full text-left transition-all duration-300 rounded-[20px] p-5 border relative overflow-hidden flex flex-col min-h-[170px]"
@@ -100,13 +85,13 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
                     <div className="flex items-baseline gap-1.5 text-[11.5px] font-black whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>
                       <span>{directedRoute ? `${stops.length} stops` : "Stops pending"}</span>
                       <span className="text-[10px] opacity-30 self-center">&bull;</span>
-                      <span className="text-white">Scheduled: {scheduleTime}</span>
+                      <span className="text-white">{durationMins ? `${durationMins} min route` : "Duration pending"}</span>
                     </div>
                   </div>
                   
                   <div className="flex items-baseline gap-1.5 text-[13px] font-black tracking-wider uppercase transition-opacity shrink-0" style={{ color: "var(--accent)" }}>
                     {directedRoute ? "TRACK ROUTE" : hasService ? "VIEW STATUS" : `${availableCount} AVAILABLE`}
-                    {hasService && <span className="text-[15px]">&rarr;</span>}
+                    <span className="text-[15px]">&rarr;</span>
                   </div>
                 </div>
               </div>

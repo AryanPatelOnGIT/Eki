@@ -106,7 +106,7 @@ const nextConfig: NextConfig = {
     // ~800ms extra dev startup cost with no tree-shaking gain.
     optimizePackageImports: ["lucide-react"],
   },
-  devIndicators: false,
+  devIndicators: process.env.EKI_DEVTOOLS === "true" ? { position: "bottom-left" } : false,
 };
 
 export default nextConfig;

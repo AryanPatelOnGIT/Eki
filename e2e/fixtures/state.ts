@@ -14,8 +14,12 @@ const subscribe = (fn: () => void) => { subscribers.add(fn); return () => { subs
 export function setScenario(next: string) {
   scenario = next;
   const bus = fixtureBus(next === "pending" ? null : next === "reverse" ? "reverse" : "forward");
-  snapshot = next === "empty" ? {} : next === "device" ? { bus: { busId: bus.busId, routeId: bus.routeId, deviceState: "online", status: "offline", timestamp: Date.now(), speed: 0, motionState: "stopped" } } : next === "multiple" ? { bus, second: fixtureBus("reverse", "qa-session-2", "qa-bus-2") } : { bus };
+  snapshot = next === "empty" ? {} : next === "device" ? { bus: { busId: bus.busId, routeId: bus.routeId, deviceState: "online", status: "offline", timestamp: Date.now(), lat: 23.004, lng: 72.004, heading: 0, speed: 0, motionState: "stopped" } } : next === "multiple" ? { bus, second: fixtureBus("reverse", "qa-session-2", "qa-bus-2") } : { bus };
   if (next === "completed") snapshot = { bus: { ...bus, tripState: "completed" } };
+  if (next === "mixed") snapshot = { bus, second: {
+    busId: "qa-bus-2", routeId: route.id, deviceState: "online", timestamp: Date.now(),
+    lat: 23.007, lng: 72.007, speed: 0, motionState: "stopped", status: "offline",
+  } };
   subscribers.forEach(fn => fn());
   liveSubscribers.forEach(fn => fn({ type: "reset", snapshot, source: "listener" }));
 }
@@ -37,3 +41,12 @@ export function useSettings() {
 }
 const markSnapshotReceived = () => {};
 export function useRTDBResume() { return { isResuming: false, resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
+
+export function subscribeLiveBusesByRoute(routeId: string, listener: (value: Record<string, unknown>) => void) {
+  return subscribeLiveBusChanges((change: unknown) => {
+    const reset = change as { snapshot: Record<string, { routeId?: string }> };
+    listener(Object.fromEntries(Object.entries(reset.snapshot).filter(([, bus]) => bus.routeId === routeId)));
+  });
+}
+const emptyGeometry = new Map();
+export function useDynamicRouteGeometries() { return emptyGeometry; }

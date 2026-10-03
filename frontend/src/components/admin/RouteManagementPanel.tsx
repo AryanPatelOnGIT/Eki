@@ -16,7 +16,7 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import AlertModal from "@/components/ui/AlertModal";
 import { MAP_OPTIONS, MAPS_MAP_ID, DEFAULT_CENTER } from "@/config/maps";
 import { errorMessage } from "@/lib/errors";
-import { ApiError, apiRequest } from "@/lib/apiClient";
+import { ApiError, apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { placeSearchErrorMessage } from "@/lib/placeSearchErrors";
 import { newRouteSaveId, saveRoute } from "@/lib/routeSaveClient";
 import {
@@ -718,6 +718,7 @@ export default function RouteManagementPanel() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
         fallbackError: "Unable to delete route.",
+        validateResponse: value => acknowledgedField(value, "deleted"),
       });
       setDeleteRouteId(null);
     } catch (error: unknown) {

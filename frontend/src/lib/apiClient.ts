@@ -1,7 +1,8 @@
 const API_TIMEOUT_MS = 10_000;
 
-type ApiRequestOptions = RequestInit & {
+export type ApiRequestOptions = RequestInit & {
   fallbackError?: string;
+  validateResponse?: (value: unknown) => boolean;
   timeoutMs?: number;
   onResponseStatus?: (status: number) => void;
 };
@@ -47,6 +48,7 @@ export async function apiRequest<T>(
     signal,
     timeoutMs = API_TIMEOUT_MS,
     onResponseStatus,
+    validateResponse,
     ...init
   }: ApiRequestOptions = {},
 ): Promise<T> {
@@ -81,7 +83,7 @@ export async function apiRequest<T>(
       signal: requestController.signal,
     });
     onResponseStatus?.(response.status);
-    if (response.status === 204) return undefined as T;
+    if (response.status === 204 && !validateResponse) return undefined as T;
     let result: T & { error?: unknown; code?: unknown; phase?: unknown; retryAfterMs?: unknown };
     try {
       result = await response.json() as T & { error?: unknown };
@@ -114,6 +116,12 @@ export async function apiRequest<T>(
           : undefined,
       );
     }
+    if (validateResponse && !validateResponse(result)) {
+      throw new ApiError(
+        "The backend did not confirm the operation. Retry to reconcile it.",
+        "INVALID_ACKNOWLEDGEMENT", response.status, "network", true,
+      );
+    }
     return result;
   } catch (error) {
     if (abortSource === "timeout") {
@@ -139,4 +147,11 @@ export async function apiRequest<T>(
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
   }
+}
+
+export function isApiRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+export function acknowledgedField(value: unknown, field: "saved" | "deleted" | "stopped"): boolean {
+  return isApiRecord(value) && value[field] === true;
 }

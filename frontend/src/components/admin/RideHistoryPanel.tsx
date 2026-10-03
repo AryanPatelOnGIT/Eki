@@ -20,7 +20,7 @@ import {
   type RideHistoryDeletionState,
 } from "@/lib/rideHistory";
 import { auth } from "@/lib/firebaseAuth";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errors";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Bus, Loader2, MapPin, Trash2, User, Users, AlertCircle } from "lucide-react";
@@ -116,6 +116,7 @@ async function deleteRideHistoryRequest(sessionId: string): Promise<void> {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
       fallbackError: "Unable to delete ride history.",
+      validateResponse: value => acknowledgedField(value, "deleted"),
     },
   );
 }
@@ -159,7 +160,7 @@ export default function RideHistoryPanel() {
   };
   const { buses, loading: busesLoading, error: busesError, retry: retryBuses } = useBuses();
   const { routes, loading: routesLoading, error: routesError, retry: retryRoutes } = useRoutes();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { drivers, loading: driversLoading, error: driversError, retry: retryDrivers } = useDrivers();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteStates, setDeleteStates] = useState<Record<string, RideHistoryDeletionState>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
@@ -240,12 +241,12 @@ export default function RideHistoryPanel() {
     );
   }
 
-  if (sessionsError || busesError || routesError) {
+  if (sessionsError || busesError || routesError || driversError) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="space-y-2 text-sm text-red-400/80">
           <AlertCircle className="mx-auto size-8 opacity-70" />
-          <p>{sessionsError ?? busesError ?? routesError ?? "Could not load ride history."}</p>
+          <p>{sessionsError ?? busesError ?? routesError ?? driversError ?? "Could not load ride history."}</p>
           <p className="text-xs text-white/40">Ride history could not be loaded.</p>
           <button
             type="button"
@@ -253,6 +254,7 @@ export default function RideHistoryPanel() {
               if (sessionsError) retrySessions();
               if (busesError) retryBuses();
               if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
             }}
             className="rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white"
           >

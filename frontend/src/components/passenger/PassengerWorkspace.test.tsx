@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, configure, render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PassengerWorkspace from "./PassengerWorkspace";
+import { BUS_EXPIRY_MS } from "@/lib/liveBusFreshness";
 import { setScenario } from "../../../../e2e/fixtures/state";
 configure({ asyncUtilTimeout: 5_000 });
 vi.mock("@/hooks/useAuth", async () => import("../../../../e2e/fixtures/state"));
@@ -68,5 +69,47 @@ describe("passenger workspace navigation", () => {
     act(() => setScenario("completed"));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_001); });
     expect(screen.queryByText("QA feedback")).toBeNull();
+  });
+});
+
+describe("device preview lifecycle", () => {
+  it("opens the unarmed stationary bus map and never exposes boarding or live chat", async () => {
+    setScenario("device"); render(<PassengerWorkspace />); const user=userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    expect(await screen.findByText("QA map")).toBeTruthy();
+    expect(screen.getByText("Bus online · service not started")).toBeTruthy();
+    expect(screen.queryByText(/Boarding qa-session/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open live chat" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Back to home" }));
+    expect(await screen.findByRole("button", { name: "Track QA route" })).toBeTruthy();
+  });
+  it("shows the map while direction is pending and transitions to armed boarding when direction resolves", async () => {
+    render(<PassengerWorkspace />); const user=userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    expect(await screen.findByText("QA map")).toBeTruthy();
+    expect(screen.queryByText("Boarding qa-session")).toBeNull();
+    act(() => setScenario("forward"));
+    expect(await screen.findByText("Boarding qa-session")).toBeTruthy();
+  });
+  it("expires silent sessionless hardware without requiring another RTDB event", async () => {
+    vi.useFakeTimers();
+    setScenario("device");
+    await act(async () => { render(<PassengerWorkspace />); });
+    expect(screen.getByRole("button", { name: "Track QA route" })).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(BUS_EXPIRY_MS + 2_001); });
+    expect(screen.queryByRole("button", { name: "Track QA route" })).toBeNull();
+    expect(screen.getByText("No buses running")).toBeTruthy();
+  });
+});
+
+describe("selected bus identity during service start", () => {
+  it("keeps the selected device when it acquires a new session alongside another bus", async () => {
+    setScenario("mixed"); render(<PassengerWorkspace />); const user=userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Live bus" }), screen.getByRole("option", { name: "Bus qa-bus-2 · Service not started" }));
+    expect(screen.getByText("Bus online · service not started")).toBeTruthy();
+    act(() => setScenario("multiple"));
+    expect(await screen.findByText("Boarding qa-session-2")).toBeTruthy();
+    expect(screen.queryByText("Boarding qa-session")).toBeNull();
   });
 });

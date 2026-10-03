@@ -19,13 +19,20 @@ describe("passenger route-card controls", () => {
     if (direction === "pending") expect(screen.getByText("Direction pending")).toBeTruthy();
   });
 
-  it("announces an unarmed availability card as disabled rather than an enabled dead button", async () => {
+  it("opens the location preview for a stationary online device before service starts", async () => {
     const select = vi.fn();
     render(<RouteCarousel routes={[route]} selectedRouteId="" onClick={select} getActiveBusesCount={() => 0} getAvailableBusesCount={() => 1} getDirectionState={() => "pending"} />);
-    const card = screen.getByRole("button", { name: /vehicle available, service not started/ });
-    expect((card as HTMLButtonElement).disabled).toBe(true);
+    const card = screen.getByRole("button", { name: "Track QA route" });
+    expect((card as HTMLButtonElement).disabled).toBe(false);
     await userEvent.setup().click(card);
-    expect(select).not.toHaveBeenCalled();
+    expect(select).toHaveBeenCalledWith("qa-route");
+    expect(screen.queryByText(/Scheduled:/)).toBeNull();
+  });
+
+  it.each(["600s", "invalid", "0s"])("labels configured duration without inventing a scheduled arrival: %s", duration => {
+    render(<RouteCarousel routes={[{ ...route, duration }]} selectedRouteId="" onClick={vi.fn()} getActiveBusesCount={() => 1} getAvailableBusesCount={() => 0} getDirectionState={() => "forward"} />);
+    expect(screen.queryByText(/Scheduled:/)).toBeNull();
+    expect(screen.getByText(duration === "600s" ? "10 min route" : "Duration pending")).toBeTruthy();
   });
 
   it("hides routes with neither an armed service nor fresh hardware", () => {
