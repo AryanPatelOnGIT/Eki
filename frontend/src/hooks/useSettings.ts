@@ -13,6 +13,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebaseFirestore";
 import { auth } from "@/lib/firebaseAuth";
 import { waitForAuth } from "@/lib/authState";
+import { apiRequest } from "@/lib/apiClient";
 
 export interface GlobalSettings {
   serviceStartTime: string;
@@ -137,19 +138,16 @@ export function useSettings(): {
     await waitForAuth();
     const token = await auth.currentUser?.getIdToken();
     if (!token) throw new Error("Authentication required.");
-    const response = await fetch(`${backendUrl}/api/v2/settings/global`, {
+    const result = await apiRequest<{ saved?: boolean }>("/api/v2/settings/global", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(partial),
-      signal: AbortSignal.timeout(10_000),
+      fallbackError: "Unable to save settings.",
     });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({})) as { error?: string };
-      throw new Error(result.error || "Unable to save settings.");
-    }
+    if (result?.saved !== true) throw new Error("Settings acknowledgement is missing.");
   };
 
   return { settings: _settings, loading: _loading, saveSettings };

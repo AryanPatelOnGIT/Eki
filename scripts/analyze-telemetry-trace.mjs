@@ -1,5 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { percentileSummary } from "./percentile-summary.mjs";
+export { percentileSummary };
 
 const DEVICE_TRACE_PREFIX = "[TelemetryTrace] ";
 
@@ -13,21 +15,11 @@ function traceKey(record) {
   return seq === null || sampledAt === null ? null : `${seq}:${sampledAt}`;
 }
 
-export function percentileSummary(values) {
-  const sorted = values.filter((value) => finite(value) !== null).sort((a, b) => a - b);
-  if (sorted.length === 0) {
-    return { samples: 0, average: null, p50: null, p95: null, p99: null, maximum: null };
-  }
-  const percentile = (ratio) =>
-    sorted[Math.min(sorted.length - 1, Math.ceil(ratio * sorted.length) - 1)];
-  return {
-    samples: sorted.length,
-    average: Number((sorted.reduce((sum, value) => sum + value, 0) / sorted.length).toFixed(1)),
-    p50: percentile(0.5),
-    p95: percentile(0.95),
-    p99: percentile(0.99),
-    maximum: sorted.at(-1),
-  };
+function browserPhaseKey(record) {
+  const key = record && traceKey(record);
+  return key && typeof record.runId === "string"
+    ? JSON.stringify([key, record.runId, record.nodeKey ?? "", record.sessionId ?? ""])
+    : null;
 }
 
 export function estimateDeviceClockOffset(record) {
@@ -93,11 +85,13 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
     traceKey,
   );
   const renders = earliestBy(
-    browserRecords.filter((record) => record.event === "browser_render" && record.displayKind !== "none"),
-    (record) => {
-      const key = traceKey(record);
-      return key && typeof record.runId === "string" ? `${key}:${record.runId}` : null;
-    },
+    browserRecords.filter((record) => record.event === "browser_render" && record.displayKind !== "none" && record.displayKind !== "held"),
+    browserPhaseKey,
+  );
+
+  const settledMarkers = earliestBy(
+    browserRecords.filter((record) => record.event === "browser_marker_settled" && record.displayKind !== "none" && record.displayKind !== "held"),
+    browserPhaseKey,
   );
 
   const rows = [];
@@ -106,8 +100,9 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
     if (!accepted) continue;
     const clock = estimateDeviceClockOffset(accepted);
     const listener = listeners.get(key);
-    const listenerRunId = typeof listener?.runId === "string" ? listener.runId : null;
-    const render = listenerRunId ? renders.get(`${key}:${listenerRunId}`) : undefined;
+    const phaseKey = browserPhaseKey(listener);
+    const render = phaseKey ? renders.get(phaseKey) : undefined;
+    const settled = phaseKey ? settledMarkers.get(phaseKey) : undefined;
     const sampledAt = finite(accepted.sampledAtDeviceMs);
     const deviceSentAt = finite(accepted.deviceSentAtDeviceMs);
     const serverReceivedAt = finite(accepted.serverReceivedAtMs);
@@ -117,6 +112,8 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
     const browserRenderAt = finite(render?.browserEstimatedServerAtMs);
     const listenerMonotonicAt = finite(listener?.browserMonotonicAtMs);
     const renderMonotonicAt = finite(render?.browserMonotonicAtMs);
+    const settledMonotonicAt = finite(settled?.browserMonotonicAtMs);
+    const settledServerAt = finite(settled?.browserEstimatedServerAtMs);
 
     rows.push({
       key,
@@ -137,6 +134,11 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
       backendToRtdbMs: elapsedBetween(rtdbCommittedAt, serverReceivedAt),
       rtdbToBrowserListenerMs: elapsedBetween(browserListenerAt, rtdbCommittedAt),
       browserListenerToRenderMs: elapsedBetween(renderMonotonicAt, listenerMonotonicAt),
+      browserListenerToMarkerSettledMs: elapsedBetween(settledMonotonicAt, listenerMonotonicAt),
+      markerAnimationMs: elapsedBetween(settledMonotonicAt, renderMonotonicAt),
+      endToEndMarkerSettledMs:
+        clock && sampledAt !== null && settledServerAt !== null
+          ? nonNegative(settledServerAt - (sampledAt + clock.offsetMs)) : null,
       endToEndMs:
         clock && sampledAt !== null && browserRenderAt !== null
           ? nonNegative(browserRenderAt - (sampledAt + clock.offsetMs))
@@ -194,6 +196,7 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
       acceptedDeviceSamples: rows.length,
       withoutListener: rows.filter((row) => !listeners.has(row.key)).length,
       withoutRender: rows.filter((row) => row.browserListenerToRenderMs === null).length,
+      withoutMarkerSettled: rows.filter((row) => row.browserListenerToMarkerSettledMs === null).length,
       withoutClockEstimate: rows.filter((row) => row.clockOffsetMs === null).length,
     },
   };
@@ -208,8 +211,11 @@ const METRICS = [
   ["Backend request", "backendRequestMs"],
   ["Backend ingress → RTDB commit", "backendToRtdbMs"],
   ["RTDB commit → browser listener", "rtdbToBrowserListenerMs"],
-  ["Browser listener → first marker render", "browserListenerToRenderMs"],
-  ["Capture → first marker render", "endToEndMs"],
+  ["Browser listener → React marker snapshot", "browserListenerToRenderMs"],
+  ["Capture → React marker snapshot", "endToEndMs"],
+  ["Browser listener → marker target (5 cm tolerance)", "browserListenerToMarkerSettledMs"],
+  ["Marker animation after React snapshot", "markerAnimationMs"],
+  ["Capture → marker target (5 cm tolerance)", "endToEndMarkerSettledMs"],
   ["Capture gap between accepted samples", "captureUpdateGapMs"],
   ["Backend ingress update gap", "backendIngressUpdateGapMs"],
   ["Browser listener update gap", "browserListenerUpdateGapMs"],
@@ -271,6 +277,7 @@ export function formatTelemetryReport(analysis, healthSnapshots = []) {
     `- Accepted device samples: ${analysis.missing.acceptedDeviceSamples}`,
     `- Missing browser listener correlation: ${analysis.missing.withoutListener}`,
     `- Missing marker-render correlation: ${analysis.missing.withoutRender}`,
+    `- Missing marker-target correlation: ${analysis.missing.withoutMarkerSettled}`,
     `- Missing clock estimate: ${analysis.missing.withoutClockEstimate}`,
     "",
     "## Delivery and connection counts",

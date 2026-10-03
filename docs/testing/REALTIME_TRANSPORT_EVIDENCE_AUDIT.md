@@ -4,6 +4,8 @@ Audited on 2026-10-01 against `testing` at `6be2a75`. This report verifies
 existing captures; it does not record a new field experiment or complete #195.
 The transport decision remains to retain Firebase SDK listeners.
 
+New evidence: the [October 2 live audit](LIVE_LATENCY_RECOVERY_AUDIT_2026_10_02.md) adds a 20-minute stationary serial/network capture and a 90-second RTDB profiler window. It reports a 26.692-second failure gap, clock-qualified Admin observer latency and verified database region. Browser paint/chat, physical connection peaks and billed usage remain unmeasured; these results do not complete #195.
+
 ## Verified captures
 
 The ignored hardware archive in the primary checkout contains the September

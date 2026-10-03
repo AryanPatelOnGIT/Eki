@@ -256,7 +256,7 @@ describe("production security configuration", () => {
     expect(feedbackService).toContain("sessionCompleted");
     expect(feedbackService).toContain("isSessionPassenger");
     const messagingPanel = workspaceFile("frontend/src/components/shared/MessagingPanel.tsx");
-    const feedbackPage = workspaceFile("frontend/src/app/feedback/page.tsx");
+    const feedbackPage = workspaceFile("frontend/src/components/admin/FeedbackPanel.tsx");
     expect(messagingPanel).toContain("limitToLast(200)");
     expect(messagingPanel).toContain("requestId: pending.requestId");
     expect(messagingPanel).not.toContain("currentUserName");
@@ -358,7 +358,8 @@ describe("production security configuration", () => {
     const passengerSource = loadPassengerSource();
     const passengerNormalizer = workspaceFile("frontend/src/lib/passengerLiveBus.ts");
 
-    expect(operations).toContain("/api/shifts/start");
+    expect(operations).toContain("/api/v2/ride-sessions");
+    expect(operations).toContain('"Idempotency-Key": key');
     expect(operations).not.toContain("updateDoc(");
     expect(passengerSource).toContain("passengerLiveBuses(");
     expect(passengerNormalizer).toContain(
@@ -690,7 +691,7 @@ describe("production security configuration", () => {
     expect(routeEditor).not.toContain("setDoc(");
     expect(routeEditor).not.toContain("updateDoc(");
     expect(dashboard).toMatch(
-      /requestAdmin<\{ delayMinutes: number \}>\("\/api\/shifts\/delay",\s*\{\s*method: "PATCH"/,
+      /requestAdmin<\{ delayMinutes: number \}>\("\/api\/shifts\/delay",\s*\{[\s\S]*?method: "PATCH"/,
     );
     expect(dashboard).not.toContain("Force Offline");
     expect(dashboard).not.toContain("Position Override");
@@ -766,7 +767,7 @@ describe("production security configuration", () => {
     const engine = workspaceFile("backend/src/services/tripStateEngine.ts");
 
     expect(server).toContain('app.use("/api/shifts"');
-    expect(operations).toContain("/api/shifts/start");
+    expect(operations).toContain("/api/v2/ride-sessions");
     expect(operations).toContain("/api/shifts/stop");
     expect(operations).not.toContain("arrayUnion(");
     expect(operations).not.toContain("test_bus_1");
@@ -806,7 +807,7 @@ describe("production security configuration", () => {
     const completionBlock = engine.slice(
       engine.indexOf('if (tripState === "completed"'),
       engine.indexOf(
-        'if (tripState === "pre_departure" || tripState === "in_service")',
+        'if (isNewTelemetry) {',
       ),
     );
 

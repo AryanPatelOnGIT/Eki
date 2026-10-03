@@ -8,12 +8,16 @@ const state = vi.hoisted(() => ({
   route: {} as Record<string, unknown>,
   compute: vi.fn(),
   writes: [] as string[],
+  onGeometryWrite: null as (() => void) | null,
 }));
 vi.mock("../lib/firebaseAdmin", () => ({
   db: { collection: () => ({ doc: () => ({ get: async () => ({ exists: true, data: () => state.route }) }) }) },
   rtdb: { ref: (path: string) => ({
     once: async () => ({ val: () => state.values.get(path) ?? null }),
-    set: async (value: Record<string, unknown>) => { state.values.set(path, value); state.writes.push(path); },
+    set: async (value: Record<string, unknown>) => {
+      state.values.set(path, value); state.writes.push(path);
+      if (path.startsWith("activeRouteGeometry/")) state.onGeometryWrite?.();
+    },
     transaction: async (update: (value: unknown) => Record<string, unknown> | undefined) => {
       const value = update(state.values.get(path) ?? null);
       if (value !== undefined) { state.values.set(path, value); state.writes.push(path); }
@@ -38,12 +42,24 @@ function publish(fix: TelemetryPayload) {
 
 beforeEach(() => {
   state.values.clear(); state.writes = []; state.compute.mockReset();
+  state.onGeometryWrite = null;
   state.route = { stops, forwardPolyline: encodePolyline(stops), reversePolyline: encodePolyline([...stops].reverse()), geometryVersion: 1 };
   state.values.set(key, { ...assignment, sessionId: "outbound", driverId: "driver", status: "active", tripState: "in_service", direction: "forward", directionState: "resolved", directionFirestoreSynced: true, currentStopIndex: 4 });
   invalidateTelemetryRoute(assignment.routeId);
 });
 
 describe("live routing publication", () => {
+  it("does not publish an aged geometry pointer after a stall between storing geometry and the pointer transaction", async () => {
+    const started = Date.now();
+    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
+    state.onGeometryWrite = () => { vi.spyOn(Date, "now").mockReturnValue(started + 181 * 24 * 60 * 60 * 1000); };
+    try {
+      publish(sample(1));
+      await drainTelemetryRouteProcessing();
+      expect(state.writes.some(path => path.startsWith("activeRouteGeometry/"))).toBe(true);
+      expect(state.values.get(key)?.routeSource).not.toBe("dynamic-reroute");
+    } finally { vi.restoreAllMocks(); }
+  });
   it("matches new fixes while Google is pending, then publishes one shared version through all remaining stops", async () => {
     let resolve!: (value: unknown) => void;
     state.compute.mockImplementation(() => new Promise(done => { resolve = done; }));

@@ -46,6 +46,8 @@ evidence. Separate windows are not pooled to satisfy the field sample gate.
 
 ## Preregistered experiment targets
 
+The [October 2 live audit](../testing/LIVE_LATENCY_RECOVERY_AUDIT_2026_10_02.md) adds stationary device, Admin observer and RTDB profiler evidence. It strengthens the case for measuring regional round trips and transport tail gaps, while leaving the browser/chat/billing acceptance gates below pending. The keep-Firebase decision is unchanged.
+
 These are initial evaluation targets, not published service guarantees. Record
 any revision before the run, along with the reason. Use the
 [measurement runbook](../operations/REALTIME_TRANSPORT_MEASUREMENTS.md).

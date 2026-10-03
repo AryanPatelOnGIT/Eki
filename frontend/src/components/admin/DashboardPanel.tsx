@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { apiRequest } from "@/lib/apiClient";
+import { ApiError, apiRequest, isApiRecord, acknowledgedField, type ApiRequestOptions } from "@/lib/apiClient";
 import CustomSelect from "@/components/ui/CustomSelect";
 import MessagingPanel from "@/components/shared/MessagingPanel";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
@@ -76,7 +76,7 @@ function assignedRouteIds(bus: { assignedRoutes?: string[]; assignedRouteId?: st
   return bus?.assignedRoutes ?? (bus?.assignedRouteId ? [bus.assignedRouteId] : []);
 }
 
-async function requestAdmin<T>(path: string, init: RequestInit): Promise<T> {
+async function requestAdmin<T>(path: string, init: ApiRequestOptions): Promise<T> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error("Administrator session is unavailable.");
   const token = await currentUser.getIdToken();
@@ -139,7 +139,7 @@ function LiveDetailsDrawer({
       if (!entry.sessionId) throw new Error("This vehicle has no active message session.");
       await requestAdmin(
         `/api/shifts/${encodeURIComponent(entry.sessionId)}/messages`,
-        { method: "DELETE" },
+        { method: "DELETE", validateResponse: value => isApiRecord(value) && Number.isSafeInteger(value.deleted) && Number(value.deleted) >= 0 },
       );
       setMsg("Messages cleared ✓");
       clearMessageLater();
@@ -247,7 +247,7 @@ function LiveDetailsDrawer({
             or rerouting states fall back to the raw fix. Stop progress remains
             independent of route geometry changes.
           </p>
-          <button onClick={() => setShowWipeConfirm(true)} className="h-11 flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors">
+          <button disabled={!entry.sessionId} title={entry.sessionId ? undefined : "Messages are available after service starts"} onClick={() => setShowWipeConfirm(true)} className="h-11 flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors">
             <MessageCircle className="w-3.5 h-3.5" /> Clear Messages
           </button>
         </div>
@@ -285,7 +285,7 @@ function BusMarker({
 
   const markerSelection = useLiveBusMarkerPosition(entry);
   const markerPoint = useSmoothPosition(markerSelection.position);
-  useTelemetryRenderTrace(entry, "admin", markerPoint !== null);
+  useTelemetryRenderTrace(entry, "admin", markerPoint !== null, { position: markerPoint, selection: markerSelection });
 
   const [displayHeading, setDisplayHeading] = useState(() =>
     normalizeHeading(entry.heading),
@@ -570,7 +570,7 @@ export default function DashboardPanel() {
     [activeEntries],
   );
   const dynamicGeometries = useDynamicRouteGeometries(activeEntriesMap);
-  const { drivers } = useDrivers();
+  const { drivers, error: driversError, retry: retryDrivers } = useDrivers();
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
   const activeRouteOverlays = useMemo(() => {
     const overlays = new Map<string, {
@@ -630,6 +630,8 @@ export default function DashboardPanel() {
   const [routeId, setRouteId] = useState("");
   const [armStatus, setArmStatus] = useState("");
   const [armPending, setArmPending] = useState(false);
+  const startKeys = useRef(new Map<string, string>());
+  const startInFlight = useRef(false);
   const [delayPending, setDelayPending] = useState("");
   const [boardingCodes, setBoardingCodes] = useState<Record<string, string>>({});
   const [chatEntry, setChatEntry] = useState<ActiveBusEntry | null>(null);
@@ -701,7 +703,11 @@ export default function DashboardPanel() {
   };
 
   const armRide = async () => {
-    if (!driverId || !busId || !routeId) return;
+    if (!driverId || !busId || !routeId || startInFlight.current) return;
+    startInFlight.current = true;
+    const assignment = JSON.stringify([driverId, busId, routeId]);
+    const key = startKeys.current.get(assignment) ?? crypto.randomUUID();
+    startKeys.current.set(assignment, key);
     setArmPending(true);
     setArmStatus("");
     try {
@@ -710,12 +716,15 @@ export default function DashboardPanel() {
         resumed?: boolean;
         direction?: unknown;
       }>(
-        "/api/shifts/start",
+        "/api/v2/ride-sessions",
         {
           method: "POST",
+          headers: { "Idempotency-Key": key },
           body: JSON.stringify({ driverId, busId, routeId }),
+          validateResponse: value => isApiRecord(value) && typeof value.sessionId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId),
         },
       );
+      startKeys.current.delete(assignment);
       const inferredDirection = normalizeRideDirection(result.direction);
       setArmStatus(
         result.resumed
@@ -725,8 +734,10 @@ export default function DashboardPanel() {
             : `Service started (${result.sessionId}) for ${directionLabelState(inferredDirection, routes.find((route) => route.id === routeId)?.stops ?? [])}.`,
       );
     } catch (error) {
+      if (error instanceof ApiError && !error.outcomeUnknown && error.status !== null && error.status < 500) startKeys.current.delete(assignment);
       setArmStatus(errorMessage(error));
     } finally {
+      startInFlight.current = false;
       setArmPending(false);
     }
   };
@@ -739,6 +750,7 @@ export default function DashboardPanel() {
     setArmStatus("");
     try {
       await requestAdmin<{ delayMinutes: number }>("/api/shifts/delay", {
+        validateResponse: value => acknowledgedField(value, "saved") && isApiRecord(value) && value.delayMinutes === delayMinutes,
         method: "PATCH",
         body: JSON.stringify({
           busId: entry.busId,
@@ -760,7 +772,7 @@ export default function DashboardPanel() {
     try {
       const result = await requestAdmin<{ boardingCode?: string }>(
         `/api/sessions/${encodeURIComponent(entry.sessionId)}/boarding-code`,
-        { method: "POST" },
+        { method: "POST", validateResponse: value => isApiRecord(value) && value.sessionId === entry.sessionId && typeof value.boardingCode === "string" && /^[A-Z0-9]{8}$/.test(value.boardingCode) },
       );
       if (!result.boardingCode) throw new Error("Boarding code was not returned.");
       setBoardingCodes((current) => ({ ...current, [entry.sessionId as string]: result.boardingCode as string }));
@@ -776,6 +788,7 @@ export default function DashboardPanel() {
     setArmStatus("");
     try {
       await requestAdmin("/api/shifts/stop", {
+        validateResponse: value => acknowledgedField(value, "stopped"),
         method: "POST",
         body: JSON.stringify({
           busId: entry.busId,
@@ -829,18 +842,19 @@ export default function DashboardPanel() {
 
         {/* Map overlay stats */}
         <div className="absolute top-3 left-3 right-3 flex flex-col items-start gap-2 pointer-events-none">
-          {(busesError || routesError) && (
+          {(busesError || routesError || driversError) && (
             <div
               className="pointer-events-auto flex w-full max-w-lg items-start gap-2 rounded-xl border border-red-400/20 bg-zinc-950/95 px-3 py-2 text-xs text-red-300 shadow-lg"
               role="alert"
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <span className="flex-1">Fleet metadata is unavailable. {busesError || routesError}</span>
+              <span className="flex-1">Fleet metadata is unavailable. {busesError || routesError || driversError}</span>
               <button
                 type="button"
                 onClick={() => {
                   if (busesError) retryBuses();
                   if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
                 }}
                 className="rounded-md bg-white/10 px-2 py-1 font-semibold text-white"
               >

@@ -6,6 +6,7 @@
 #include "secrets.h"
 #include "telemetry_policy.h"
 #include "telemetry_queue.h"
+#include "encrypted_checkpoint.h"
 #include "reset_stats.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -234,6 +235,13 @@ static_assert(
 // RTC no-init memory preserves the bounded queue across software/watchdog
 // resets. initializeOrRecover() rejects stale firmware layouts explicitly.
 RTC_NOINIT_ATTR TelemetryQueue telemetryQueue;
+eki::checkpoint::FlashStorage checkpointStorage;
+eki::checkpoint::EncryptedCodec<TelemetryFix> checkpointCodec;
+eki::checkpoint::Journal<TelemetryFix, eki::checkpoint::FlashStorage, eki::checkpoint::EncryptedCodec<TelemetryFix>> checkpointJournal(checkpointStorage, checkpointCodec);
+constexpr uint32_t CHECKPOINT_INTERVAL_MS = 10000;
+uint32_t lastCheckpointAt = 0;
+bool checkpointReady = false;
+bool checkpointWrittenThisBoot = false;
 // Reset statistics survive brownout/panic/watchdog resets in RTC no-init
 // memory, so operators see recovery events instead of a silent reboot.
 RTC_NOINIT_ATTR eki::reset::ResetStats resetStats;
@@ -444,9 +452,19 @@ void notifyPublisher() {
 
 void enqueueFix(TelemetryFix fix) {
   portENTER_CRITICAL(&telemetryQueueMux);
-  telemetryQueue.push(fix);
+  fix.sequence = telemetryQueue.push(fix);
   portEXIT_CRITICAL(&telemetryQueueMux);
+  // Release the network publisher before doing checkpoint encryption/I/O.
   notifyPublisher();
+  // Sole capture-task writer. Flash is outside the queue's critical section;
+  // the GNSS RX buffer continues collecting during a bounded sector erase.
+  if (checkpointReady && WiFi.getMode() != WIFI_MODE_NULL && (!checkpointWrittenThisBoot || elapsed(lastCheckpointAt) >= CHECKPOINT_INTERVAL_MS)) {
+    const uint32_t started = millis();
+    const bool committed = checkpointJournal.append(fix);
+    lastCheckpointAt = millis();
+    checkpointWrittenThisBoot = true;
+    Serial.printf("[PowerCheckpoint] committed=%s seq=%lu writeMs=%lu\n", committed ? "true" : "false", static_cast<unsigned long>(fix.sequence), static_cast<unsigned long>(millis() - started));
+  }
 }
 
 bool newestFreshFix(int64_t minimumTimestamp, TelemetryFix &fix, size_t &staleDrops) {
@@ -1915,8 +1933,24 @@ void setup() {
   }
 
   portENTER_CRITICAL(&telemetryQueueMux);
-  telemetryQueue.initializeOrRecover(configurationTag);
+  const bool rtcRecovered = telemetryQueue.initializeOrRecover(configurationTag);
   portEXIT_CRITICAL(&telemetryQueueMux);
+  checkpointReady = checkpointStorage.begin() && checkpointCodec.begin(DEVICE_SECRET, configurationTag);
+  bool flashRecovered = false;
+  if (checkpointReady) {
+    checkpointJournal.initialize();
+    checkpointReady = checkpointJournal.ready();
+    TelemetryFix saved{};
+    if (!rtcRecovered && checkpointJournal.newest(saved) &&
+        saved.sequence != 0 && saved.timestamp > 0 &&
+        std::isfinite(saved.lat) && saved.lat >= -90 && saved.lat <= 90 &&
+        std::isfinite(saved.lng) && saved.lng >= -180 && saved.lng <= 180 &&
+        eki::telemetry::speedIsPlausible(saved.speed) &&
+        saved.motionState <= MotionState::Uncertain) {
+      flashRecovered = telemetryQueue.restoreNewest(saved, configurationTag);
+    }
+  }
+  Serial.printf("[PowerCheckpoint] ready=%s recovered=%s slots=%u intervalMs=%lu\n", checkpointReady ? "true" : "false", flashRecovered ? "true" : "false", static_cast<unsigned>(checkpointStorage.recordCount()), static_cast<unsigned long>(CHECKPOINT_INTERVAL_MS));
   if (gpsRxBuffer != GPS_RX_BUFFER_BYTES) {
     Serial.printf(
       "[GPS] RX buffer setup returned %u bytes; expected %u.\n",

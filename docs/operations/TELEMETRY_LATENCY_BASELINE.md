@@ -12,7 +12,7 @@ the normal RTDB live data remains unchanged.
 |---|---|---|
 | GNSS capture and HTTP attempt | Device GNSS-disciplined clock | `[TelemetryTrace]` serial records |
 | Request ingress and response start | Backend clock | Authenticated response timing headers copied into the serial record |
-| RTDB commit | Firebase server clock | `rtdbCommittedAt` on the live node |
+| RTDB commit | Firebase server clock | `receivedAt` on the live node; trace export retains the `rtdbCommittedAtMs` key |
 | Listener delivery and marker paint | Browser wall and monotonic clocks | Browser trace export |
 
 The analyzer uses the four request/response timestamps to estimate the device

@@ -12,6 +12,7 @@ import {
 } from "react";
 import { notifyAuthReady } from "@/lib/authState";
 import { withTimeout } from "@/lib/promiseTimeout";
+import { apiRequest } from "@/lib/apiClient";
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 10_000;
 
@@ -235,21 +236,13 @@ function useAuthState(): AuthContextValue {
                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
                 const idToken = await firebaseUser.getIdToken();
                 if (backendUrl) {
-                  const response = await fetch(`${backendUrl}/api/users/bootstrap`, {
+                  const result = await apiRequest<{ role?: string; claimsUpdated?: boolean }>("/api/users/bootstrap", {
                     method: "POST",
                     headers: {
                       Authorization: `Bearer ${idToken}`,
                     },
-                    signal: AbortSignal.timeout(10_000),
+                    fallbackError: "Unable to bootstrap user profile.",
                   });
-                  const result = await response.json().catch(() => ({})) as {
-                    role?: string;
-                    claimsUpdated?: boolean;
-                    error?: string;
-                  };
-                  if (!response.ok) {
-                    throw new Error(result.error || "Unable to bootstrap user profile.");
-                  }
                   if (
                     result.role === "passenger" ||
                     result.role === "driver" ||

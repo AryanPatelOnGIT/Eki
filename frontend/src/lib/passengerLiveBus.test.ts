@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BUS_EXPIRY_MS } from "./liveBusFreshness";
 import {
   normalizePassengerLiveBus,
+  normalizePassengerMapBus,
   passengerLiveBuses,
   passengerLiveBusSelectionKey,
   passengerTripStates,
@@ -191,5 +192,20 @@ describe("passenger live-bus normalization", () => {
         valid: { sessionId: "session_2", tripState: "in_service" },
       }),
     ).toEqual(new Map([["session_2", "in_service"]]));
+  });
+});
+
+describe("passenger location preview", () => {
+  it.each(["stopped", "moving"])("shows an online %s bus without a ride or matched geometry", motionState => {
+    const bus = normalizePassengerMapBus("Bus01_route_1", telemetry({
+      speed: motionState === "stopped" ? 0 : 20, motionState,
+      sessionId: "leftover-session", direction: "reverse", currentStopIndex: 4,
+    }), now);
+    expect(bus).toMatchObject({ busId: "Bus01", lat: 23.03, lng: 72.47, deviceState: "online" });
+    expect(bus?.sessionId).toBeUndefined(); expect(bus?.tripState).toBeUndefined();
+    expect(bus?.direction).toBeUndefined(); expect(bus?.currentStopIndex).toBeUndefined();
+  });
+  it.each([{ timestamp: now - BUS_EXPIRY_MS }, { deviceState: "offline" }, { lat: undefined }, { lat: 91 }, { tripState: "completed" }])("rejects unavailable GPS preview: %o", overrides => {
+    expect(normalizePassengerMapBus("Bus01_route_1", telemetry(overrides), now)).toBeNull();
   });
 });
