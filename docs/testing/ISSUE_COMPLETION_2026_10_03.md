@@ -20,7 +20,7 @@ the corrected snapshots; their failures are not rewritten as passes.
 | 196 | 199 | Already closed; automated OpenAPI inventory currently covers 59 registered HTTP operations and schemas/policy. |
 | 206, 207, 208, 209 | 210, integrated in 226 | All crossed stops/checkpoints, completion after cross-store failure, generated page props and independently discoverable deletion retry jobs. |
 | 211, 212, 213 | 215, integrated in 226 | Verified obsolete fields, complete match-context cleanup and invalid geometry fallback/recovery. |
-| 214 | 223, integrated in 226 | Protected 180-day legacy/geometry retention, grace/CAS/quarantine and partial-failure/replica tests. No eligible old data exists. External legacy-consumer retirement still needs confirmation; legacy purge stays disabled. |
+| 214 | 223, integrated in 226 | Protected 180-day legacy/geometry retention, grace/CAS/quarantine and partial-failure/replica tests. No eligible old data exists. The owner confirmed external legacy-consumer usage is unknown; legacy purge stays disabled and this retirement gate remains open. |
 | 216, 217, 219, 220, 221 | 222, integrated in 226 | Hidden-view hit-testing/inert controls, bounded acknowledged writes, history dialog/focus, parseable feedback PATCH and in-flight settings draft lock. |
 | 218 | 222, 226 | Named controls; the original disabled-unarmed-card proposal was superseded by the user's inspectable-stationary-device requirement and issue228. |
 | 224, 225 | 226, 238 | Bounded encrypted checkpoint fault coverage and actual physical cuts; sample-correlated marker arrival traces and labelled/throttled hook simulations. Limits remain explicit. |
@@ -72,6 +72,19 @@ TypeScript build pass. Seven emulator cases are skipped in ordinary local runs
 and run separately in CI. An initial simultaneous lint/test run hit the existing
 five-second diagnostic-IP stress-test timeout; the full isolated rerun passed.
 CI on the final PR head and testing merge is required before final completion.
+
+## Firebase console cross-check
+
+Read-only console review showed, for the displayed current billing period
+Oct1–Nov1(GMT-7), connections8of100, storage4.05KB, downloads144.53MB,
+load peak1%,391rule allows and15denies. Rule errors were shown as no data,
+which must not be converted to a measured zero. The chart described daily
+aggregation, and its presented time bounds differ from the period label.
+These values include other project traffic and do not isolate this audit window,
+moving load or chat. Screenshots and the exact visible text are archived privately.
+The earlier seven-day overview showed110MBRTDBdownloads and45kFirestore reads;
+these differing scopes cannot be pooled. No unexpected deny operation is inferred
+from aggregated counts, and no Firebase rules or billing settings were changed.
 
 See [current physical, mobile and deployment acceptance](TESTING_ACCEPTANCE_2026_10_03.md).
 Private closure results, merge ancestry, raw logs and readable CSVs stay in the
