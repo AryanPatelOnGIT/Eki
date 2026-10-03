@@ -7,6 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json ./backend/package.json
 COPY frontend/package.json ./frontend/package.json
+COPY tools/next-lint-glob ./tools/next-lint-glob
 RUN npm ci --workspace=backend --include-workspace-root=false
 
 COPY backend ./backend

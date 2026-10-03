@@ -27,6 +27,9 @@
     "verify:openapi": "node scripts/verify-openapi.mjs"
   },
   "overrides": {
+    "@next/eslint-plugin-next": {
+      "fast-glob": "$fast-glob"
+    },
     "@fastify/busboy": "^3.2.2",
     "@grpc/grpc-js": "1.14.5",
     "postcss": "^8.5.23",
@@ -40,6 +43,7 @@
     }
   },
   "devDependencies": {
+    "fast-glob": "file:tools/next-lint-glob",
     "@playwright/test": "^1.63.0",
     "concurrently": "^8.2.2"
   }
