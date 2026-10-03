@@ -34,7 +34,7 @@ import {
   routeInRideDirectionState,
   routeInRideDirection,
 } from "@/lib/rideDirection";
-import CustomSelect from "@/components/ui/CustomSelect";
+import InAppSelect from "@/components/ui/InAppSelect";
 import { isLiveChatDeviceOnline } from "@/lib/activeBusEntries";
 import {
   passengerBusAvailabilities,
@@ -454,27 +454,25 @@ export default function PassengerWorkspace() {
                         !busesOnRoute.some(
                           (bus) => bus.sessionId === trackedSessionId,
                         ) && (
-                        <select
+                        <InAppSelect
+                          name="live-bus"
                           value={passengerLiveBusSelectionKey(activeBusOnRoute)}
-                          onChange={(event) => {
-                            setSelectedLiveBusKey(event.target.value);
-                            setSelectedBusId(busesOnRoute.find(bus => passengerLiveBusSelectionKey(bus) === event.target.value)?.busId ?? "");
+                          onChange={(value) => {
+                            setSelectedLiveBusKey(value);
+                            setSelectedBusId(busesOnRoute.find(bus => passengerLiveBusSelectionKey(bus) === value)?.busId ?? "");
                             setIsMessagingOpen(false);
                           }}
-                          className="w-full rounded-lg px-3 py-2 text-xs font-semibold outline-none"
                           style={{
                             background: "var(--surface-2)",
                             border: "1px solid var(--border-subtle)",
                             color: "var(--text-primary)",
                           }}
-                          aria-label="Live bus"
-                        >
-                          {busesOnRoute.map((bus) => (
-                            <option key={passengerLiveBusSelectionKey(bus)} value={passengerLiveBusSelectionKey(bus)}>
-                              Bus {bus.busId} · {hasSessionId(bus) ? directionLabelState(bus.directionState === "pending" ? "pending" : normalizeRideDirection(bus.direction), activeRoute?.stops ?? []) : "Service not started"}
-                            </option>
-                          ))}
-                        </select>
+                          ariaLabel="Live bus"
+                          options={busesOnRoute.map(bus => ({
+                            value: passengerLiveBusSelectionKey(bus),
+                            label: `Bus ${bus.busId} · ${hasSessionId(bus) ? directionLabelState(bus.directionState === "pending" ? "pending" : normalizeRideDirection(bus.direction), activeRoute?.stops ?? []) : "Service not started"}`,
+                          }))}
+                        />
                       )}
                       {!preview && directedRoute && hasSessionId(activeBusOnRoute) ? (
                         <PassengerBoardingView
@@ -507,7 +505,7 @@ export default function PassengerWorkspace() {
                               ? "Live location and configured route shown. Travel order and ETAs appear once direction is resolved."
                               : "Live location and configured route shown. Boarding and ETAs appear when service starts."}
                           </p>
-                        <CustomSelect
+                        <InAppSelect
                           name="destination-station"
                           ariaLabel="Destination station"
                           placeholder="Choose destination station…"
