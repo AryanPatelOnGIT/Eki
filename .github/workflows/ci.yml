@@ -139,6 +139,16 @@ jobs:
         # away; this fixture has no usable device credentials.
         run: sed -i 's/replace-me/ci-only-not-a-real-device-secret/' hardware/include/secrets.h
       - run: platformio run --project-dir hardware -e esp32dev
+      - name: Build quiet development runtime for trace-gating verification
+        run: platformio run --project-dir hardware -e esp32dev-quiet
+      - name: Verify trace strings are removed from the quiet artifact
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          marker = b"[TelemetryTrace]"
+          assert marker in Path("hardware/.pio/build/esp32dev/firmware.elf").read_bytes()
+          assert marker not in Path("hardware/.pio/build/esp32dev-quiet/firmware.elf").read_bytes()
+          PY
       - name: Verify pre-application SNTP guard is linked
         run: |
           "$HOME/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-nm" hardware/.pio/build/esp32dev/firmware.elf | grep -E ' T sntp_sync_time$'

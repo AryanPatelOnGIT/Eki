@@ -1,4 +1,5 @@
 #include "clock_policy.h"
+#include "json_payload.h"
 #include "connectivity_policy.h"
 #include "firmware_config.h"
 #include "firmware_update_policy.h"
@@ -16,6 +17,7 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_attr.h>
+#include <esp_heap_caps.h>
 #include <esp_flash_encrypt.h>
 #include <esp_sntp.h>
 #include <esp_secure_boot.h>
@@ -37,6 +39,10 @@
 #ifndef EKI_FLEET_BUILD
 #define EKI_FLEET_BUILD 0
 #endif
+#ifndef EKI_ENABLE_FLEET_TRACES
+#define EKI_ENABLE_FLEET_TRACES (!EKI_FLEET_BUILD)
+#endif
+#define EKI_TRACE_PRINTF(...) do { if (EKI_ENABLE_FLEET_TRACES) Serial.printf(__VA_ARGS__); } while (0)
 #if EKI_FLEET_BUILD
 #define EKI_FIRMWARE_VERSION esp_ota_get_app_description()->version
 #elif !defined(EKI_FIRMWARE_VERSION)
@@ -145,6 +151,7 @@ public:
   explicit TimedSecureClient(const char *name = "telemetry") : channel(name) {}
   using ReuseSafeSecureClient::connect;
   int connect(const char *host, uint16_t port, int32_t timeout) override {
+    const uint32_t heapBefore = EKI_ENABLE_FLEET_TRACES ? ESP.getFreeHeap() : 0;
     const uint32_t preparingAt = millis();
     prepareTelemetryTlsKey();
     const uint32_t started = millis();
@@ -155,7 +162,12 @@ public:
     const int result = resolved ? WiFiClientSecure::connect(
       address, port, host, _CA_cert, _cert, _private_key) : 0;
     releaseTelemetryTlsKey();
-    Serial.printf("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld configuredHandshakeTimeoutMs=%lu result=%d channel=%s preparationMs=%lu\n",
+    EKI_TRACE_PRINTF("[TlsResources] channel=%s heapBefore=%lu heapAfter=%lu minimumHeap=%lu largestBlock=%lu stackHeadroomBytes=%lu\n",
+      channel, static_cast<unsigned long>(heapBefore), static_cast<unsigned long>(ESP.getFreeHeap()),
+      static_cast<unsigned long>(ESP.getMinFreeHeap()),
+      static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+      static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
+    EKI_TRACE_PRINTF("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld configuredHandshakeTimeoutMs=%lu result=%d channel=%s preparationMs=%lu\n",
       static_cast<unsigned long>(resolvedAt - started),
       static_cast<unsigned long>(millis() - resolvedAt), static_cast<long>(timeout),
       static_cast<unsigned long>(sslclient->handshake_timeout), result, channel,
@@ -471,7 +483,7 @@ void enqueueFix(TelemetryFix fix, bool receiverBacked = true) {
   const uint32_t enqueuedAt = millis();
   // Release the network publisher before doing checkpoint encryption/I/O.
   notifyPublisher();
-  Serial.printf("[TelemetryTrace] {\"version\":2,\"event\":\"device_capture\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"receiverBacked\":%s,\"receiverUtcMs\":%lld,\"receiverStartedAtMonotonicMs\":%lu,\"receiverAtMonotonicMs\":%lu,\"evaluationAtMonotonicMs\":%lu,\"enqueuedAtMonotonicMs\":%lu}\n",
+  EKI_TRACE_PRINTF("[TelemetryTrace] {\"version\":2,\"event\":\"device_capture\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"receiverBacked\":%s,\"receiverUtcMs\":%lld,\"receiverStartedAtMonotonicMs\":%lu,\"receiverAtMonotonicMs\":%lu,\"evaluationAtMonotonicMs\":%lu,\"enqueuedAtMonotonicMs\":%lu}\n",
     static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
     receiverBacked ? "true" : "false", static_cast<long long>(latestRmcReceiverUtcMs),
     static_cast<unsigned long>(latestRmcStartedAt), static_cast<unsigned long>(latestRmcAt),
@@ -1063,7 +1075,7 @@ bool parseFirmwareManifest(HTTPClient &http, FirmwareManifest &manifest) {
   if (contentLength <= 0 || contentLength > 1024) return false;
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, http.getStream());
-  if (error) return false;
+  if (error || document.overflowed()) return false;
 
   const char *version = document["version"] | "";
   const char *url = document["url"] | "";
@@ -1354,6 +1366,8 @@ PublishResult publishFix(const TelemetryFix &fix) {
   if (httpsRetryIsPending()) return PublishResult::RetryLatest;
 
   const int64_t deviceSentAt = epochMilliseconds();
+  const uint32_t jsonStartedAt = EKI_ENABLE_FLEET_TRACES ? micros() : 0;
+  const uint32_t heapBeforeJson = EKI_ENABLE_FLEET_TRACES ? ESP.getFreeHeap() : 0;
   JsonDocument document;
   document["deviceSentAt"] = deviceSentAt;
   document["lat"] = fix.lat;
@@ -1366,12 +1380,17 @@ PublishResult publishFix(const TelemetryFix &fix) {
   document["timestamp"] = fix.timestamp;
 
   char payload[512]{};
-  const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
+  const size_t payloadLength = eki::json::serializeCompletePayload(document, 9, payload, sizeof(payload));
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
-    Serial.println("[HTTPS] Refusing oversized telemetry payload.");
+    Serial.println("[HTTPS] Refusing incomplete or oversized telemetry payload.");
     scheduleHttpsRetry(eki::telemetry::HTTPS_REJECTED_SAMPLE_RETRY_MS);
     return PublishResult::Dropped;
   }
+  EKI_TRACE_PRINTF("[AllocationTiming] channel=telemetry jsonPrepareUs=%lu heapBefore=%lu heapAfter=%lu largestBlock=%lu stackHeadroomBytes=%lu\n",
+    static_cast<unsigned long>(micros() - jsonStartedAt), static_cast<unsigned long>(heapBeforeJson),
+    static_cast<unsigned long>(ESP.getFreeHeap()),
+    static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+    static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
 
   recordPublishAttempt();
   /* keep one parser so its destructor cannot close the reusable socket. */
@@ -1435,7 +1454,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
   const unsigned int attempt =
     static_cast<unsigned int>(consecutiveHttpsFailures) + 1U;
   if (hasServerTiming) {
-    Serial.printf(
+    EKI_TRACE_PRINTF(
       "[TelemetryTrace] {\"version\":1,\"event\":\"device_http\",\"deviceId\":\"%s\",\"seq\":%lu,\"motionState\":\"%s\",\"sampledAtDeviceMs\":%lld,\"deviceSentAtDeviceMs\":%lld,\"deviceReceivedAtDeviceMs\":%lld,\"serverReceivedAtMs\":%lld,\"serverRespondedAtMs\":%lld,\"httpDurationMs\":%lu,\"httpStatus\":%d,\"attempt\":%u}\n",
       DEVICE_ID,
       static_cast<unsigned long>(fix.sequence),
@@ -1450,7 +1469,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
       attempt
     );
   } else {
-    Serial.printf(
+    EKI_TRACE_PRINTF(
       "[TelemetryTrace] {\"version\":1,\"event\":\"device_http\",\"deviceId\":\"%s\",\"seq\":%lu,\"motionState\":\"%s\",\"sampledAtDeviceMs\":%lld,\"deviceSentAtDeviceMs\":%lld,\"deviceReceivedAtDeviceMs\":%lld,\"serverReceivedAtMs\":null,\"serverRespondedAtMs\":null,\"httpDurationMs\":%lu,\"httpStatus\":%d,\"attempt\":%u}\n",
       DEVICE_ID,
       static_cast<unsigned long>(fix.sequence),
@@ -1517,7 +1536,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
     action == eki::telemetry::HttpResponseAction::Accept &&
     eki::http::consumeAcceptedResponse<HttpClock>(http, responseCode);
   const uint32_t drainCompletedAt = millis();
-  Serial.printf("[TelemetryTrace] {\"version\":2,\"event\":\"device_http_complete\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"sendAtMonotonicMs\":%lu,\"headersAtMonotonicMs\":%lu,\"drainCompletedAtMonotonicMs\":%lu,\"attempt\":%u,\"responseComplete\":%s}\n",
+  EKI_TRACE_PRINTF("[TelemetryTrace] {\"version\":2,\"event\":\"device_http_complete\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"sendAtMonotonicMs\":%lu,\"headersAtMonotonicMs\":%lu,\"drainCompletedAtMonotonicMs\":%lu,\"attempt\":%u,\"responseComplete\":%s}\n",
     static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
     static_cast<unsigned long>(startedAt), static_cast<unsigned long>(headersReceivedAt),
     static_cast<unsigned long>(drainCompletedAt), attempt, responseComplete ? "true" : "false");
@@ -1630,12 +1649,16 @@ void publishRemoteDiagnostic() {
   document["timestamp"] = epochMilliseconds();
 
   char payload[1024]{};
-  const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
+  const size_t payloadLength = eki::json::serializeCompletePayload(document, 18, payload, sizeof(payload));
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
-    Serial.println("[Diagnostics] Refusing oversized health payload.");
+    Serial.println("[Diagnostics] Refusing incomplete or oversized health payload.");
     scheduleRemoteDiagnosticRetry();
     return;
   }
+  Serial.printf("[FirmwareResources] minimumHeap=%lu largestBlock=%lu publisherStackHeadroomBytes=%lu\n",
+    static_cast<unsigned long>(ESP.getMinFreeHeap()),
+    static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+    static_cast<unsigned long>(uxTaskGetStackHighWaterMark(publisherTaskHandle)));
 
   DiagnosticJob job{};
   memcpy(job.payload, payload, payloadLength);
@@ -1808,7 +1831,7 @@ void processGpsByte(char byte) {
   latestRmcStartedAt = sentenceStartedAt;
   disciplineClockFromGnss();
   latestRmcFix = buildFixFromRmc();
-  Serial.printf("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
+  EKI_TRACE_PRINTF("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
     static_cast<long long>(latestGnssEpochMs),
     static_cast<long long>(systemEpochMilliseconds()),
     static_cast<unsigned long>(latestRmcAt),

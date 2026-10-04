@@ -265,6 +265,25 @@ certificate time. NTP candidates are guarded before IDF sets time. Peer NTP
 references expire after ten minutes, and clock faults retry NTP after one minute.
 These checks establish consistency, not cryptographic GNSS/NTP authenticity.
 
+Firmware refuses outbound telemetry/diagnostics when ArduinoJson overflows,
+required fields are missing, or the complete object does not fit the buffer.
+Serial resource evidence reports JSON preparation time, heap before/after,
+minimum heap, largest allocatable block and task stack headroom (bytes in the
+pinned ESP32 port). TLS connection traces include key-preparation headroom.
+Native allocator-exhaustion tests exercise the actual serializer.
+
+Detailed traces default on in development and off in fleet builds; set
+`EKI_ENABLE_FLEET_TRACES=1` for a bounded acceptance capture. The
+`esp32dev-quiet` environment measures the same development runtime with traces
+disabled. Sparse health/resource diagnostics remain enabled. No CA, cipher,
+curve, fresh-key or credential policy changes accompany trace gating.
+
+Diagnostics retain separate short-lived transport: the normal five-minute
+interval exceeds the backend's 65-second keep-alive timeout. A persistent
+socket cannot deliver a warm connection over that idle interval; changing
+cadence or transport requires measured board evidence. Document/pool reuse is
+also deferred until the new allocation/headroom records justify it.
+
 For new latency captures, firmware trace version 2 adds a correlated
 `device_capture` record with receiver UTC, RMC first-byte/checksum arrival and
 evaluation/enqueue monotonic times. `device_http` retains the response-header
