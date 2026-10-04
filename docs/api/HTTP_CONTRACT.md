@@ -69,6 +69,10 @@ per-store probes run every 30s, have a 5s response deadline and 65s monotonic
 freshness. An unsettled call keeps its single-flight slot after a response
 timeout, preventing repeated probes from accumulating. Late completion cannot
 publish success. All three health endpoints return `Cache-Control: no-store`.
+Admission and route/admin middleware reuse a verified token only within the
+same HTTP request. This avoids duplicate privileged Auth checks; every new
+request still follows the revocation-aware policy. An injected `req.user` or a
+different token cannot establish that request-scoped verification.
 
 The server applies strict JSON parsers: 16 KiB generally, telemetry 512 bytes,
 diagnostics 1 KiB. CORS/preflight precedes the 1,000/normalized-IP/minute browser ingress guard.
