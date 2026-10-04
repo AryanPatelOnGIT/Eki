@@ -141,6 +141,13 @@ function end(status = "completed") {
 }
 
 describe("versioned session identity and lifecycle", () => {
+  it("cannot start a ride while firmware maintenance holds the bus lock", async () => {
+    state.docs.set("_active_bus_locks/bus_1", { kind: "firmware", deviceId: "device_1", routeId: "route_1" });
+    expect((await start()).status).toBe(409);
+    expect([...state.docs.keys()].filter(key => /^ride_sessions\/[^/]+$/.test(key))).toHaveLength(0);
+    state.docs.delete("_active_bus_locks/bus_1");
+    expect((await start()).status).toBe(201);
+  });
   it("requires authentication and a valid key, and rejects passenger creation", async () => {
     expect((await start(null)).status).toBe(400);
     expect((await start("bad key")).status).toBe(400);

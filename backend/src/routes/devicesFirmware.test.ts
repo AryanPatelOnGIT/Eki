@@ -7,6 +7,8 @@ const harness = vi.hoisted(() => ({
   authenticated: true,
   activeRide: false,
   activeBusLock: false,
+  maintenance: null as Record<string, unknown> | null,
+  transactionTail: Promise.resolve() as Promise<unknown>,
   disabled: new Map<string, Record<string, unknown>>(),
   invalidated: [] as string[],
 }));
@@ -22,13 +24,26 @@ vi.mock("../lib/firebaseAdmin", () => ({
         get: async () => ({
           exists: name === "active_rides"
             ? harness.activeRide
-            : harness.activeBusLock,
+            : name === "devices" || harness.activeBusLock || !!harness.maintenance,
+          data: () => name === "devices" ? { busId: "bus_1", routeId: "route_1", enabled: true } : harness.maintenance,
         }),
+        create: (value: Record<string, unknown>) => { harness.maintenance = value; },
+        delete: () => { harness.maintenance = null; },
         set: async (value: Record<string, unknown>) => {
           if (name === "devices") harness.disabled.set(id, value);
         },
       }),
     }),
+    runTransaction: (callback: (tx: unknown) => Promise<unknown>) => {
+      type Ref = { get: () => Promise<unknown>; create: (value: Record<string, unknown>) => void; delete: () => void };
+      const run = harness.transactionTail.then(() => callback({
+        get: (ref: Ref) => ref.get(),
+        create: (ref: Ref, value: Record<string, unknown>) => ref.create(value),
+        delete: (ref: Ref) => ref.delete(),
+      }));
+      harness.transactionTail = run.catch(() => {});
+      return run;
+    },
   },
 }));
 
@@ -91,6 +106,8 @@ beforeEach(() => {
   harness.authenticated = true;
   harness.activeRide = false;
   harness.activeBusLock = false;
+  harness.maintenance = null;
+  harness.transactionTail = Promise.resolve();
   harness.disabled = new Map();
   harness.invalidated = [];
   process.env.FIRMWARE_RELEASE_VERSION = "s2-gnss-v2";
@@ -130,6 +147,33 @@ function requestFirmware(sequence = "1", authorization = `Device ${"a".repeat(20
 }
 
 describe("device firmware release endpoint", () => {
+  const maintenance = (action: string, authorization = `Device ${"a".repeat(20)}`) =>
+    contractFetch(`${baseUrl}/api/devices/device_1/firmware/installation`, {
+      method: "POST", headers: { Authorization: authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+  it("rechecks ride state after discovery and reserves the shared bus lock", async () => {
+    expect((await requestFirmware()).status).toBe(200);
+    harness.activeRide = true;
+    expect((await maintenance("acquire")).status).toBe(409);
+    harness.activeRide = false;
+    const results = await Promise.all([maintenance("acquire"), maintenance("acquire")]);
+    expect(results.map(r => r.status).sort()).toEqual([200, 409]);
+    expect((await requestFirmware()).status).toBe(204);
+    expect(harness.maintenance).toMatchObject({ kind: "firmware", deviceId: "device_1" });
+    expect((await maintenance("release")).status).toBe(200);
+    expect(harness.maintenance).toBeNull();
+  });
+  it("fails closed on authentication and never releases another device's or ride's lock", async () => {
+    expect((await maintenance("acquire", "")).status).toBe(401);
+    harness.authenticated = false;
+    expect((await maintenance("acquire")).status).toBe(401);
+    harness.authenticated = true;
+    harness.maintenance = { kind: "firmware", deviceId: "other" };
+    expect((await maintenance("release")).status).toBe(200);
+    expect(harness.maintenance).toEqual({ kind: "firmware", deviceId: "other" });
+    expect((await maintenance("unknown")).status).toBe(400);
+  });
   it("returns only the complete newer signed release descriptor", async () => {
     const response = await requestFirmware();
     expect(response.status).toBe(200);

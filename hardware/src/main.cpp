@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <atomic>
 #include <sys/time.h>
 
 #ifndef EKI_FLEET_BUILD
@@ -194,7 +195,7 @@ struct FirmwareManifest {
   size_t size;
 };
 
-bool otaValidationPending = false;
+std::atomic<bool> otaValidationPending{false};
 uint32_t otaValidationStartedAt = 0;
 bool firmwareCheckedBefore = false;
 bool previousFirmwareCheckFailed = false;
@@ -298,7 +299,11 @@ int64_t pendingNtpDivergenceMs = 0;
 bool latestGnssReferenceValid = false;
 bool pendingNtpCrossCheck = false;
 bool pendingNtpCrossCheckHasGnss = false;
-bool credentialFaultActive = false;
+std::atomic<bool> credentialFaultActive{false};
+std::atomic<bool> firmwareCredentialRejected{false};
+portMUX_TYPE maintenanceSnapshotMux = portMUX_INITIALIZER_UNLOCKED;
+struct MaintenanceSnapshot { bool valid; bool stopped; uint32_t observedAt; };
+MaintenanceSnapshot maintenanceSnapshot{};
 bool gpsFixWasLost = false;
 bool trustworthyGpsFixObserved = false;
 bool wifiStatusKnown = false;
@@ -1026,6 +1031,37 @@ bool parseFirmwareManifest(HTTPClient &http, FirmwareManifest &manifest) {
   return true;
 }
 
+bool installationLocallySafe() {
+  portENTER_CRITICAL(&maintenanceSnapshotMux);
+  const MaintenanceSnapshot snapshot = maintenanceSnapshot;
+  portEXIT_CRITICAL(&maintenanceSnapshotMux);
+  return !credentialFaultActive && !otaValidationPending && clockIsSynchronized() &&
+    eki::update::installationSnapshotSafe(snapshot.valid, snapshot.stopped, snapshot.observedAt, millis());
+}
+
+bool reserveFirmwareMaintenance(bool acquire) {
+  char endpoint[ENDPOINT_MAX_LENGTH]{};
+  const char *query = strchr(firmwareEndpoint, '?');
+  const size_t baseLength = query ? static_cast<size_t>(query - firmwareEndpoint) : strlen(firmwareEndpoint);
+  const int length = snprintf(endpoint, sizeof(endpoint), "%.*s/installation", static_cast<int>(baseLength), firmwareEndpoint);
+  if (length <= 0 || static_cast<size_t>(length) >= sizeof(endpoint)) return false;
+  HTTPClient http;
+  http.setConnectTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
+  http.setTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
+  if (!http.begin(maintenanceTlsClient, endpoint)) return false;
+  http.addHeader("Authorization", authorizationHeader);
+  http.addHeader("Content-Type", "application/json");
+  const int status = http.POST(acquire ? "{\"action\":\"acquire\"}" : "{\"action\":\"release\"}");
+  JsonDocument acknowledgment;
+  const bool accepted = status == 200 && http.getSize() > 0 && http.getSize() <= 128 &&
+    !deserializeJson(acknowledgment, http.getStream()) && acknowledgment["acknowledged"] == true;
+  http.end();
+  maintenanceTlsClient.stop();
+  return accepted;
+}
+
+bool firmwareReservationMayBeHeld = false; // maintenance worker only
+
 bool installSignedFirmware(const FirmwareManifest &manifest) {
   const esp_partition_t *candidatePartition = esp_ota_get_next_update_partition(nullptr);
   if (candidatePartition == nullptr || manifest.size > candidatePartition->size) {
@@ -1054,7 +1090,7 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
     firmwareTlsClient.stop();
     return false;
   }
-  if (!Update.begin(manifest.size, U_FLASH)) {
+  if (!installationLocallySafe() || !Update.begin(manifest.size, U_FLASH)) {
     Serial.printf("[OTA] Inactive slot cannot accept image (error %u).\n", Update.getError());
     http.end();
     return false;
@@ -1076,6 +1112,7 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
   bool streamOk = true;
   while (received < manifest.size) {
     esp_task_wdt_reset();
+    if (!installationLocallySafe()) { streamOk = false; break; }
     const size_t available = stream->available();
     if (available == 0) {
       if (!http.connected() || elapsed(lastProgressAt) >= 15000) {
@@ -1144,12 +1181,14 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
     firmwareTlsClient.stop();
     return false;
   }
-  if (!Update.end(false) || !Update.isFinished()) {
+  if (!installationLocallySafe() || !Update.end(false) || !Update.isFinished()) {
+    Update.abort();
     Serial.printf("[OTA] Signed image was rejected (error %u).\n", Update.getError());
     http.end();
     return false;
   }
   http.end();
+  firmwareReservationMayBeHeld = !reserveFirmwareMaintenance(false);
   Serial.printf(
     "[OTA] Installed signed candidate %s (sequence %u); rebooting into rollback validation.\n",
     manifest.version,
@@ -1168,8 +1207,8 @@ void checkForSignedFirmware() {
       credentialFaultActive,
       clockIsSynchronized(),
       queue.depth,
-      hasCapturedLocation,
-      lastCapturedMotionState == MotionState::Stopped,
+      true,
+      installationLocallySafe(),
       otaValidationPending
     ) ||
     !eki::update::checkIsDue(
@@ -1196,7 +1235,7 @@ void checkForSignedFirmware() {
   const int responseCode = http.GET();
   if (responseCode == 401 || responseCode == 403) {
     http.end();
-    latchCredentialFault();
+    firmwareCredentialRejected = true;
     Serial.println("[OTA] Credential fault latched during release check.");
     return;
   }
@@ -1214,7 +1253,29 @@ void checkForSignedFirmware() {
   }
   http.end();
   maintenanceTlsClient.stop();
-  previousFirmwareCheckFailed = !installSignedFirmware(manifest);
+  if (!installationLocallySafe()) return;
+  firmwareReservationMayBeHeld = true; // unknown response may still commit
+  if (!reserveFirmwareMaintenance(true)) return;
+  // Reservation is durable, shared with ride startup and intentionally has
+  // no expiry while an installation can still be writing flash.
+  if (installationLocallySafe()) previousFirmwareCheckFailed = !installSignedFirmware(manifest);
+  firmwareReservationMayBeHeld = !reserveFirmwareMaintenance(false);
+}
+
+void firmwareMaintenanceWorker(void *) {
+  esp_task_wdt_add(nullptr);
+  bool recoveredReservation = false;
+  for (;;) {
+    esp_task_wdt_reset();
+    if (WiFi.status() == WL_CONNECTED && clockIsSynchronized()) {
+      if (!recoveredReservation || firmwareReservationMayBeHeld) {
+        recoveredReservation = reserveFirmwareMaintenance(false);
+        firmwareReservationMayBeHeld = !recoveredReservation;
+      }
+      if (recoveredReservation) checkForSignedFirmware();
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 }
 #endif
 
@@ -1740,6 +1801,9 @@ void rememberCapturedFix(const TelemetryFix &fix) {
 
 void evaluateTelemetry() {
   const TelemetryFix fix = currentFix();
+  portENTER_CRITICAL(&maintenanceSnapshotMux);
+  maintenanceSnapshot = {fix.valid, fix.motionState == MotionState::Stopped, millis()};
+  portEXIT_CRITICAL(&maintenanceSnapshotMux);
   if (
     WiFi.status() == WL_CONNECTED &&
     (!gnssStatusKnown || fix.valid != lastGnssConnected)
@@ -1796,6 +1860,7 @@ void publisherTask(void *) {
   for (;;) {
     esp_task_wdt_reset();
     serviceConnectivity();
+    if (firmwareCredentialRejected.exchange(false)) latchCredentialFault();
     collectDiagnosticResult();
     reportNtpCrossCheck();
 #if EKI_FLEET_BUILD
@@ -1846,13 +1911,6 @@ void publisherTask(void *) {
         if (remoteDiagnosticIsDue()) {
           publishRemoteDiagnostic();
         }
-#if EKI_FLEET_BUILD
-        else {
-          // Keep release checks separate from diagnostic preparation.
-          // The release check rechecks queue depth before starting.
-          checkForSignedFirmware();
-        }
-#endif
       }
     }
 
@@ -1975,6 +2033,13 @@ void setup() {
   }
   sntp_set_time_sync_notification_cb(onNtpTimeSynchronized);
   configureWatchdog();
+#if EKI_FLEET_BUILD
+  if (xTaskCreatePinnedToCore(firmwareMaintenanceWorker, "firmware-maintenance", 12288,
+      nullptr, PUBLISHER_TASK_PRIORITY, nullptr, 0) != pdPASS) {
+    Serial.println("[Boot] Unable to start firmware maintenance.");
+    haltWithStatusLed(2, true);
+  }
+#endif
   diagnosticJobs = xQueueCreate(1, sizeof(DiagnosticJob));
   diagnosticResults = xQueueCreate(1, sizeof(DiagnosticResult));
   if (diagnosticJobs == nullptr || diagnosticResults == nullptr ||

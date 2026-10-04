@@ -213,6 +213,52 @@ router.get(
 );
 
 router.post(
+  "/:deviceId/firmware/installation",
+  firmwareLimiter,
+  async (req: Request, res: Response) => {
+    res.set("Cache-Control", "no-store");
+    const deviceId = singleRouteParam(req.params.deviceId);
+    const secret = parseDeviceAuthorization(req.get("authorization"));
+    const action = req.body?.action;
+    if (!deviceId || !SAFE_ID.test(deviceId) || !secret ||
+        !req.body || Object.keys(req.body).length !== 1 ||
+        (action !== "acquire" && action !== "release")) {
+      res.status(!secret ? 401 : 400).json({ error: "Invalid firmware maintenance request." });
+      return;
+    }
+    try {
+      const assignment = await authenticateDeviceCredentials(deviceId, secret, Date.now());
+      if (!assignment) { res.status(401).json({ error: "Invalid device credentials." }); return; }
+      const lockRef = db.collection("_active_bus_locks").doc(assignment.busId);
+      const rideRef = db.collection("active_rides").doc(`${assignment.busId}_${assignment.routeId}`);
+      const deviceRef = db.collection("devices").doc(deviceId);
+      const allowed = await db.runTransaction(async transaction => {
+        const [lock, ride, device] = await Promise.all([transaction.get(lockRef), transaction.get(rideRef), transaction.get(deviceRef)]);
+        const ownMaintenance = lock.data()?.kind === "firmware" && lock.data()?.deviceId === deviceId;
+        if (action === "release") {
+          if (ownMaintenance) transaction.delete(lockRef);
+          return true;
+        }
+        if (ride.exists || lock.exists || !device.exists || device.data()?.enabled === false ||
+            device.data()?.busId !== assignment.busId || device.data()?.routeId !== assignment.routeId) return false;
+        // No timed expiry: a stalled/crashed flash must not overlap a new ride.
+        // The same authenticated board releases after failure or on reboot.
+        transaction.create(lockRef, {
+          kind: "firmware", deviceId, routeId: assignment.routeId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        return true;
+      });
+      if (!allowed) { res.status(409).json({ error: "Bus is busy." }); return; }
+      res.json({ acknowledged: true });
+    } catch (error) {
+      console.error("[Firmware] Maintenance reservation failed:", error);
+      res.status(503).json({ error: "Firmware service unavailable." });
+    }
+  },
+);
+
+router.post(
   "/:deviceId/diagnostics",
   diagnosticsLimiter,
   async (req: Request, res: Response) => {
