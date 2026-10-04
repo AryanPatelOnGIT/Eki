@@ -10,8 +10,9 @@ import { createConcurrencyLimiter } from "../lib/concurrency";
 import { createBoundedSingleFlight } from "../lib/boundedSingleFlight";
 import { recordBackgroundFailure } from "../lib/backgroundFailureTracker";
 import { evaluateOutageReacquisition, isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
-import { withoutLiveRouteContext } from "../lib/liveRouteContext";
-import { normalizeRideDirection } from "../lib/rideDirection";
+import { restoreDurableRide } from "./durableRideRecovery";
+export { durableLifecycle, freshestDelayMinutes, shouldApplyRestoreTelemetry } from "./durableRideRecoveryPolicy";
+export type { DelayPreference } from "./durableRideRecoveryPolicy";
 import type { TelemetryPayload } from "./telemetryPayload";
 import { scheduleTelemetryRouteProcessing } from "./telemetryRouteService";
 import {
@@ -35,9 +36,7 @@ const scryptLimiter = createConcurrencyLimiter(SCRYPT_MAX_CONCURRENT);
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CREDENTIAL_CACHE_MS = 60_000;
 const NEGATIVE_CACHE_MS = 5_000;
-const DURABLE_RIDE_MISS_CACHE_MS = 30_000;
 const MAX_CREDENTIAL_CACHE_ENTRIES = 1_000;
-const MAX_DURABLE_RIDE_MISSES = 1_000;
 const DEVICE_RATE_LIMIT_PATH = "_deviceRateLimits";
 const DEVICE_CREDENTIAL_VERSION_PATH = "_deviceCredentialVersions";
 
@@ -88,11 +87,6 @@ export interface LatencySummary {
   p99: number | null;
 }
 
-export interface DelayPreference {
-  delayMinutes: number;
-  delayUpdatedAt: number;
-}
-
 /**
  * A powered device proves only device presence. Ride lifecycle fields are
  * introduced by the transactional arm/direction-resolution flow, never by
@@ -100,54 +94,6 @@ export interface DelayPreference {
  */
 export function initialDevicePresenceState(): { status: "offline" } {
   return { status: "offline" };
-}
-
-function validDelayMinutes(value: unknown): number | null {
-  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1440
-    ? Number(value)
-    : null;
-}
-
-function validDelayRevision(value: unknown): number {
-  return Number.isSafeInteger(value) && Number(value) >= 0
-    ? Number(value)
-    : 0;
-}
-
-/**
- * Pick the freshest announced delay between the live RTDB node and the
- * durable active_rides copy.
- *
- * The delay route writes both stores with the same `delayUpdatedAt` epoch,
- * but the two writes are not atomic, so one can be stale after a partial
- * failure. The newer timestamp wins; on a tie the live value is preferred
- * because it is what passengers are currently seeing. Legacy rows without
- * a timestamp default to 0 and therefore never override a newer value.
- */
-export function freshestDelayMinutes(
-  live: Record<string, unknown> | null,
-  durable: Record<string, unknown> | null,
-): DelayPreference {
-  const liveMinutes = validDelayMinutes(live?.delayMinutes);
-  const durableMinutes = validDelayMinutes(durable?.delayMinutes);
-  const liveAt = validDelayRevision(live?.delayUpdatedAt);
-  const durableAt = validDelayRevision(durable?.delayUpdatedAt);
-
-  if (durableMinutes !== null && (liveMinutes === null || durableAt > liveAt)) {
-    return { delayMinutes: durableMinutes, delayUpdatedAt: durableAt };
-  }
-  return {
-    delayMinutes: liveMinutes ?? durableMinutes ?? 0,
-    delayUpdatedAt: liveAt,
-  };
-}
-
-export function shouldApplyRestoreTelemetry(
-  existingTimestamp: unknown,
-  candidateTimestamp: number,
-): boolean {
-  const existing = Number(existingTimestamp);
-  return !Number.isFinite(existing) || existing < candidateTimestamp;
 }
 
 export type TelemetryIngestResult =
@@ -166,7 +112,6 @@ const credentialCache = new Map<string, CredentialCacheEntry>();
 const credentialFills = createBoundedSingleFlight<DeviceAssignment | null>({
   maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
 });
-const durableRideMisses = new Map<string, number>();
 const durableRideRestores = new Map<string, Promise<void>>();
 let credentialInvalidationListenerStarted = false;
 const status: Pick<
@@ -509,120 +454,16 @@ async function reserveDistributedDeviceTokens(
   };
 }
 
-export function durableLifecycle(
-  value: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const direction = normalizeRideDirection(value.direction);
-  if (
-    value.status !== "active" ||
-    typeof value.sessionId !== "string" ||
-    typeof value.driverId !== "string" ||
-    (value.tripState !== "pre_departure" &&
-      value.tripState !== "in_service") ||
-    !direction
-  ) {
-    return null;
-  }
-  return {
-    sessionId: value.sessionId,
-    driverId: value.driverId,
-    status: "active",
-    direction,
-    originStopId: typeof value.originStopId === "string" ? value.originStopId : null,
-    destinationStopId:
-      typeof value.destinationStopId === "string" ? value.destinationStopId : null,
-    automaticTurnaround: value.automaticTurnaround === true,
-    previousSessionId:
-      typeof value.previousSessionId === "string" ? value.previousSessionId : null,
-    completedAt: null,
-    turnaroundEligibleAt: null,
-    turnaroundClaimId: null,
-    turnaroundClaimedAt: null,
-    tripState: value.tripState,
-    currentStopIndex: Number.isInteger(value.currentStopIndex)
-      ? value.currentStopIndex
-      : 0,
-    hasDepartedOrigin: value.hasDepartedOrigin === true,
-    delayMinutes:
-      typeof value.delayMinutes === "number" ? value.delayMinutes : 0,
-    delayUpdatedAt:
-      typeof value.delayUpdatedAt === "number" ? value.delayUpdatedAt : 0,
-  };
-}
-
-async function restoreDurableRide(
-  assignment: DeviceAssignment,
-  sample: TelemetryPayload,
-): Promise<void> {
-  const nodeKey = `${assignment.busId}_${assignment.routeId}`;
-  const now = Date.now();
-  const missExpiresAt = durableRideMisses.get(nodeKey) ?? 0;
-  if (missExpiresAt > now) return;
-
-  const activeRide = await db.collection("active_rides").doc(nodeKey).get();
-  const lifecycle = activeRide.exists
-    ? durableLifecycle(
-        activeRide.data() as Record<string, unknown>,
-      )
-    : null;
-  if (!lifecycle) {
-    if (
-      !durableRideMisses.has(nodeKey) &&
-      durableRideMisses.size >= MAX_DURABLE_RIDE_MISSES
-    ) {
-      for (const [key, expiresAt] of durableRideMisses) {
-        if (expiresAt <= now) durableRideMisses.delete(key);
-      }
-      if (durableRideMisses.size >= MAX_DURABLE_RIDE_MISSES) {
-        const oldest = durableRideMisses.keys().next().value;
-        if (oldest) durableRideMisses.delete(oldest);
-      }
-    }
-    durableRideMisses.set(nodeKey, now + DURABLE_RIDE_MISS_CACHE_MS);
-    return;
-  }
-  durableRideMisses.delete(nodeKey);
-
-  await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
-    const live = current as Record<string, unknown> | null;
-    if (
-      live?.status === "active" &&
-      typeof live.sessionId === "string"
-    ) {
-      return;
-    }
-    const telemetry = shouldApplyRestoreTelemetry(
-      live?.timestamp,
-      sample.timestamp,
-    ) ? sample : {};
-    // The durable lifecycle can hold a delay older than the live node if a
-    // delay update only partially landed; never regress the announced value.
-    const delay = freshestDelayMinutes(live, lifecycle);
-    const liveBase = live?.sessionId === lifecycle.sessionId
-      ? live
-      : withoutLiveRouteContext(live);
-    return {
-      ...(liveBase ?? {}),
-      ...telemetry,
-      ...lifecycle,
-      ...delay,
-      busId: assignment.busId,
-      routeId: assignment.routeId,
-      deviceState: "online",
-      signalState:
-        sample.motionState === "uncertain" ? "gnss_lost" : "connected",
-    };
-  });
-}
-
 function scheduleDurableRideRestore(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
+  claimId: string | null,
 ): void {
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   if (durableRideRestores.has(nodeKey)) return;
 
-  const restore = restoreDurableRide(assignment, sample)
+  const restore = restoreDurableRide(assignment, sample, claimId)
+    .then(() => undefined)
     .catch((error) => {
       // Surface through the failure tracker too (issue #38): sustained
       // failures escalate to an error-level alert and show up on /health.
@@ -766,7 +607,7 @@ async function persistTelemetry(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
   backendReceivedAt: number,
-): Promise<{ committed: boolean; hasSession: boolean }> {
+): Promise<{ committed: boolean; hasSession: boolean; claimId: string | null }> {
   const writeStartedAt = Date.now();
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   const ref = rtdb.ref(`activeBuses/${nodeKey}`);
@@ -786,7 +627,9 @@ async function persistTelemetry(
   return {
     committed: transaction.committed,
     hasSession:
-      value?.status === "active" && typeof value.sessionId === "string",
+      value?.status === "active" && typeof value.sessionId === "string" && value.sessionId.length > 0 &&
+      (value.tripState === "pre_departure" || value.tripState === "in_service"),
+    claimId: typeof value?.turnaroundClaimId === "string" ? value.turnaroundClaimId : null,
   };
 }
 
@@ -834,7 +677,7 @@ export async function ingestDeviceTelemetry(
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
     // is not delayed by an additional Firestore read.
-    scheduleDurableRideRestore(assignment, sample);
+    scheduleDurableRideRestore(assignment, sample, persisted.claimId);
   }
   if (persisted.committed) {
     status.accepted += 1;

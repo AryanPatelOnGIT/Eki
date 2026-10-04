@@ -4,6 +4,12 @@ Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 > Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
 
+Subsequent R06 recovery evidence is in the
+[5 October priority record](ISSUE_246_PRIORITY_PARTS_2026_10_05.md): software tests
+cover the durable-claim/RTDB-publication crash window and reuse of the same return
+session. The moving and physical scenarios below retain their original evidence
+and open acceptance requirements.
+
 Implemented on 2026-09-12 in the working tree based on `d8d69fd`.
 
 The missing tracking improvements from audited snapshot `965d376` were restored before correcting the remaining defects. This includes nullable direction handling, pending-match marker retention, smooth marker movement, adaptive GNSS filtering, and ambiguity handling.

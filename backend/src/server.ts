@@ -31,6 +31,7 @@ import {
   startTelemetryRouteWatcher,
 } from "./services/telemetryRouteService";
 import { drainHttpOperations } from "./services/httpOperations";
+import { drainDurableRideRecovery } from "./services/durableRideRecovery";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
 import { createHealthState } from "./lib/healthState";
 import { createHttpMetricsMiddleware, registerOperationalMetrics } from "./lib/metrics";
@@ -354,6 +355,10 @@ async function shutdown(signal: string) {
     () => ({ status: "fulfilled" as const }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
   );
+  const recoveryResult = await drainDurableRideRecovery().then(
+    () => ({ status: "fulfilled" as const }),
+    (reason: unknown) => ({ status: "rejected" as const, reason }),
+  );
   const telemetryResult = await shutdownTelemetry().then(
     () => ({ status: "fulfilled" as const }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
@@ -369,6 +374,7 @@ async function shutdown(signal: string) {
     workerResult,
     telemetryResult,
     routingResult,
+    recoveryResult,
     firebaseResult,
   ].filter((result) => result.status === "rejected");
   for (const failure of failures) {

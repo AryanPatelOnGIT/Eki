@@ -177,6 +177,16 @@ probe down.
 
 ## Device endpoints
 
+Accepted telemetry also triggers durable ride recovery when the live node has
+missing lifecycle state or still carries a completed predecessor. The leader
+checks completed nodes on startup/events too. Recovery reads the active ride,
+matching bus lock and non-terminal session together, then conditionally restores
+the same claimed return session in RTDB. It protects newer/unrelated sessions,
+preserves newer GNSS data, and clears the predecessor's match/reroute and delay
+state. A new claim bypasses the earlier no-ride miss cache; no extra session or
+lock is created by recovery. This background work drains before Firebase shutdown
+and does not delay the telemetry acceptance response.
+
 Device authentication coalesces concurrent misses for the same device ID and
 secret digest into one registry/KDF fill. It admits at most 16 unsettled fills
 and 64 waiting callers per digest; overload and a 5-second monotonic cache-miss

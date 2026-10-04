@@ -15,6 +15,7 @@ The previous six selected parts and their evidence remain in
 R01 is merged in [PR #254](https://github.com/notnamansinha/Eki/pull/254);
 R04 and its request-authentication correction are merged in
 [PR #255](https://github.com/notnamansinha/Eki/pull/255).
+R05 is merged in [PR #256](https://github.com/notnamansinha/Eki/pull/256).
 API policy changes are reflected in `backend/API.md`, its generated mirror,
 `backend/openapi.json`, the HTTP contract and low-level design.
 
@@ -29,6 +30,21 @@ Detailed admin health exposes only fill/waiter counts. Targeted verification:
 and post-KDF registry reads, failed-fill recovery, positive/negative expiry,
 listener failure, overload and timed-out retry amplification. Full local checks:
 659 backend cases, all 59 script cases, OpenAPI 62 operations, lint and TypeScript.
+
+R06: the leader's initial/completed RTDB snapshots and actual telemetry ingestion
+recover a durable return after the claim/publication crash window. Recovery reads
+the active ride, bus lock and non-terminal session together, then restores only
+that session or its completed predecessor with the matching return claim. It
+protects newer live sessions, changed locks, terminal sessions and conflicting
+claims; no new session/lock/history is created. New claims bypass earlier miss
+cache entries. Newer GNSS data and uncertainty survive an older recovery sample,
+and old reroute/delay state does not leak into the return. Eight actual helper/
+ingestion integration cases and the initial-snapshot engine regression pass.
+Recovery is single-flight with 16 admitted keys and drains before Firebase shutdown.
+All 668 backend cases, 59 script cases, OpenAPI 62 operations, lint and TypeScript
+pass locally. One legacy source-string assertion initially referenced the old
+two-argument scheduling call; it now checks propagation of the actual claim ID.
+Moving and physical crash acceptance remain separate in #245.
 
 Stationary baseline: COM3 was read without flash, reboot or serial writes.
 Twenty GNSS/telemetry samples from the previously installed firmware received

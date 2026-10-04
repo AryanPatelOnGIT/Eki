@@ -228,7 +228,7 @@ Fields: `deviceId`, `busId`, `routeId`, `enabled`, `secretHash` (`32-hex-salt:12
 
 ### `active_rides/{busId}_{routeId}`
 
-Minimal recovery state: `sessionId`, `busId`, `routeId`, `driverId`, `direction`, `originStopId`, `destinationStopId`, `status: active`, `tripState`, direction-ordered `currentStopIndex`, `hasDepartedOrigin`, `delayMinutes`, optional `automaticTurnaround`/`previousSessionId`, and `updatedAt`. No coordinate history. Telemetry restores this into RTDB if a live node loses lifecycle fields and clears stale completion/claim fields. Completion/reconciliation deletes only a matching session.
+Minimal recovery state: `sessionId`, `busId`, `routeId`, `driverId`, `direction`, `originStopId`, `destinationStopId`, `status: active`, `tripState`, direction-ordered `currentStopIndex`, `hasDepartedOrigin`, `delayMinutes`, optional `automaticTurnaround`/`previousSessionId`, and `updatedAt`. No coordinate history. Recovery reads this projection, its bus lock and non-terminal session in one Firestore transaction. Telemetry and the leader's initial/completed RTDB snapshots restore missing lifecycle fields. A completed predecessor can be replaced only by its own durable automatic return, with a matching claim when present; unrelated or newer live sessions and terminal durable sessions are protected. Recovery reuses the claimed session ID, clears old completion/claim and match/reroute context, preserves newer raw telemetry and same-session delays, and leaves completed history/locks untouched. A newly observed claim bypasses the earlier no-ride miss cache; claimed misses retry after 1s rather than 30s. Completion/reconciliation deletes only a matching session.
 
 ### `_active_bus_locks/{busId}`
 
