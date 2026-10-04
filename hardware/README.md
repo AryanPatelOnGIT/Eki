@@ -251,6 +251,15 @@ requires controlled signing, immutable HTTPS hosting, backend release metadata,
 and spare-board rollout/rollback evidence.
 
 
+Clock discipline requires three distinct GNSS UTC epochs advancing with the
+monotonic clock (500–3000 ms spacing, at most 250 ms cadence error). GNSS-only
+startup remains supported after that corroboration. Once system time exists,
+corrections above 10 seconds require a fresh agreeing peer; a GNSS/NTP
+disagreement above 1.5 seconds pauses new TLS/telemetry instead of changing
+certificate time. NTP candidates are guarded before IDF sets time. Peer NTP
+references expire after ten minutes, and clock faults retry NTP after one minute.
+These checks establish consistency, not cryptographic GNSS/NTP authenticity.
+
 Live ESP32 verification and TLS compatibility details are recorded in
 `docs/testing/LIVE_ESP32_LATENCY_RESULT.md`. Telemetry retains its HTTPClient
 between samples so its destructor cannot defeat keep-alive. The pinned mbedTLS

@@ -10,6 +10,8 @@ constexpr int UTC_YEAR_MAX = 2099;
 constexpr int64_t TRUSTED_EPOCH_MIN_MS = 1700000000000LL;
 constexpr uint32_t GNSS_CLOCK_REFRESH_MS = 60000;
 constexpr int64_t GNSS_CLOCK_CORRECTION_THRESHOLD_MS = 1500;
+constexpr int64_t MAX_UNCORROBORATED_CORRECTION_MS = 10000;
+constexpr uint32_t PEER_REFERENCE_MAX_AGE_MS = 10UL * 60 * 1000;
 
 struct UtcDateTime {
   int year;
@@ -74,6 +76,33 @@ inline bool utcToEpochMilliseconds(const UtcDateTime &utc, int64_t &epochMs) {
 
 inline int64_t absoluteDifference(int64_t left, int64_t right) {
   return left >= right ? left - right : right - left;
+}
+
+// Three distinct RMC epochs must advance with the monotonic clock. Duplicate,
+// stalled and inconsistent sentences cannot bootstrap certificate time.
+struct GnssCorroboration {
+  int64_t epoch = 0;
+  uint32_t monotonic = 0;
+  uint8_t count = 0;
+  bool observe(int64_t candidate, uint32_t now) {
+    const uint32_t age = now - monotonic;
+    if (count && age < 500) return false;
+    const bool coherent = count && age <= 3000 && candidate > epoch &&
+      absoluteDifference(candidate, epoch + age) <= 250;
+    count = coherent ? (count < 3 ? count + 1 : 3) : 1;
+    epoch = candidate;
+    monotonic = now;
+    return count >= 3;
+  }
+};
+
+inline bool candidateSafe(
+  int64_t systemEpoch, int64_t candidate, bool peerFresh, int64_t peerEpoch
+) {
+  if (candidate < TRUSTED_EPOCH_MIN_MS) return false;
+  if (peerFresh && absoluteDifference(candidate, peerEpoch) > GNSS_CLOCK_CORRECTION_THRESHOLD_MS) return false;
+  return systemEpoch < TRUSTED_EPOCH_MIN_MS ||
+    absoluteDifference(systemEpoch, candidate) <= MAX_UNCORROBORATED_CORRECTION_MS || peerFresh;
 }
 
 inline int64_t projectEpochMilliseconds(

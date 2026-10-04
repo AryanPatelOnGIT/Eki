@@ -26,6 +26,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <mbedtls/sha256.h>
 #include <cstdio>
 #include <cstring>
@@ -299,6 +300,11 @@ int64_t pendingNtpDivergenceMs = 0;
 bool latestGnssReferenceValid = false;
 bool pendingNtpCrossCheck = false;
 bool pendingNtpCrossCheckHasGnss = false;
+SemaphoreHandle_t clockDisciplineMutex = nullptr;
+eki::clock::GnssCorroboration gnssCorroboration;
+int64_t ntpCandidateEpochMs = 0;
+uint32_t ntpCandidateAt = 0;
+std::atomic<bool> clockDisagreementActive{false};
 std::atomic<bool> credentialFaultActive{false};
 std::atomic<bool> firmwareCredentialRejected{false};
 portMUX_TYPE maintenanceSnapshotMux = portMUX_INITIALIZER_UNLOCKED;
@@ -661,7 +667,7 @@ void expireGnssEpochReference(uint32_t now) {
 }
 
 bool clockIsSynchronized() {
-  return epochMilliseconds() >= eki::clock::TRUSTED_EPOCH_MIN_MS;
+  return !clockDisagreementActive && epochMilliseconds() >= eki::clock::TRUSTED_EPOCH_MIN_MS;
 }
 
 bool httpsRetryIsPending() {
@@ -727,13 +733,29 @@ void disciplineClockFromGnss() {
   };
   int64_t gnssEpochMs = 0;
   if (!eki::clock::utcToEpochMilliseconds(utc, gnssEpochMs)) return;
+  gnssEpochMs += gps.time.age();
+  xSemaphoreTake(clockDisciplineMutex, portMAX_DELAY);
+  const uint32_t observedAt = millis();
+  const bool corroborated = gnssCorroboration.observe(gnssEpochMs, observedAt);
+  int64_t peerEpochMs = 0;
+  const bool peerFresh = ntpCandidateEpochMs >= eki::clock::TRUSTED_EPOCH_MIN_MS &&
+    eki::clock::projectEpochMillisecondsIfFresh(ntpCandidateEpochMs, ntpCandidateAt,
+      observedAt, eki::clock::PEER_REFERENCE_MAX_AGE_MS, peerEpochMs);
+  if (!corroborated || !eki::clock::candidateSafe(systemEpochMilliseconds(), gnssEpochMs, peerFresh, peerEpochMs)) {
+    if (corroborated) {
+      clockDisagreementActive = true;
+      Serial.println("[Clock] GNSS correction rejected; TLS/telemetry paused pending corroboration.");
+    }
+    xSemaphoreGive(clockDisciplineMutex);
+    return;
+  }
+  clockDisagreementActive = false;
 
   // Keep a fresh, monotonic-time-anchored GNSS reference for the asynchronous
   // SNTP callback. TinyGPS++ age accounts for time since this sentence arrived.
-  const uint32_t timeAgeMs = gps.time.age();
   portENTER_CRITICAL(&clockCrossCheckMux);
   latestGnssEpochMs = gnssEpochMs;
-  latestGnssReferenceAt = millis() - timeAgeMs;
+  latestGnssReferenceAt = observedAt;
   latestGnssReferenceValid = true;
   portEXIT_CRITICAL(&clockCrossCheckMux);
 
@@ -745,6 +767,7 @@ void disciplineClockFromGnss() {
       );
       timeRangeWarningLogged = true;
     }
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
 
@@ -755,6 +778,7 @@ void disciplineClockFromGnss() {
     systemEpochMs,
     gnssEpochMs
   )) {
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
 
@@ -763,11 +787,13 @@ void disciplineClockFromGnss() {
   tv.tv_usec = static_cast<suseconds_t>((gnssEpochMs % 1000) * 1000);
   if (settimeofday(&tv, nullptr) != 0) {
     Serial.println("[Clock] GNSS UTC was valid but settimeofday failed.");
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
   const bool initialSynchronization = !gnssClockApplied;
   gnssClockApplied = true;
   lastGnssClockAppliedAt = millis();
+  xSemaphoreGive(clockDisciplineMutex);
   if (!initialSynchronization) {
     Serial.printf(
       "[Clock] GNSS UTC corrected system clock by %lldms; NTP remains a cross-check.\n",
@@ -881,7 +907,7 @@ void configureWatchdog() {
 void synchronizeClock() {
   if (
     ntpCrossCheckStarted &&
-    elapsed(lastNtpCrossCheckAt) < NTP_CROSS_CHECK_INTERVAL_MS
+    elapsed(lastNtpCrossCheckAt) < (clockDisagreementActive ? 60000UL : NTP_CROSS_CHECK_INTERVAL_MS)
   ) return;
   lastNtpCrossCheckAt = millis();
   ntpCrossCheckStarted = true;
@@ -940,6 +966,34 @@ void reportNtpCrossCheck() {
       "[Clock] NTP fallback synchronized system time; awaiting fresh GNSS UTC cross-check."
     );
   }
+}
+
+// Called by the strong override of IDF's weak sntp_sync_time below. The normal
+// notification callback is too late: default SNTP has already set TLS time.
+void applyNtpCandidate(struct timeval *candidate) {
+  if (!clockDisciplineMutex || !candidate) return;
+  xSemaphoreTake(clockDisciplineMutex, portMAX_DELAY);
+  const uint32_t now = millis();
+  const int64_t epoch = static_cast<int64_t>(candidate->tv_sec) * 1000 + candidate->tv_usec / 1000;
+  int64_t peer = 0;
+  const bool peerFresh = gnssCorroboration.count >= 3 &&
+    eki::clock::projectEpochMillisecondsIfFresh(gnssCorroboration.epoch, gnssCorroboration.monotonic,
+      now, GNSS_UTC_MAX_AGE_MS * 2, peer);
+  if (epoch >= eki::clock::TRUSTED_EPOCH_MIN_MS && candidate->tv_usec >= 0 && candidate->tv_usec < 1000000) {
+    ntpCandidateEpochMs = epoch;
+    ntpCandidateAt = now;
+  }
+  const bool accepted = candidate->tv_usec >= 0 && candidate->tv_usec < 1000000 &&
+    eki::clock::candidateSafe(systemEpochMilliseconds(), epoch, peerFresh, peer);
+  if (accepted && settimeofday(candidate, nullptr) == 0) {
+    clockDisagreementActive = false;
+    sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
+    onNtpTimeSynchronized(candidate);
+  } else {
+    clockDisagreementActive = true;
+    Serial.println("[Clock] NTP correction rejected before changing TLS time.");
+  }
+  xSemaphoreGive(clockDisciplineMutex);
 }
 
 #if EKI_FLEET_BUILD
@@ -1038,6 +1092,7 @@ bool installationLocallySafe() {
   return !credentialFaultActive && !otaValidationPending && clockIsSynchronized() &&
     eki::update::installationSnapshotSafe(snapshot.valid, snapshot.stopped, snapshot.observedAt, millis());
 }
+
 
 bool reserveFirmwareMaintenance(bool acquire) {
   char endpoint[ENDPOINT_MAX_LENGTH]{};
@@ -1924,6 +1979,10 @@ void publisherTask(void *) {
 
 } // namespace
 
+extern "C" void sntp_sync_time(struct timeval *candidate) {
+  applyNtpCandidate(candidate);
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(STATUS_LED_PIN, OUTPUT);
@@ -2031,7 +2090,8 @@ void setup() {
     Serial.println("[Boot] Compile-time request configuration is too long; halted.");
     haltWithStatusLed(2);
   }
-  sntp_set_time_sync_notification_cb(onNtpTimeSynchronized);
+  clockDisciplineMutex = xSemaphoreCreateMutex();
+  if (!clockDisciplineMutex) haltWithStatusLed(2);
   configureWatchdog();
 #if EKI_FLEET_BUILD
   if (xTaskCreatePinnedToCore(firmwareMaintenanceWorker, "firmware-maintenance", 12288,
