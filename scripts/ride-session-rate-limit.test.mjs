@@ -6,7 +6,24 @@ import test from "node:test";
 const require = createRequire(new URL("../backend/package.json", import.meta.url));
 const ts = require("typescript");
 const express = require("express");
-const { rateLimit } = require("express-rate-limit");
+function loadHelper(name, dependencies = {}) {
+  const source = readFileSync(new URL(`../backend/src/lib/${name}.ts`, import.meta.url), "utf8");
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+  const module = { exports: {} };
+  new Function("require", "exports", "module", code)(path => dependencies[path] ?? require(path), module.exports, module);
+  return module.exports;
+}
+const { createBrowserAdmission } = loadHelper("browserAdmission", {
+  "./rateLimitIdentity": loadHelper("rateLimitIdentity"),
+  "./rateLimitShard": loadHelper("rateLimitShard"),
+  "../middleware/requireAuth": { requireAuth: async (req, res, next) => {
+    // This harness isolates mount accounting; the HTTP Vitest suite verifies
+    // admission with the actual authentication middleware and denied tokens.
+    if (req.headers.authorization !== "Bearer verified-alice") return res.sendStatus(401);
+    req.user = { uid: "alice" };
+    next();
+  } },
+});
 const source = ts.createSourceFile("server.ts", readFileSync(new URL("../backend/src/server.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 const mounts = [];
 function visit(node) {
@@ -21,12 +38,13 @@ visit(source);
 for (const path of ["/session_1/boarding-code", "/session_1/messages", "/session_1/passengers/me"]) {
   test(`ride-session write budget allows 30 requests to ${path}`, async () => {
     const app = express();
+    assert.match(source.text, /app\.use\("\/api", createBrowserAdmission\(RATE_LIMIT_SHARD_FACTOR\)\)/);
+    app.use("/api", createBrowserAdmission(1));
     const rideSessionsRouter = express.Router();
     rideSessionsRouter.post("/", (_req, res) => res.sendStatus(201));
     const rideSessionBoardingRouter = express.Router();
     rideSessionBoardingRouter.all(path, (_req, res) => res.sendStatus(200));
-    const handlers = { rideSessionsRouter, rideSessionBoardingRouter,
-      writeLimiter: rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: false, legacyHeaders: false }) };
+    const handlers = { rideSessionsRouter, rideSessionBoardingRouter };
     assert.ok(mounts.length > 0);
     for (const mount of mounts) app.use("/api/v2/ride-sessions", ...mount.map(name => {
       assert.ok(handlers[name], `Unsupported mount middleware: ${name}`);
@@ -37,12 +55,19 @@ for (const path of ["/session_1/boarding-code", "/session_1/messages", "/session
     });
     try {
       const url = `http://127.0.0.1:${server.address().port}/api/v2/ride-sessions${path}`;
+      const headers = { Authorization: "Bearer verified-alice" };
+      // Status polling must not spend the write allowance.
+      for (let index = 0; index < 35; index++) {
+        const response = await fetch(url, { headers });
+        await response.text();
+        assert.equal(response.status, 200);
+      }
       for (let index = 0; index < 30; index++) {
-        const response = await fetch(url, { method: path.endsWith("/me") ? "PUT" : "POST" });
+        const response = await fetch(url, { method: path.endsWith("/me") ? "PUT" : "POST", headers });
         await response.text();
         assert.equal(response.status, 200, `Request ${index + 1} consumed the budget twice`);
       }
-      const blocked = await fetch(url, { method: path.endsWith("/me") ? "PUT" : "POST" });
+      const blocked = await fetch(url, { method: path.endsWith("/me") ? "PUT" : "POST", headers });
       await blocked.text();
       assert.equal(blocked.status, 429);
     } finally {

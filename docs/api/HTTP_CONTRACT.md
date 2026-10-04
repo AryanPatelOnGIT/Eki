@@ -29,7 +29,8 @@ middleware chains, `router.route()` and `router.all()` fail until the inventory
 supports them explicitly. Automatic
 Express HEAD handling and CORS OPTIONS responses are middleware behavior,
 not separately registered business operations. TRACE/CONNECT are rejected
-with 405; unknown routes have Express's default 404 behavior.
+with 405; authenticated unknown API routes return 404, while missing or invalid
+browser credentials fail first with 401.
 
 OpenAPI structural validation uses Swagger Parser; response and payload
 conformance uses Ajv's JSON Schema 2020 validator. The parser remains on 12.x
@@ -62,11 +63,14 @@ Parser and authentication failures can precede handler-specific headers/errors.
 On detailed health, 503 can be a readiness snapshot or authentication-busy error.
 
 The server applies strict JSON parsers: 16 KiB generally, telemetry 512 bytes,
-diagnostics 1 KiB. Global browser rate limiting is 200/normalized-IP/minute;
-many mounts also apply 30/normalized-IP/minute even to GETs. `/api/routes` applies the 10/IP/minute
+diagnostics 1 KiB. CORS/preflight precedes the 1,000/normalized-IP/minute browser ingress guard.
+Verified-UID quotas separately allow 200 reads/minute and 30 mutations/minute;
+GET/HEAD polling never consumes mutation tokens. Public GET/HEAD probes and
+exact device ingress paths are exempt from browser ingress; detailed admin
+health stays authenticated and exempt from the user read quota. `/api/routes` applies the 10/UID/minute
 compute budget to geometry reads and deletion too; save-operation reads skip
-that budget. Segment planning uses 30/IP/minute. Places has an unsharded
-20/IP/minute limiter. Device ingress has separate pre-auth IP pools and an
+that budget. Segment planning uses 30/verified UID/minute. Places uses a replica-sharded
+20/verified UID/minute limiter. Device ingress has separate pre-auth IP pools and an
 authenticated telemetry budget. Read the per-operation policies before
 designing polling or retries; edge rate protection remains a deployment concern.
 

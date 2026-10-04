@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { requireAdmin } from "../middleware/requireAdmin";
+import { verifiedUserKeyGenerator } from "../lib/rateLimitIdentity";
+import { readRateLimitShardFactor, shardedLimit } from "../lib/rateLimitShard";
 
 const router = Router();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -16,7 +18,8 @@ interface PlaceResult {
 
 const placeSearchLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: shardedLimit(20, readRateLimitShardFactor()),
+  keyGenerator: verifiedUserKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
