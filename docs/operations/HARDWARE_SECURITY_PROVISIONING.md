@@ -1,6 +1,6 @@
 # ESP32 fleet security and provisioning
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This is the mandatory physical acceptance procedure for production trackers.
 Secure Boot V2 and release-mode flash encryption burn irreversible ESP32

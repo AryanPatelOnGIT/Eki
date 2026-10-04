@@ -1,5 +1,7 @@
 # Isolated browser QA
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 From the repository root, run `npx vite --config e2e/fixtures/vite.config.mts`, then open `http://127.0.0.1:3100/`.
 
 The fixture renders the actual passenger workspace, route carousel, settings panel and application CSS. Hook inputs and settings persistence are synthetic and exist only in memory. It has no Firebase connection, credentials or backend writes. Settings changes disappear on a server restart.

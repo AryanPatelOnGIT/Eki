@@ -1,6 +1,6 @@
 # High-level design (HLD)
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 ## Scope and goals
 
@@ -48,7 +48,7 @@ flowchart TB
 | Trip-state worker | Consume live RTDB changes, enforce ordered geofences, persist recovery/history, sweep stale state, run retention/privacy jobs | Ingest unauthenticated devices |
 | RTDB | Latest low-latency live projection and server-only assignment mirror | Durable history or device secrets |
 | Firestore | Identity profile data, fleet/route configuration, recovery, locks, messages, feedback and history | High-frequency coordinate stream |
-| Next.js PWA | Role-specific maps/workflows, pushed live views, client-authorized messaging/feedback | Authoritative GNSS/lifecycle mutation |
+| Next.js PWA | Role-specific maps/workflows, pushed live views, server-authorized messaging/feedback commands | Authoritative GNSS/lifecycle mutation |
 | Google Maps APIs | Admin-only place search and route geometry computation; browser map tiles | Per-fix ETA/directions calls |
 
 ## Core flows
@@ -57,7 +57,7 @@ flowchart TB
 
 1. GNSS emits NMEA at 9,600 baud; the ESP32 parses it continuously.
 2. Firmware rejects stale/poor-HDOP fixes, applies motion hysteresis, and publishes only on material change or heartbeat.
-3. The device posts an eight-field body and `Authorization: Device …` over CA-verified HTTPS, including capture/send times and a queue sequence.
+3. The device posts the current nine-field body and `Authorization: Device …` over CA-verified HTTPS, including capture/send times, a queue sequence and receiver HDOP. Previous eight/six-field schemas remain accepted during rollout.
 4. Express enforces request size, exact schema, timestamps, sequence, device/IP rate limits, scrypt credential verification, and protected registry assignment.
 5. An RTDB transaction rejects older/duplicate timestamp-sequence pairs and writes `activeBuses/{busId}_{routeId}` with server receive/commit times.
 6. A per-node asynchronous matcher preserves `rawLocation`, scores candidates on the direction-specific route using distance, heading and continuity, and publishes a version-bound `matchedLocation` without delaying the device response.
@@ -113,9 +113,10 @@ The software does not promise an absolute end-to-end SLA without real deployment
 | Stage | Bound/behavior |
 |---|---|
 | GNSS evaluation | 1 second |
-| Changed-fix floor | 3 seconds |
-| Moving/stopped heartbeat | 1 / 5 seconds |
-| HTTPS request timeout | 7 seconds |
+| Changed-fix floor | 1 second |
+| Moving/stopped heartbeat | 1 / 1 seconds |
+| HTTP connect/request timeout | Separate 1 / 1.5 second bounds |
+| TLS handshake timeout | Separate 10 second safety bound |
 | Retry | 1–30 seconds exponential with per-device jitter |
 | RTDB write | One ordered live-node transaction per accepted new sample; one shared rate-budget transaction per bounded token lease |
 | Firestore lifecycle | Only state/stop/delay/session changes |

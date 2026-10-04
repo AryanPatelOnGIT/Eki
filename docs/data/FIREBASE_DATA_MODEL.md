@@ -1,6 +1,7 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-02. RTDB field necessity and compatibility decisions are
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
 ## Reading this document
@@ -207,7 +208,7 @@ Fields: `busId`, `driverId`, `routeId`, `direction`, `originStopId`, `destinatio
 
 ### `feedbacks/{feedbackId}`
 
-Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction; the admin status endpoint changes review state. Retention/server privacy can delete.
+Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction. Admin review uses `GET /api/v2/feedback` (latest 200 records, no-store) and a status PATCH; the browser does not attach a direct feedback listener. The admin status endpoint changes review state. Retention/server privacy can delete.
 
 ### `feedbackCooldowns/{uid}`
 

@@ -1,6 +1,6 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
@@ -29,11 +29,16 @@ at `hardware/keys/secure_boot_signing_key.pem`; that key must exist only in the
 approved signing environment.
 
 ```powershell
-npm install
+npm ci
 py -m pip install --upgrade platformio
 Copy-Item backend/.env.example backend/.env
 Copy-Item hardware/include/secrets.example.h hardware/include/secrets.h
 ```
+
+For a laptop test, set backend `NODE_ENV=development`, `PORT=4000`, the frontend
+origins in `CORS_ORIGIN`, and keep `RETENTION_SWEEPER_ENABLED=false`. The copied
+template uses production mode/port and requires an explicit production retention
+override. Follow [local setup](../docs/GETTING_STARTED.md#local-development).
 
 For the backend, set Firebase Admin credentials or ADC,
 `FIREBASE_DATABASE_URL`, and an appropriate `GOOGLE_MAPS_API_KEY` when routes

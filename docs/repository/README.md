@@ -1,386 +1,102 @@
 # Eki campus bus tracking
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
-## Fast recovery: backend, tunnel, panel, and ESP32
+Eki lets passengers find a campus bus, choose a destination, join a ride and follow its progress. Administrators manage routes, fleet assignments, ride operations, feedback and history.
 
-Use these commands when the ESP reports `DNS Failed` or the test tunnel is
-offline. The ngrok development domain is configured once and then reused, so a
-tunnel restart does not by itself require another firmware build or reflash.
-Run each block in a separate terminal and keep Terminals 1 and 2 open.
+An ESP32 with a NEO-M8N GNSS receiver sends authenticated HTTPS telemetry to the Express backend. Firebase Realtime Database (RTDB) delivers live bus state; Firestore stores configuration, ride recovery and history. The Next.js frontend is a static-export progressive web app (PWA).
 
-**1. Start the backend (Terminal 1):**
+## Start here
 
-```powershell
-cd C:\Users\Naman Sinha\Desktop\Eki
-npm run dev --workspace=backend
-```
+| Your task | Read |
+|---|---|
+| First-time setup and role workflows | [Getting started](../GETTING_STARTED.md) |
+| Environment variables and App Check | [Configuration](../CONFIGURATION.md) |
+| Find a technical or operational document | [Documentation index](../index/README.md) |
+| Frontend work | [Frontend guide](../frontend/README.md) |
+| Backend work | [Backend guide](../backend/README.md) and [API reference](../backend/API.md) |
+| Prepare an ESP32 tracker | [Hardware guide](../hardware/README.md) |
+| Phone testing, tunnel recovery or a demo | [Local testing](../operations/LOCAL_TESTING.md) and [demo runbook](../operations/LIVE_DEMO_RUNBOOK.md) |
+| Contribute a change | [Contributing](CONTRIBUTING.md) |
 
-**2. Start the stable HTTPS tunnel (Terminal 2):**
+## Run locally
 
-```powershell
-ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN> # one-time setup
-$NgrokDomain = "<assigned-domain>" # for example: name.ngrok-free.dev
-ngrok http 4000 --url "https://$NgrokDomain"
-```
+Use Node.js 24 (the CI version), npm, Git, and a dedicated development Firebase project. Java 21 is needed for rule tests; PlatformIO is needed for firmware work.
 
-Keep ngrok running. In Terminal 3, verify the fixed origin:
-
-```powershell
-$BackendOrigin = "https://<assigned-domain>"
-Invoke-RestMethod "$BackendOrigin/health"
-```
-
-The health response must be `{"status":"ok"}`. Use the development domain
-assigned to the ngrok account; do not omit `--url` and accept a different
-ephemeral hostname. Store the authtoken only in ngrok's user-level configuration,
-never in this repository.
-
-**3. Configure consumers once (skip when the stable origin is unchanged):**
+Run from the repository root:
 
 ```powershell
-notepad hardware/include/secrets.h       # set BACKEND_URL to $BackendOrigin
-notepad frontend/.env.local               # set NEXT_PUBLIC_BACKEND_URL
-notepad frontend/.env.production          # set NEXT_PUBLIC_BACKEND_URL
+npm ci
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/env.production.example frontend/.env.local
 ```
 
-Never put the tunnel URL in `backend/.env`. The ESP URL and issuing root CA are
-compiled into the firmware. Configure the stable ngrok origin and its issuing
-root CA once; ordinary ngrok restarts and leaf-certificate renewals then do not
-require a rebuild or reflash.
+Edit both ignored files before starting:
 
-**4. Deploy the hosted panel after initial setup or origin changes (Terminal 3):**
-
-```powershell
-$env:NEXT_PUBLIC_BACKEND_URL = $BackendOrigin
-npm run deploy
-```
-
-Setting the environment variable explicitly makes the generated Firebase CSP
-allow the same backend origin used by the hosted panel.
-
-**5. Build and flash only for initial provisioning or compiled changes (Terminal 4):**
-
-```powershell
-py -m platformio run --project-dir hardware -e esp32dev
-py -m platformio run --project-dir hardware -e esp32dev --target upload --upload-port COM3
-py -m platformio device monitor --project-dir hardware --port COM3 --baud 115200
-```
-
-Replace `COM3` with the port shown by `py -m platformio device list`. The serial
-monitor should show Wi-Fi connected, GNSS connected, and no DNS/transport
-errors. On later ngrok/backend restarts with the same origin, skip steps 3 and 5.
-
-**6. Verify the correct route assignment:**
-
-In the admin panel, ensure `device_01` is assigned to `Bus01` and `route_01`,
-and `Bus01` has only `route_01` assigned. Then verify RTDB from a terminal:
-
-```powershell
-npx firebase database:get /activeBuses --project bustrack-be165 --json
-```
-
-The live key must be `Bus01_route_01` with fresh coordinates. `Bus01_Route-1`
-indicates a stale assignment or stale live record.
-
-Eki is a single-university bus-tracking system. An ESP32 reads a NEO-M8N GNSS receiver and pushes validated fixes over HTTPS to an Express backend. The backend owns identity and trip progression, projects current state to Firebase Realtime Database (RTDB), and persists configuration/recovery/history in Firestore. A static Next.js PWA provides passenger and administrator workspaces; administrators perform ride operations for assigned fleet operators.
-
-## Before testing: keep the app and tunnel running
-
-`npm run dev` starts both the frontend and backend, but only while that terminal
-remains open and the laptop stays awake:
+- Backend: set `NODE_ENV=development`, `PORT=4000`, `CORS_ORIGIN=http://localhost:3000`, the development RTDB URL and Firebase Admin credentials. Keep scheduled retention disabled locally. The tracked backend template uses production mode and port `8080`; copying it unchanged will not start a usable local environment.
+- Frontend: set the matching Firebase values, Maps values and `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`.
+- App Check: use a valid provider key or a registered local debug token. Only an unenforced development project may use `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED=true` with no provider key. See [configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
 
 ```powershell
 npm run dev
 ```
 
-This serves the frontend at `http://localhost:3000`, the backend at
-`http://localhost:4000`, and backend health at `http://localhost:4000/health`.
-For ordinary testing on the same laptop, keep
-`NEXT_PUBLIC_BACKEND_URL=http://localhost:4000` in `frontend/.env.local`.
+Open `http://localhost:3000`. Check `http://localhost:4000/health`; HTTP `200` with `{"status":"ok"}` means both Firebase dependency probes are ready. A `503` means the process is running with degraded dependencies.
 
-An ESP32 or remote phone cannot use the laptop's `localhost`. Keep `npm run dev`
-running and open a second terminal for the account's stable ngrok development
-domain. Add the account authtoken once, outside the repository:
+Follow [getting started](../GETTING_STARTED.md#create-initial-development-data) to create profiles, routes, buses and driver assignments. A phone or ESP32 needs a reachable HTTPS backend origin; its `localhost` points to itself.
 
-```powershell
-ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
-ngrok http 4000 --url https://<assigned-domain>
-```
-
-Verify the fixed HTTPS origin before flashing or deploying anything:
-
-```powershell
-Invoke-RestMethod https://<assigned-domain>/health
-```
-
-> **Important:** always pass the assigned development domain with `--url`.
-> Restarting ngrok with the same domain preserves the public backend origin.
-> Keep both the backend and ngrok processes open for the entire test.
-
-Configure each consumer once with the stable backend origin:
-
-| Consumer | Where to put the new HTTPS origin | Required action |
-|---|---|---|
-| ESP32 | `BACKEND_URL` and issuing root CA in ignored `hardware/include/secrets.h` | Rebuild and reflash once |
-| Locally served frontend used from another device | `NEXT_PUBLIC_BACKEND_URL` in ignored `frontend/.env.local` | Restart `npm run dev` |
-| Firebase-hosted frontend | `NEXT_PUBLIC_BACKEND_URL` in ignored `frontend/.env.production` or the deployment environment | Run the strict build and redeploy |
-| GitHub deployment | Environment secret `NEXT_PUBLIC_BACKEND_URL` | Update before the next workflow deploy |
-
-Do **not** put the tunnel URL in `backend/.env`; the backend itself continues to
-listen locally on port `4000`. `CORS_ORIGIN` in `backend/.env` contains frontend
-origins such as `http://localhost:3000` or `https://<project>.web.app`, not the
-backend tunnel origin.
-
-Do not pin the current ngrok leaf certificate: it is expected to renew. Embed
-the issuing root CA in `BACKEND_ROOT_CA`, keep hostname verification enabled,
-and reflash only if the stable domain, issuing trust root, device/Wi-Fi
-credentials, or firmware changes. See the [ngrok tunnel runbook](../operations/NGROK_TUNNEL.md)
-for one-time provisioning and troubleshooting.
-
-If the remote phone also needs the locally served frontend instead of Firebase
-Hosting, provision a second eligible stable ngrok domain, open its tunnel in a
-third terminal, and add its hostname to Firebase Authentication authorized
-domains. The free account's single assigned domain should remain dedicated to
-the backend, so Firebase Hosting is the preferred phone frontend:
-
-```powershell
-ngrok http 3000 --url https://<frontend-domain>
-```
-
-## Testing handoff: web app and ESP32
-
-Run these steps from the repository root after the local environment files are
-already configured. Never commit `backend/.env`, `frontend/.env.local`, or
-`hardware/include/secrets.h`.
-
-### 1. Web-app test
-
-After the local services are running, check the backend:
-
-```powershell
-Invoke-RestMethod http://localhost:4000/health
-```
-
-Open `http://localhost:3000`. Sign in as admin, verify the route/stops and
-bus/driver assignment, arm a ride, then use a passenger session to verify live
-location, boarding-code join, stop progress, messaging, feedback, and completion.
-Seed routes or refresh role claims only when needed:
-
-```powershell
-npm run seed --workspace=backend
-npm run sync-role-claims --workspace=backend
-```
-
-### 2. Prepare the device and connect it to the laptop backend
-
-Create/edit the ignored firmware configuration when testing a different device,
-Wi-Fi, backend, or certificate:
-
-```powershell
-Copy-Item hardware/include/secrets.example.h hardware/include/secrets.h
-notepad hardware/include/secrets.h
-```
-
-Provision the device only after its bus and route exist:
-
-```powershell
-npm run provision-device --workspace=backend -- `
-  --device-id device_01 --bus-id bus_01 --route-id route_01
-```
-
-Use the stable ngrok backend origin configured above and verify
-`https://<assigned-domain>/health` returns HTTP 200.
-
-Set the stable origin in `BACKEND_URL` and its verified issuing root CA in
-`BACKEND_ROOT_CA`, then build, flash, and monitor. Do this once unless a
-compiled configuration value changes:
-
-```powershell
-py -m platformio test --project-dir hardware -e native
-py -m platformio run --project-dir hardware -e esp32dev
-py -m platformio run --project-dir hardware -e esp32dev --target upload --upload-port COM3
-py -m platformio device monitor --project-dir hardware --port COM3 --baud 115200
-```
-
-Replace `COM3` with the port from `py -m platformio device list`. The monitor
-shows Wi-Fi, then GNSS, then only coordinates accepted by RTDB. Keep the
-backend tunnel running.
-
-### 3. Testing from a phone or another computer
-
-For remote web-app testing, set `NEXT_PUBLIC_BACKEND_URL` to the stable ngrok
-backend origin. Prefer Firebase Hosting; if a separate local frontend tunnel is
-used, add that frontend origin to `CORS_ORIGIN` and Firebase Authentication
-authorized domains, then restart the affected services. If App Check is enabled,
-use a temporary local debug token only in the ignored frontend env.
-
-### 4. Files to change when the test environment changes
-
-| Situation | Change | Restart/reflash |
-|---|---|---|
-| Firebase project, RTDB, server Maps key, port, or CORS | `backend/.env` | Restart backend |
-| Browser Firebase/Maps/App Check values or backend URL | `frontend/.env.local` | Restart frontend |
-| Wi-Fi SSID or password | `hardware/include/secrets.h` (`WIFI_SSID`, `WIFI_PASS`) | Rebuild and reflash |
-| Device identity/credential | `hardware/include/secrets.h` (`DEVICE_ID`, `DEVICE_SECRET`) and backend registry | Re-provision as needed, rebuild, reflash |
-| Backend hostname, port, or certificate CA | `hardware/include/secrets.h` (`BACKEND_URL`, `BACKEND_ROOT_CA`) | Rebuild and reflash |
-| GNSS wiring or UART pins/baud | `hardware/src/main.cpp` and physical wiring | Rebuild and reflash |
-
-Normally do not edit `hardware/platformio.ini`, the policy headers in
-`hardware/include/`, `hardware/partitions_secure.csv`, or
-`hardware/sdkconfig.defaults`. They define the board, dependencies, security,
-and tested firmware policy. The secure fleet path also requires the controlled
-`hardware/keys/secure_boot_signing_key.pem`; use `esp32dev` for bench testing
-and `esp32dev-secure` only through the security provisioning procedure.
-
-Keep the laptop awake, keep the backend ngrok endpoint and any separate frontend
-tunnel open, use a stable power source and clear-sky GNSS view, and record only
-non-secret test evidence. Never share
-service-account JSON, Wi-Fi passwords, device secrets, App Check debug tokens,
-signing keys, or unredacted serial logs.
-
-## How it works
+## How data moves
 
 ```mermaid
 flowchart LR
-  GNSS["NEO-M8N GNSS"] -->|"UART 9600 baud"| ESP["ESP32 firmware"]
-  ESP -->|"HTTPS POST + Device secret"| API["Express API"]
-  API -->|"latest live projection"| RTDB["Firebase RTDB"]
-  RTDB -->|"push subscription"| WEB["Next.js PWA"]
-  RTDB --> WORKER["Lease-owned trip worker"]
-  API --> FS["Firestore"]
+  GNSS[NEO-M8N] --> ESP[ESP32]
+  ESP -->|HTTPS + device credential| API[Express backend]
+  API -->|latest accepted fix| RTDB[Firebase RTDB]
+  RTDB -->|Firebase listeners| WEB[Next.js PWA]
+  RTDB --> WORKER[Lease-owned trip worker]
+  API --> FS[Firestore]
   WORKER --> FS
-  FS -->|"configuration, history, messages"| WEB
+  FS -->|Configuration and session snapshots| WEB
 ```
 
-There is no browser or hardware write path to live bus state. The hardware knows only its device ID, secret, backend URL, CA certificate, and Wi-Fi credentials. The protected `devices` record supplies its bus/route assignment.
+- The protected device registry supplies the bus and route assignment. Hardware cannot choose its assignment or write Firebase directly.
+- The backend advances only the next ordered stop. The final stop completes a ride; ending it early records `interrupted`.
+- A bus lock prevents concurrent rides on one physical bus. Durable ride state supports recovery after network, browser, device or backend interruptions.
+- Fresh stopped endpoint evidence can arm the opposite direction after the configured dwell. Device presence alone does not mean passenger service has started.
+- Live maps use shared Firebase subscriptions. Admin feedback is a bounded HTTP read; commands and mutations use authenticated HTTP endpoints.
 
-Live web data is not API-polled. Firebase `onValue` (RTDB) and `onSnapshot` (Firestore) push changes; normal REST commands use the browser `fetch` API. `fetch` is an HTTP client API, while polling is a repeated-request strategy that can itself use `fetch`, so replacing “polling with fetch” is not a meaningful architectural change.
-
-## Ride lifecycle
-
-```mermaid
-stateDiagram-v2
-  [*] --> PreDeparture: assigned driver arms service
-  PreDeparture --> InService: verified GNSS reaches stop 1
-  InService --> InService: next ordered stop reached
-  InService --> Completed: final ordered stop reached
-  Completed --> PreDeparture: stopped endpoint dwell arms opposite direction
-```
-
-- Initial arming requires a fresh stopped hardware fix near exactly one route endpoint and a valid driver/bus/route assignment. The backend infers A→Z or Z→A; the browser and ESP32 cannot override it.
-- A durable `_active_bus_locks/{busId}` record prevents one bus from running two route sessions at once.
-- Only the next configured stop advances progress. Segment crossing handles movement between samples.
-- GNSS, Wi-Fi, hardware, browser, or backend interruption does not discard the durable `active_rides` state.
-- Final-stop completion atomically writes history and conditionally releases the active ride and bus lock.
-- After the configured endpoint dwell, fresh stopped GNSS automatically creates a separately counted opposite-direction session. Moving, stale, mid-route or ambiguous fixes fail closed.
+See [architecture](../design/ARCHITECTURE.md), [data model](../data/FIREBASE_DATA_MODEL.md) and [telemetry contract](../hardware/HARDWARE_TELEMETRY.md) for the full behavior.
 
 ## Repository map
 
-| Path | Responsibility |
+| Path | Purpose |
 |---|---|
-| `backend/src/server.ts` | Express composition, middleware, health probe, shutdown |
-| `backend/src/routes/` | Authenticated browser/device HTTP boundaries |
-| `backend/src/services/` | Telemetry, lifecycle, worker lease, recovery, privacy, retention |
-| `backend/src/lib/` | Firebase Admin, geography, Maps, polyline/segment math |
-| `frontend/src/app/` | Landing and role-protected App Router workspaces |
-| `frontend/src/components/` | Admin operations, passenger tracking, maps, shared dialogs/messaging |
-| `frontend/src/hooks/` | Auth, shared Firestore/RTDB subscriptions, motion/focus behavior |
-| `frontend/src/lib/` | Firebase clients and pure live-data/map/history helpers |
-| `frontend/src/sw.js` | Static/public caching; authenticated and unknown requests are network-only |
-| `hardware/src/main.cpp` | GNSS parsing, HTTPS transport, buffering, watchdog and device loop |
-| `hardware/include/telemetry_policy.h` | Host-testable motion, distance, publish and retry policy |
-| `firestore.rules` / `database.rules.json` | Client authorization; Admin SDK bypasses rules |
-| `scripts/` | Production build, Workbox generation, deterministic CSP hashes |
-| `docs/` | HLD, LLD, data dictionary, telemetry, tests, audit, operations |
+| `frontend/` | Passenger/admin UI, authentication, Firebase subscriptions and PWA |
+| `backend/` | Device ingestion, authenticated APIs, ride lifecycle and background jobs |
+| `hardware/` | ESP32 firmware, configuration templates and host-side policy tests |
+| `docs/` | Onboarding, contracts, operations and dated acceptance evidence |
+| `e2e/` | Browser regression fixtures and tests |
+| `scripts/` | Build, CSP, API verification, documentation sync and trace analysis |
+| `observability/` | Optional local Collector/Jaeger stack and dashboard configuration |
+| `.github/workflows/` | CI verification and controlled Hosting/rules deployments |
+| `firestore.rules`, `database.rules.json` | Firebase client authorization |
 
-The detailed file-by-file module catalog is in [Low-level design](../design/LOW_LEVEL_DESIGN.md).
-
-## Local setup
-
-Requirements: Node.js 20+, npm 10+, Firebase project, browser/server Google Maps keys, and PlatformIO for firmware work.
-
-```powershell
-npm install
-Copy-Item backend/.env.example backend/.env
-Copy-Item frontend/env.production.example frontend/.env.local
-npm run dev
-```
-
-Backend credentials can be `FIREBASE_SERVICE_ACCOUNT` JSON or Application Default Credentials. `FIREBASE_DATABASE_URL` is required in production. The frontend template contains every mandatory public production variable; `npm run build:production` fails if one is absent or if a backend/database URL is local or non-HTTPS.
-
-Create routes/fleet records before provisioning a tracker:
-
-```powershell
-npm run provision-device --workspace=backend -- `
-  --device-id device_01 --bus-id bus_01 --route-id route_01
-```
-
-The command prints the random device secret once and stores only a salted scrypt verifier. In the controlled firmware-signing environment, place that plaintext with Wi-Fi, backend origin, and CA in the ignored `hardware/include/secrets.h`, then build and flash the device-specific image. The firmware has no local configuration portal or application credential store; every change requires a reflash. Fleet artifacts use the Secure Boot V2/flash-encrypted `esp32dev-secure` environment and the witnessed [hardware security procedure](../operations/HARDWARE_SECURITY_PROVISIONING.md).
-
-## Hardware contract
-
-`POST /api/devices/:deviceId/telemetry`
-
-```http
-Authorization: Device <secret>
-Content-Type: application/json
-```
-
-```json
-{
-  "deviceSentAt": <current Unix epoch in milliseconds>,
-  "gpsHdop": 1.2,
-  "lat": 23.034,
-  "lng": 72.55,
-  "speed": 18.2,
-  "heading": 94,
-  "motionState": "moving",
-  "seq": 1,
-  "timestamp": <current Unix epoch in milliseconds>
-}
-```
-
-The JSON is limited to 512 bytes and exactly nine fields. It includes the GNSS capture `timestamp`, per-attempt `deviceSentAt`, positive queue `seq`, and receiver `gpsHdop` in addition to coordinates, speed (0–200 km/h), heading (0–<360), and motion state. During staged firmware rollout the parser also accepts the immediately previous eight-field sequenced schema and the legacy six-field schema. `202` accepts a new fix; `200` acknowledges an older/duplicate sample; `400`, `401`, `413`, `429`, and `503` indicate payload, credential, body-size, rate, and service failures.
-
-Firmware uses NTP/GNSS time for TLS/time stamps, an 8 KiB UART RX buffer, HDOP ≤ 4, motion hysteresis, a one-second moving publish cadence, five-second stopped heartbeat, 7-second HTTP timeout, capped jittered retry, and a 25-second watchdog. An authenticated 1 KiB diagnostics channel reports bounded device health and hardware-security state every five minutes without credentials. See [Hardware telemetry](../hardware/HARDWARE_TELEMETRY.md).
-
-After accepting a fix, the backend preserves it as `rawLocation` and asynchronously derives a separate `matchedLocation` against direction-specific road geometry. Distance, heading, previous segment and forward progress contribute to confidence. Three reliable moving off-route samples confirm a deviation; rerouting then targets the next required stops without blocking telemetry or resetting trip progress. Route versions and request IDs reject stale asynchronous results, while clients fall back to raw GNSS whenever matching confidence is insufficient.
-
-## Verification
+## Verify a change
 
 ```powershell
 npm run verify
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -d hardware
 ```
 
-`npm run verify` runs both linters, all software tests, TypeScript/build/static export, service-worker injection, CSP regeneration, and the production dependency audit. Firebase rule emulator cases require Java and emulator configuration. Physical GNSS/TLS/radio/vehicle behavior still requires the runbook tests.
+This runs lint, software tests, build/export, service-worker/CSP generation and the production dependency audit. Run rule, browser and firmware checks separately when affected; [test strategy](../testing/TEST_STRATEGY.md) explains the commands and what each proves.
 
-## Documentation
+CI runs on `testing` PRs. Automatic staging deployment is tied to verified pushes to `main`; merging into `testing` does not deploy the application. See [release guide](../operations/CI_CD_AND_RELEASES.md).
 
-- [Documentation index](../index/README.md)
-- [Getting started and operating guide](../GETTING_STARTED.md)
-- [Environment and configuration reference](../CONFIGURATION.md)
-- [High-level design](../design/HIGH_LEVEL_DESIGN.md)
-- [Low-level design and module catalog](../design/LOW_LEVEL_DESIGN.md)
-- [Firestore and RTDB data dictionary](../data/FIREBASE_DATA_MODEL.md)
-- [Hardware setup and route-specific flashing](../hardware/README.md)
-- [Hardware telemetry and latency/failure analysis](../hardware/HARDWARE_TELEMETRY.md)
-- [Backend API](../backend/API.md)
-- [Test strategy and failure matrix](../testing/TEST_STRATEGY.md)
-- [RTDB region latency decision](../design/RTDB_REGION_LATENCY_DECISION.md)
-- [DNS, custom domains, and SSL/TLS](../operations/DNS_AND_DOMAINS.md)
-- [Production readiness audit](../operations/PRODUCTION_READINESS_AUDIT.md)
-- [Live demo runbook](../operations/LIVE_DEMO_RUNBOOK.md)
-- [University deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
-- [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md)
-- [ESP32 fleet security and provisioning](../operations/HARDWARE_SECURITY_PROVISIONING.md)
-- [Security policy](SECURITY.md)
+## Deployment readiness
 
-## Production boundary
+The repository supplies application code and repeatable verification. A production release also needs owned infrastructure, approved retention, monitoring/backups, Firebase App Check enforcement, protected firmware provisioning and field acceptance. Use the [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md) and [current acceptance index](../testing/README.md).
 
-The repository is production-oriented but cannot configure university-owned infrastructure or prove physical behavior. Production owners must provide managed TLS/DNS and immutable firmware hosting, WAF/global rate limits, monitoring/alerts, backups, key restrictions, App Check enforcement, separate staging/production projects, privacy approval, controlled signing-key custody and OTA release metadata, physical Secure Boot V2/flash-encryption/update/rollback acceptance on spare boards, automotive power protection, and an observed route acceptance test.
+Keep credentials and personal/location evidence in approved private storage. See [security policy](SECURITY.md).
 
 ## License
 
-Copyright (c) 2026 Eki Bus Tracking Project. Licensed under the MIT License.
+Copyright (c) 2026 Eki Bus Tracking Project. Licensed under the [MIT License](../../LICENSE).

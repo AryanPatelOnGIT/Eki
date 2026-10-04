@@ -1,5 +1,7 @@
 # HTTP resource migration for issue #192
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 This is the compatibility contract for the six method/path changes on `testing`.
 The existing handlers remain available. The v2 routes call those same handlers,
 so validation, Firebase authorization, persistence, and response bodies stay

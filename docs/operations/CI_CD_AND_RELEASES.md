@@ -1,6 +1,6 @@
 # CI, deployment, and release guide
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This document explains what the repository automation verifies, what it deploys,
 and which production actions still belong to the university operations team.
@@ -24,13 +24,16 @@ The workflow performs:
 5. Strict frontend production build with CI-only placeholder public values,
    service-worker generation, deterministic CSP regeneration, and
    web/backend CSP contract assertions (origin and Firebase Auth `frame-src 'self'`).
-6. Production dependency audit.
+6. Runtime dependency audit plus a full development-tooling dependency audit.
 7. Backend Docker image build and smoke boot. A degraded `503 /health` is
    expected with placeholder Firebase configuration and proves the container
    starts and exposes the load-balancer contract.
-8. Native firmware tests, development ESP32 compilation, and a secure firmware
+8. Native firmware tests, development and legacy journal ESP32 compilation, and a secure firmware
    compilation using an ephemeral CI-only signing key. CI must never produce a
    fleet artifact or handle the university production key.
+
+9. Chromium mobile/desktop admin-access and feedback regressions through
+   `npm run test:e2e:admin`, using real UI modules with synthetic Firebase data.
 
 The workflow proves source/build consistency. It does not prove GNSS reception,
 vehicle power, radio coverage, TLS against the production certificate chain,
@@ -45,6 +48,15 @@ operation.
 |---|---|---|---|
 | Staging | Successful verification from a push to `main`, or manual staging dispatch from `main` | Firebase Hosting, Firestore rules and RTDB rules for the approved staging project | Exact verified commit SHA for `workflow_run` (manual dispatch deploys the selected `main` ref directly); staging environment secrets |
 | Production | Manual dispatch from `main` with `production` selected | Firebase Hosting, Firestore rules and RTDB rules for the separately approved production project | Protected GitHub environment/reviewer approval, current `main` ref at dispatch time, and production secrets |
+
+Staging deployment enforces App Check on Firestore and RTDB through
+`scripts/verify-appcheck-enforcement.mjs --enforce` before deployment.
+Production checks enforcement without changing it. Both require the correct
+project-scoped runtime credentials. Local emulator/synthetic browser tests do
+not prove provider setup or enforcement in a deployed project.
+
+`testing` is the integration branch: pushes and PRs run verification, but a
+merge into `testing` does not trigger the automatic `main` deployment path.
 
 The workflow does not deploy the Express backend container, configure DNS/TLS,
 create a WAF, provision Firebase data, flash devices, or change fleet

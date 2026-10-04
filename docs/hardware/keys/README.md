@@ -1,5 +1,7 @@
 # Fleet signing keys
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Place the university-controlled RSA-3072 Secure Boot V2 private key at
 `secure_boot_signing_key.pem` only inside the approved offline/HSM-backed
 signing environment. The repository ignores PEM and binary key material.

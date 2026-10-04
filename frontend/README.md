@@ -1,39 +1,58 @@
 # Eki frontend
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
-Next.js 16 App Router static-export PWA with public landing and authenticated passenger, admin and feedback workspaces. Firebase Auth supplies identity; RTDB performs one initial live-fleet sync and then applies `child_added`/`child_changed`/`child_removed` deltas, with route-scoped delivery for maps. Firestore `onSnapshot`/queries provide configuration, sessions, messages, settings and feedback. Administrators arm assigned rides, adjust delays, issue boarding codes and message passengers. REST mutations use native `fetch` with Firebase bearer tokens.
+Next.js 16 App Router application with React 19, Firebase Auth and a static-export PWA. Passenger and administrator workspaces are protected; `/feedback` is an admin review view sharing the same panel as the Admin Feedback tab.
 
-## Run
+## Run from the repository root
 
 ```powershell
-npm install
+npm ci
 Copy-Item frontend/env.production.example frontend/.env.local
+```
+
+Fill the Firebase/Maps values and set `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000` for same-laptop development. Start the backend using [getting started](../docs/GETTING_STARTED.md). Configure App Check before sign-in: use a valid provider key or registered local debug token; an explicit opt-out is allowed only in development with an unenforced Firebase project. See [configuration](../docs/CONFIGURATION.md#local-app-check-and-auth-setup).
+
+```powershell
 npm run dev --workspace=frontend
 ```
 
-The template lists every production-required public variable including RTDB URL, Maps API key/map ID, reCAPTCHA Enterprise App Check key and HTTPS backend. Browser Firebase/Maps values are public identifiers and must be restricted in their consoles. App Check debug tokens are local-only secrets and must never be production/committed.
+Open `http://localhost:3000`. Restart after changing public environment variables; they are compiled into the client.
+
+## Workflows
+
+- Passenger: select a route, bus and destination; track live position; join an armed/active ride using the boarding code; view the timeline, messages, account and feedback.
+- Passenger selectors: destination and bus controls stay inside the web app. Destination order follows the ride direction, falls back to the terminal stop, and carries into boarding as `alightingStopId`. Device-only presence supports planning but cannot grant boarding eligibility.
+- Administrator: use Live Ops, routes, fleet/personnel, history, feedback and settings. Only the active tab is mounted to limit listeners/maps/timers.
+- Feedback review: load up to the latest 200 records through `GET /api/v2/feedback`; validate responses and acknowledge a status PATCH before updating the displayed list. Requests and results are tied to the current verified auth generation.
+
+## Runtime boundaries
+
+| Module | Responsibility |
+|---|---|
+| `hooks/useAuth.ts`, `lib/authState.ts` | Wait for App Check and role verification before publishing a user or opening protected listeners; invalidate pending work during account changes/sign-out |
+| `lib/firebaseAppCheck.ts` | Valid first-token acquisition with a 10-second deadline; configuration, provider and token failures leave protected access closed |
+| `lib/firebaseAuthDomain.ts` | Normalize the primary project's `web.app`/`firebaseapp.com` host to the current hostname; custom/secondary hosts use the explicitly configured auth domain |
+| `lib/liveBusStore.ts` | One shared initial live-fleet sync, followed by RTDB child deltas and route-scoped delivery; dispose at zero subscribers |
+| `hooks/useCollection.ts`, `hooks/useSettings.ts` | Shared auth-ready Firestore configuration/session listeners and cache disposal |
+| `components/maps/` | Stored directional geometry, current matched/raw position, honest freshness and local ETA math |
+| `lib/apiClient.ts` | Firebase bearer-token HTTP calls, deadlines and actionable network/auth errors |
+| `components/ui/` | In-app listbox controls plus focus-contained alert/confirmation dialogs |
+| `src/sw.js` | Static/public caching; Firebase, authenticated API and unknown requests are network-only |
+
+`RoleGuard` handles presentation and routing. Backend middleware and Firebase rules enforce authorization. Sign-out closes readiness before awaiting Firebase, invalidates pending verification, and clears caches. Failed sign-out keeps protected content hidden and offers reload recovery.
+
+Service-worker updates wait for existing tabs to close. Maps and decorative motion respect reduced-motion preferences; protected routes are no-index. Dialogs and listboxes support keyboard interaction and focus restoration.
+
+## Verify and build
 
 ```powershell
 npm run lint --workspace=frontend
 npm run test --workspace=frontend
-npm run build --workspace=frontend
+npm run test:e2e:admin
+npm run build
 ```
 
-The root `npm run build` follows Next export with Workbox manifest injection and CSP hash regeneration. `npm run build:production` enables strict required-variable and non-local HTTPS validation.
+The browser suite uses the actual admin/auth/feedback UI with synthetic Firebase dependencies at mobile and desktop widths. It does not prove live App Check enforcement. Root `build` includes backend/frontend output, Workbox injection and CSP generation; `build:production` additionally validates required public values and HTTPS origins. The standalone frontend build omits those root packaging steps. Serve production output through Firebase Hosting/static hosting; the configured `output: export` does not use `next start`.
 
-## Runtime design
-
-- `RoleGuard` improves presentation/routing only, restores the saved workspace (`eki:last-workspace`) on sign-in, and clears caches on logout; Firestore/RTDB rules and backend middleware are the authorization boundary.
-- `resolveFirebaseAuthDomain` resolves the auth helper to same-origin on Firebase Hosting (`web.app` or custom domain), preventing storage-partitioning popup/redirect failures in Safari and Firefox.
-- `liveBusStore` maintains one shared RTDB subscription and prunes stale non-active entries. Firestore collection/settings hooks also share/auth-gate listeners.
-- Google Maps provider loads once per protected workspace. Stored polylines and local distance/speed math avoid passenger runtime Routes calls.
-- Only the active admin tab is mounted, preventing hidden maps/listeners/timers.
-- Service worker precaches a budgeted HTML/icon shell together with each shell's immutable bootstrap JS/CSS, caches non-bootstrap Next.js chunks only when used, and never caches authenticated Firebase/API or unknown requests. Updates wait for existing tabs to close and never force-reload an active ride.
-- Dialogs trap/restore focus and support Escape; selects are native; map smoothing respects reduced motion; private routes are no-index.
-
-See [LLD](../docs/design/LOW_LEVEL_DESIGN.md), [Firebase model](../docs/data/FIREBASE_DATA_MODEL.md), and [test strategy](../docs/testing/TEST_STRATEGY.md).
-
-For the complete local setup, role workflows, public-versus-secret
-configuration rules, and troubleshooting guide, read [Getting started](../docs/GETTING_STARTED.md)
-and [configuration](../docs/CONFIGURATION.md).
+See [LLD](../docs/design/LOW_LEVEL_DESIGN.md), [data model](../docs/data/FIREBASE_DATA_MODEL.md), [test strategy](../docs/testing/TEST_STRATEGY.md) and [local phone testing](../docs/operations/LOCAL_TESTING.md).

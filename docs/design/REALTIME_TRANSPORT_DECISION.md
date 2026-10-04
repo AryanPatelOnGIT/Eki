@@ -1,5 +1,7 @@
 # Realtime transport decision (#195)
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Date: 2026-10-01. Source baseline: `testing` at `e5d41be`.
 Status: retain Firebase SDK listeners; moving/weak-network acceptance remains
 pending. This ADR records a decision and an experiment, not a claim that the
@@ -8,9 +10,9 @@ field performance gate has passed.
 ## Current requirement and decision
 
 Signed-in browser clients need live bus locations and bounded ride chat. The
-shared `liveBusStore` observes RTDB `activeBuses`; route filtering happens
-locally. Firestore SDK listeners serve messages, settings, routes, feedback,
-and history. Chat reads the latest 200 documents; authenticated HTTP performs
+shared `liveBusStore` observes RTDB `activeBuses`; the browser performs an initial sync and then applies child deltas with
+route-scoped delivery. Firestore SDK listeners serve messages, settings, routes and history. Admin
+feedback review now uses bounded authenticated `GET /api/v2/feedback` reads. Chat reads the latest 200 documents; authenticated HTTP performs
 bounded writes. Firebase already supplies authentication, reconnection, and
 cross-replica delivery. No current client requires a separate streaming API.
 

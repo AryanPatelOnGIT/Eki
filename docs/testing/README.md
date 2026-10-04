@@ -1,0 +1,63 @@
+# Testing and acceptance evidence
+
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+## Start with the current gates
+
+- [Test strategy](TEST_STRATEGY.md): software, rules, browser, firmware and
+  physical checks; required commands and their limits.
+- [3 October acceptance](TESTING_ACCEPTANCE_2026_10_03.md): later consolidated
+  browser, journal installation, physical cuts and short moving evidence.
+- [Cold-power/motion audit](COLD_POWER_MOTION_AUDIT_2026_10_03.md): source and
+  physical evidence for checkpoint recovery, motion and remaining gates.
+- [Issue completion record](ISSUE_COMPLETION_2026_10_03.md): issue-specific
+  outcomes and qualifications at the recorded baseline.
+
+These are evidence records. Read each commit/build, run window, conditions and
+limitations before relying on a result. An editorial update timestamp does not
+mean the test was rerun. CI success, synthetic browser tests, stationary traces,
+short motion traces and a full observed route are different kinds of evidence.
+
+## Latest source changes after the recorded acceptance
+
+`testing` at `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
+the development-only opt-out, admin feedback HTTP loading/status and pending
+verification/session guards during sign-out. PR #244 adds passenger in-app
+station/bus dropdowns. Their behavior is maintained in [frontend guide](../../frontend/README.md),
+[configuration](../CONFIGURATION.md) and [API reference](../../backend/API.md).
+
+Use current test/CI output to validate newer commits. `npm run test:e2e:admin`
+uses synthetic Firebase adapters; it cannot certify live provider enforcement.
+
+## Evidence catalog
+
+| Record | Purpose |
+|---|---|
+| [Full-feature QA](FULL_FEATURE_QA_2026_10_03.md) | Feature coverage at the recorded software baseline |
+| [Passenger preview QA](PASSENGER_PREVIEW_QA_2026_10_03.md) | Route preview, stationary bus and destination behavior |
+| [RTDB field audit](RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md) | Field necessity and compatibility decisions |
+| [Live latency/recovery audit](LIVE_LATENCY_RECOVERY_AUDIT_2026_10_02.md) | Trace classification, recovery and latency limits |
+| [GNSS trace validation](ADAPTIVE_GNSS_TRACE_VALIDATION.md) | Adaptive jump and recovery evidence |
+| [Reroute simulations](REROUTE_SIMULATION_RESULTS.md) | Deterministic route/matching scenarios; not field latency |
+| [Return-route acceptance](RETURN_ROUTE_ACCEPTANCE.md) | Direction/turnaround evidence and open physical cases |
+| [Stationary readiness](STATIONARY_READINESS_REPORT.md) | Stationary runtime checks at its recorded build |
+| [Non-moving recovery](NON_MOVING_RECOVERY_REPORT.md) | Backend/tunnel/reboot recovery window |
+| [Live ESP32 latency](LIVE_ESP32_LATENCY_RESULT.md) | Actual device/backend measurements and TLS profile |
+| [Transport evidence audit](REALTIME_TRANSPORT_EVIDENCE_AUDIT.md) | Available transport evidence and missing same-window usage/paint data |
+| [Postfix stationary trace](POSTFIX_STATIONARY_TRACE.md) | A later stationary delivery window |
+| [Earlier audit summary](AUDIT_STATUS_SUMMARY.md) | Historical fixes/readiness; superseded as a current status page |
+
+## Browser fixtures
+
+| Fixture | Runbook | Scope |
+|---|---|---|
+| Admin access | [Admin fixture](../../e2e/admin-access/README.md) | Real auth/guard/admin/feedback modules; synthetic SDK and backend data |
+| Passenger/responsive | [UI fixture](../../e2e/fixtures/README.md) | Real passenger/settings/map logic; synthetic hooks and map SDK |
+| Motion | [Motion fixture](../../e2e/motion/README.md) | Render/interpolation behavior; synthetic input |
+
+## Remaining acceptance
+
+Use the latest consolidated report and [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
+to track full-route/turnaround, weak-network and off-route paint evidence,
+long soak, secure fleet first boot/OTA, monitoring and institutional approval.
+Do not close a gate from source review or mock data alone.

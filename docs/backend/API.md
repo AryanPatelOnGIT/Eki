@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-01.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../api/HTTP_CONTRACT.md) for schema
@@ -60,7 +60,8 @@ available during the rollout.
 | Device administration | `GET /api/devices/:deviceId/diagnostics`, `PUT /api/devices/:deviceId`, `POST /api/devices/:deviceId/disable` | Admin |
 | Ride operations | `POST /api/shifts/start`, `PATCH /api/shifts/delay`, `POST /api/shifts/stop` | Assigned operator or admin |
 | Boarding and chat | Session boarding-code, join and messages endpoints | Session member/operator/admin as applicable |
-| Passenger/account | Feedback, bootstrap, privacy deletion, requests | Authenticated/admin as noted below |
+| Passenger/account | Feedback submission, bootstrap, privacy deletion, requests | Authenticated/admin as noted below |
+| Admin feedback | `GET /api/v2/feedback`, `PATCH /api/v2/feedback/:feedbackId` | Admin |
 | Fleet and settings | Fleet, analytics, route, settings and places endpoints | Admin unless noted below |
 | Route planning | `POST /api/plan`, `GET /api/routes-list` | Authenticated |
 
@@ -231,7 +232,7 @@ Device creation/secret rotation is deliberately local: `npm run provision-device
 
 ### `GET /api/buses` — authenticated
 
-Returns `{ "buses": [...] }` from the current RTDB `activeBuses` projection. Prefer the client RTDB `onValue` listener for continuous live UI; this endpoint is a snapshot, not a polling recommendation.
+Returns `{ "buses": [...] }` from the current RTDB `activeBuses` projection. Prefer the shared client RTDB subscription (initial sync plus child deltas) for continuous live UI; this endpoint is a snapshot, not a polling recommendation.
 
 ### `GET /api/buses/:busId` — authenticated
 
@@ -285,6 +286,25 @@ Body: `{ "text":"Bus arriving", "requestId":"browser-generated-uuid" }`. The aut
 
 Body: `{ "type":"general|ride", "requestId":"browser-generated-uuid", "comment":"...", "rating":5, "sessionId":"...", "busId":"...", "driverId":"..." }`. Ride identifiers are required only for ride feedback. The backend derives the author name, validates comment/rating limits and completed-ride membership, and reads the per-user 24-hour cooldown in the same transaction that writes feedback/cooldown state. Identical retries are idempotent; request-ID payload conflicts are 409; cooldown is 429.
 
+### `GET /api/v2/feedback` — admin
+
+Returns `{ "feedbacks": [...] }` with at most the latest 200 records ordered by
+Firestore `timestamp` descending. Uses the Admin SDK with `requireAdmin` and
+`Cache-Control: no-store`; ordinary signed-in passengers cannot list feedback.
+There is no cursor/pagination contract in this endpoint.
+
+Each item includes `id`, `userId`, `userName`, `type`, nullable
+`busId/driverId/sessionId/rating`, `comment`, `status` and `timestamp`.
+The timestamp is `{ "seconds": N, "nanoseconds": N }` when valid, otherwise
+`null`. Missing/legacy values are normalized to safe defaults. Database
+failures return `500` with `Unable to load feedback.`; middleware can return
+authentication, authorization or rate-limit failures first.
+
+The embedded and standalone admin views validate the response, provide retry,
+and discard requests/results belonging to an earlier auth generation. A status
+change uses `PATCH /api/v2/feedback/:feedbackId` with the same status-only body
+and acknowledgement as the legacy endpoint below.
+
 ### `PATCH /api/feedback/:feedbackId/status` — admin
 
 Body: `{ "status":"new|reviewed|resolved" }`. Updates only review state plus server audit metadata. Missing feedback is 404.
@@ -298,6 +318,7 @@ Creates a missing `users/{uid}` passenger profile transactionally from verified 
 Accepts a non-empty partial object containing only `serviceStartTime`, `noBusesMessage`, `noBusesSubMessage`, `announcementText`, and/or boolean `announcementActive`. Values are bounded and stored with server audit metadata.
 
 ## Fleet/admin endpoints
+
 All `/api/fleet/*` handlers are behind `requireAdmin` plus a persisted audit record before mutation. Audit fingerprints are not a durable HTTP idempotency/replay guarantee.
 
 ### `POST /api/fleet/reconcile`
@@ -384,7 +405,6 @@ Queues `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}`. Dri
 - Clients should wait for RTDB/Firestore push confirmation where UI truth depends on database state.
 - Never cache bearer/device responses or log authorization headers.
 
-
 ## Versioned ride-session resources (#193)
 
 See [the lifecycle and migration contract](../api/RIDE_SESSION_CONTRACT.md)
@@ -406,7 +426,6 @@ legacy routes; Firebase SDK reads retain their existing authorization rules.
 Normal completion remains telemetry-owned. `POST /api/shifts/stop` remains an
 early interruption command; this migration introduces no v2 stop/completion
 command. Browser clients can read the exposed `Location` response header.
-
 
 ## Durable operation resources (#194)
 

@@ -1,6 +1,6 @@
 # Hardware telemetry, latency and failure design
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 16:07 IST (UTC+05:30).
 
 Setup boundary: use [the hardware setup guide](README.md) before reading this
 design. It is the source for required `backend/.env`, frontend environment
@@ -22,7 +22,7 @@ Use a fused automotive-rated 12 V-to-5 V buck converter, strain relief, protecte
 
 ## Firmware build contract
 
-- Development: `esp32dev`, Arduino, `huge_app.csv`; OTA compiled disabled.
+- Development: `esp32dev`, Arduino, `partitions_development.csv`; OTA compiled disabled.
 - Fleet: `esp32dev-secure`, Arduino as an ESP-IDF component, Secure Boot V2, release-mode flash encryption, ROM-download lockdown, RAM-only Wi-Fi state, and a bootloader-safe custom partition table.
 - Pinned platform/libraries: Espressif32 7.0.1, TinyGPSPlus 1.1.0, ArduinoJson 7.4.3.
 - Runtime configuration: Wi-Fi, device ID/base64url secret, backend origin, and issuing root CA are compiled from the ignored `hardware/include/secrets.h` and validated before networking starts.
@@ -71,7 +71,14 @@ The two tasks share only short critical sections around the fixed-capacity ring 
 
 Fresh TinyGPSPlus date/time (maximum two-second age, strict calendar/range validation) is converted without timezone-sensitive `mktime` and applied using `settimeofday`. This establishes TLS-valid time before Wi-Fi/NTP is available and corrects drift of at least 1.5 seconds no more than once per minute. Once Wi-Fi connects, SNTP is scheduled as a six-hour cross-check/fallback. GNSS remains the primary discipline source; invalid/stale GNSS time is never applied.
 
-The 100-sample queue occupies 5,648 bytes of RTC no-init memory. At the maximum one capture per second it covers 100 seconds; heartbeats consume less. It survives software/watchdog resets, rejects recovery when the device/backend identity or queue layout changes, and drops the oldest entry on overflow. The backend accepts timestamps only within 60 seconds, so recovery sends newest-first and purges entries outside a 55-second safety margin rather than replaying invalid data. A successful newest-fix acknowledgement also compacts every older superseded sample, preventing stale duplicate traffic from consuming the one-second delivery budget.
+The 100-sample queue occupies 5,648 bytes of RTC no-init memory. At the maximum one capture per second it can hold approximately 100 seconds of captures at the current moving/stopped cadence; only the fresh subset can be replayed. It survives software/watchdog resets, rejects recovery when the device/backend identity or queue layout changes, and drops the oldest entry on overflow. The backend accepts timestamps only within 60 seconds, so recovery sends newest-first and purges entries outside a 55-second safety margin rather than replaying invalid data. A successful newest-fix acknowledgement also compacts every older superseded sample, preventing stale duplicate traffic from consuming the one-second delivery budget.
+
+Full power loss can restore one compatible AES-GCM flash checkpoint with its
+original sequence; warm RTC recovery takes precedence. Checkpoints are scheduled
+on the first captured fix and every ten seconds, so this is bounded recovery
+rather than a full persistent telemetry backlog. Storage collisions fail closed.
+Follow [cold-power recovery](COLD_POWER_RECOVERY.md), including the legacy-board
+`esp32dev-journal` profile when required.
 
 ## Fix quality and transmission parameters
 
@@ -88,8 +95,9 @@ The 100-sample queue occupies 5,648 bytes of RTC no-init memory. At the maximum 
 | Distance change | 5 m | Position materiality |
 | Heading change | 15° | Direction materiality |
 | Speed change | 5 km/h | Velocity materiality |
-| Moving/stopped heartbeat | 1 / 5 s | Live movement plus fresh stopped endpoint state |
-| HTTP connect/request timeout | 7 s | Bound blocked network work |
+| Moving/stopped heartbeat | 1 / 1 s | Live movement plus fresh stopped endpoint state |
+| HTTP connect/request timeout | 1 / 1.5 s | Separate TCP/request bounds; not an end-to-end SLA |
+| TLS handshake timeout | 10 s | Independent secure-client safety budget |
 | GNSS UTC maximum age | 2 s | Reject stale date/time sentences |
 | GNSS correction | >=1.5 s, at most once/minute | Primary clock discipline without rapid jumps |
 | NTP cross-check | startup after Wi-Fi, then six-hour schedule | Independent fallback/check; not a publish dependency |
@@ -111,7 +119,14 @@ The body fields and limits are defined in [Firebase data model](../data/FIREBASE
 
 ## Trace evidence and gap classification
 
-The configured baseline is a one-second evaluation and moving heartbeat, a one-second stopped heartbeat, three consecutive qualifying motion readings, and a one-second connect/TLS handshake limit and 1.5-second HTTP read timeout. These are separate phase limits, not a total request deadline. Validate the shorter budgets with route traces and staging latency measurements. The serial log records each accepted request duration, retry number/delay, stale-queue eviction, and a periodic `Telemetry Evidence` line containing capture, attempt and retry totals, capture/accept ages, queue depth, and remaining retry delay.
+The configured baseline is a one-second evaluation and moving/stopped heartbeat,
+three consecutive qualifying motion readings, a one-second HTTP connect limit,
+a 1.5-second HTTP request/read limit and a separate ten-second TLS handshake
+limit. These are separate phase limits, not a total request deadline. Validate
+the budgets with route traces and staging latency measurements. The serial log
+records each accepted request duration, retry number/delay, stale-queue eviction,
+and a periodic `Telemetry Evidence` line containing capture, attempt and retry
+totals, capture/accept ages, queue depth, and remaining retry delay.
 
 Treat a gap as intentional only when `captureSeen=1`, `captureAgeMs` is within the selected heartbeat for the confirmed motion state, and the queue/retry indicators are clear. If `captureAgeMs` exceeds that heartbeat, investigate GNSS capture or fix quality first. If capture remains current, a growing `acceptedAgeMs`, non-zero queue, retry delay, stale drop, transport error, or rejected count is a delivery problem. The extra evidence remains serial-only while backend capacity work decides which additional diagnostic fields can be stored without changing the closed authenticated diagnostics schema.
 
@@ -127,7 +142,7 @@ Treat a gap as intentional only when `captureSeen=1`, `captureAgeMs` is within t
 | HTTP 401/403 + three LED pulses | ID/secret disabled/mismatched or assignment invalid | Rotate/inspect registry, update `secrets.h`, build a protected artifact, and reflash |
 | HTTP 429 | IP/device limiter | Check publish loop/config and WAF limits |
 | HTTP 503/timeouts | Backend/Firebase/network outage | Inspect `/health`; backoff retains the bounded queue |
-| Repeated watchdog reset | HTTP/network stack longer than 25 s or task fault | Inspect reset reason/serial; verify 7 s connect/request timeouts |
+| Repeated watchdog reset | HTTP/network stack longer than 25 s or task fault | Inspect reset reason/serial; verify the separate 1 s connect, 1.5 s request/read and 10 s TLS handshake limits |
 | Non-zero overflow counters | GNSS task starvation, UART pressure or full telemetry queue | Inspect authenticated remote diagnostics; reproduce against network outage and load |
 | `uncertain` on map | One GNSS-loss notification at last trusted point | Fix antenna/sky view; no guessed motion is shown |
 

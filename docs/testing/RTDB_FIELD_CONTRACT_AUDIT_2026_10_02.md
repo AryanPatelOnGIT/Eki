@@ -1,5 +1,9 @@
 # RTDB field contract audit — 2026-10-02
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Scope: writers, application readers, lifecycle recovery, authorization rules,
 latency exports, and a read-only inventory of the configured testing database.
 Baseline: `origin/testing` at `a12368f7`. No live records were changed. This is

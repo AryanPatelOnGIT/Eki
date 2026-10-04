@@ -1,18 +1,25 @@
-# Firmware tests
+# Firmware policy tests
 
-`test_telemetry_policy` runs on the native host target and exercises the same
-header-only policy used by the ESP32: strict GNSS UTC conversion and clock
-discipline, Wi-Fi retry escalation, LED fault patterns, distance/heading math,
-three-reading motion hysteresis, capped jittered retry, HTTP response
-classification (including credential latching), bounded `Retry-After` parsing,
-compile-time firmware configuration validation, change thresholds, the
-three-second publish floor and moving/stopped heartbeats.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
-Run `platformio test --project-dir hardware -e native`. GNSS/UART/Wi-Fi/TLS,
-watchdog and power behavior still require the bench and vehicle matrix in
-`../../testing/TEST_STRATEGY.md`; never describe host tests or a compile as a
-physical hardware pass.
+Run from the repository root:
 
-The native target currently contains two suites and 26 test cases. Treat that
-count as a verification snapshot, not a fixed contract: update the test
-strategy when suites or physical acceptance coverage change.
+```powershell
+py -m platformio test --project-dir hardware -e native
+```
+
+The native Unity suites execute production header policies:
+
+| Suite | Coverage |
+|---|---|
+| `test_telemetry_policy` | GNSS clock/quality, motion hysteresis, jumps/reacquisition, one-second moving/stopped cadence, bounded queue/retry and configuration policy |
+| `test_checkpoint_journal` | Commit ordering, corruption/partial-write recovery, identity binding and bounded flash-checkpoint restoration |
+| `test_firmware_update_policy` | Signed-release sequence, candidate acceptance and rollback policy |
+| `test_http_response` | Bounded response parsing and status/header validation |
+| `test_http_reuse_guard` | Safe persistent HTTPS reuse across response outcomes |
+| `test_reset_stats` | Reset-history normalization and counters |
+
+Use actual runner output for case counts. Host policy tests and firmware builds
+do not establish physical radio, UART, GNSS, power, TLS or fleet security
+acceptance. Follow [test strategy](../../testing/TEST_STRATEGY.md) and
+[hardware setup](../README.md) for board-specific tests and build selection.

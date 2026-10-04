@@ -1,8 +1,11 @@
 # RTDB legacy and geometry retention
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Issue [214](https://github.com/notnamansinha/Eki/issues/214). Retention is 180 days.
-This extends the existing Firestore sweep; PR 210 remains the dependency for
-durable ride-history deletion and its 180-day ride-session default.
+The RTDB sweep and resumable Firestore history deletion are implemented on
+`testing`; terminal ride-session retention defaults to 180 days. A configured
+deployment and approved schedule are still required before cleanup.
 
 ## Before enabling legacy retirement
 

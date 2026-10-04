@@ -1,6 +1,6 @@
 # Storage architecture summary
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 The exhaustive field/access/relationship dictionary is [Firebase data model](FIREBASE_DATA_MODEL.md).
 

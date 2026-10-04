@@ -1,5 +1,9 @@
 # Full feature QA — 3 October 2026
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Base: `testing` at `a12368f7cc19f1f3db77f09474dca5eb8e1cf1f2`. Fix branch: `codex/full-feature-qa`. Existing user edits and the original checkout were preserved. Tests use synthetic identities and coordinates; raw live observations remain in the ignored local audit folder.
 
 ## Confirmed findings

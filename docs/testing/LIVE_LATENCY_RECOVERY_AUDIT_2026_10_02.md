@@ -1,5 +1,9 @@
 # Live latency, storage and recovery audit — October 2, 2026
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 The stationary ESP32 delivered 1,109 accepted requests out of 1,131 parsed attempts. Successful HTTP latency was 616 / 1,203 / 1,514 ms at p50 / p95 / p99. One interval between accepted fixes reached 26.692 seconds during transport failures. The audit found stop-history loss, incomplete completion recovery, an invalid frontend page-prop contract and partial retention deletion, tracked in [#206](https://github.com/notnamansinha/Eki/issues/206), [#207](https://github.com/notnamansinha/Eki/issues/207), [#208](https://github.com/notnamansinha/Eki/issues/208) and [#209](https://github.com/notnamansinha/Eki/issues/209).
 
 ## Capture and coverage

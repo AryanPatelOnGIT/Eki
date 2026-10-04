@@ -1,5 +1,9 @@
 # Testing acceptance follow-up — 3 October 2026
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 This follow-up supersedes pending claims in the earlier dated audit reports;
 their original measurements remain historical evidence. Target: `testing`.
 No production hosting, rules, backend deployment, or security fuses were changed.

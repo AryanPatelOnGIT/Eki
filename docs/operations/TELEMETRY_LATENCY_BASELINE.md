@@ -1,6 +1,6 @@
 # Telemetry latency baseline
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 Use this procedure to measure one device from GNSS capture through the first
 painted marker update. It produces correlated, location-free timing records;
