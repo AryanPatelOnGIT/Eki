@@ -85,8 +85,10 @@ vi.mock("./tripStateReducer", () => ({
   reduceTripState: mocks.reduceTripState,
   STOP_GEOFENCE_M: 20,
 }));
+vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => false) }));
 
 import { lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
+import { restoreDurableRide } from "./durableRideRecovery";
 
 async function flushMicrotasks(turns = 20): Promise<void> {
   for (let index = 0; index < turns; index += 1) await Promise.resolve();
@@ -108,6 +110,7 @@ describe("trip-state engine lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.mocked(restoreDurableRide).mockResolvedValue(false);
     mocks.transactionSet.mockReset();
     mocks.transactionDelete.mockReset();
     mocks.routeListeners.length = 0;
@@ -688,6 +691,22 @@ describe("trip-state engine lifecycle", () => {
     expect(store.nodeValue()).not.toHaveProperty("routeState");
     expect(store.nodeValue()).not.toHaveProperty("matchedLocation");
     expect(store.nodeValue()).not.toHaveProperty("rerouteRequestId");
+    await stop();
+  });
+
+  it("recovers an already durable return on the initial completed-node snapshot before attempting another claim", async () => {
+    vi.mocked(restoreDurableRide).mockResolvedValue(true);
+    const stop = startTripStateEngine();
+    armRoute();
+    const store = makeNodeRef({
+      busId: "bus_1", routeId: "route_2", driverId: "driver-1", sessionId: "session-1",
+      status: "active", tripState: "completed", direction: "forward", timestamp: 200_000,
+      lat: 23.1, lng: 72.1, motionState: "stopped", turnaroundClaimId: "return-session",
+    });
+    mocks.rtdbHandlers.get("child_added")!({ key: "bus_1_route_2", val: store.nodeValue, ref: store.ref });
+    await flushMicrotasks(40);
+    expect(restoreDurableRide).toHaveBeenCalledWith({ busId: "bus_1", routeId: "route_2" }, undefined, "return-session");
+    expect(mocks.transactionCreate).not.toHaveBeenCalled();
     await stop();
   });
 

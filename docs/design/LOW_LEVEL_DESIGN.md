@@ -38,6 +38,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `services/firmwareRelease.ts` | Fail-closed signed release descriptor parsing and sequence validation |
 | `services/deviceRateLimiter.ts` | Explicit single-instance local limiting or bounded leases from a shared per-device RTDB budget |
 | `services/deviceTelemetryService.ts` | Bounded device/digest credential fills, monotonic positive/negative cache TTL, invalidation fences, scrypt, ordered live-node transaction, recovery and rolling metrics |
+| `services/durableRideRecovery.ts`, `durableRideRecoveryPolicy.ts` | Single-flight recovery of a lock-owned non-terminal session; completed-predecessor/claim guards, new-claim miss-cache bypass, telemetry/delay preservation and shutdown drain |
 | `services/routeMatching.ts` | Pure projection, direction/heading/continuity scoring and off-route hysteresis |
 | `services/telemetryRouteService.ts` | Per-node bounded latest-pending matching, cross-replica route invalidation, directional-geometry repair, reroute orchestration and stale-result guards |
 | `services/authTokenVerifier.ts` | SHA-256 keyed bounded token verification coalescing/cache |

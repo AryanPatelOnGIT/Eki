@@ -10,6 +10,7 @@ import {
 } from "../lib/automaticRideDirection";
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
 import { SerializedChangeWriter } from "./serializedChangeWriter";
+import { restoreDurableRide } from "./durableRideRecovery";
 import { reduceTripState } from "./tripStateReducer";
 import { missingStopHistory } from "./rideProgressHistory";
 import {
@@ -141,7 +142,8 @@ function normalizedDelayMinutes(value: unknown): number {
  * Claims and arms the opposite ride after a completed bus has dwelled stopped
  * at the endpoint. RTDB supplies the cross-replica claim; Firestore supplies
  * the durable unique-bus lock. A crash after the durable commit is recovered
- * by the normal active_rides telemetry restoration path.
+ * on the leader's completed-node snapshot or the next accepted telemetry fix,
+ * reusing the lock-owned return session rather than creating another claim.
  */
 async function maybeArmAutomaticTurnaround(
   data: Record<string, unknown>,
@@ -729,6 +731,8 @@ export function startTripStateEngine(): () => Promise<void> {
     const naturalStops = await ensureRouteLoaded(data.routeId);
     if (data.tripState === "completed") {
       try {
+        if (await restoreDurableRide({ busId: data.busId, routeId: data.routeId }, undefined,
+          typeof data.turnaroundClaimId === "string" ? data.turnaroundClaimId : null)) return;
         const armed =
           Number.isFinite(data.lat) && Number.isFinite(data.lng)
             ? await maybeArmAutomaticTurnaround(
