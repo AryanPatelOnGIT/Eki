@@ -6,7 +6,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 
 ## Backend composition
 
-`bootstrap.ts` loads environment and optional instrumentation before `server.ts`; the server configures Helmet/CORS/body/rate limits, mounts routes, maintains a cached 30-second Firestore/RTDB health probe, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. Telemetry bypasses the broad global limit but has its own IP and device limits. Body parsing is 512 bytes on telemetry and 16 KiB elsewhere.
+`bootstrap.ts` loads environment and optional instrumentation before `server.ts`; the server configures Helmet/CORS/body/rate limits, mounts routes, maintains a cached 30-second Firestore/RTDB health probe, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. CORS/preflight precedes the generous browser IP ingress guard. Browser authentication then selects separate verified-UID read (200/minute) and mutation (30/minute) quotas; GET/HEAD never consumes writes. Route computation, planning and Places limits also use the verified UID. These process budgets are replica-sharded; edge protection supplies the fleet-wide cap. Exact device ingress paths retain separate IP/device authentication and budgets, including firmware installation reservations. Public probes are exempt, while detailed health retains admin authorization. Body parsing is 512 bytes on telemetry, 1 KiB on diagnostics and 16 KiB elsewhere.
 
 ### Backend module catalog
 

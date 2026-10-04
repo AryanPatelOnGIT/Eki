@@ -453,7 +453,11 @@ describe("production security configuration", () => {
     expect(shard).toContain("RATE_LIMIT_SHARD_FACTOR");
     expect(shard).toContain("Math.floor");
     expect(server).toContain("readRateLimitShardFactor()");
-    expect(server).toContain("shardedLimit(200");
+    const admission = workspaceFile("backend/src/lib/browserAdmission.ts");
+    expect(admission).toContain("read: 200, mutation: 30");
+    expect(admission).toContain("shardedLimit(limits.read");
+    expect(admission).toContain("shardedLimit(limits.mutation");
+    expect(server.indexOf("app.use(cors(")).toBeLessThan(server.indexOf("app.use(createBrowserIngressLimiter("));
     expect(server).toContain("shardedLimit(30");
     expect(server).toContain("shardedLimit(10");
     expect(devices).toContain("shardedLimit(requestsPerWindow");
