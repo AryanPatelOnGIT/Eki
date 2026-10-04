@@ -25,8 +25,8 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/");
-  }, [loading, router, user]);
+    if (!loading && !user && !roleError) router.replace("/");
+  }, [loading, roleError, router, user]);
 
   useEffect(() => {
     if (user && allowedRoles.includes(user.role)) {
@@ -55,10 +55,6 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
         </div>
       </div>
     );
-  }
-
-  if (!user) {
-    return null;
   }
 
   if (roleError) {
@@ -91,6 +87,8 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
       </div>
     );
   }
+
+  if (!user) return null;
 
   if (!allowedRoles.includes(user.role)) {
     return (

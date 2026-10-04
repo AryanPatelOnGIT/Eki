@@ -8,6 +8,12 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/admin", useRouter: () =
 beforeEach(() => { state.user = { uid: "qa-user", role: "passenger" }; state.loading = false; state.roleError = null; state.replace.mockClear(); localStorage.clear(); });
 afterEach(cleanup);
 describe("workspace authorization UI", () => {
+  it("shows security recovery even when no verified user was published", () => {
+    state.user = null; state.roleError = "Security verification is unavailable.";
+    render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
+    expect(screen.getByRole("alert")).toBeTruthy(); expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(state.replace).not.toHaveBeenCalled(); expect(screen.queryByText("Protected admin control")).toBeNull();
+  });
   it.each(["passenger", "driver"])("never mounts admin controls for a %s", role => {
     state.user!.role = role; render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
     expect(screen.queryByRole("button", { name: "Protected admin control" })).toBeNull();

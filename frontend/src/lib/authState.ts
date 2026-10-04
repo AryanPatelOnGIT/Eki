@@ -1,35 +1,41 @@
 /**
  * authState.ts
  *
- * A lightweight promise that resolves the first time Firebase's
- * onAuthStateChanged fires. Firestore hooks await this before opening
- * listeners, preventing "Missing or insufficient permissions" races where
- * Firestore receives a read request before auth is established.
+ * Await actual auth/role and App Check readiness before opening listeners.
+ * Each auth change closes the gate again; a timeout never opens it.
  */
 
-let resolveAuthReady: () => void;
+let ready = false;
+let generation = 0;
+let wake: () => void = () => {};
+let changed = new Promise<void>(resolve => { wake = resolve; });
 
-const authReadyPromise: Promise<void> = new Promise((resolve) => {
-  resolveAuthReady = resolve;
-});
+function signalChange() {
+  const previous = wake;
+  changed = new Promise<void>(resolve => { wake = resolve; });
+  previous();
+}
 
-let authHasFired = false;
+export function beginAuthVerification(): void {
+  generation++;
+  ready = false;
+  signalChange();
+}
+
+export function getAuthVerificationGeneration(): number { return generation; }
 
 /**
- * Called once by useAuth when onAuthStateChanged fires for the first time.
- * Idempotent — subsequent calls are no-ops.
+ * Called after role and App Check verification, or confirmed sign-out.
+ * Data hooks separately require a verified principal before subscribing.
  */
 export function notifyAuthReady(): void {
-  if (!authHasFired) {
-    authHasFired = true;
-    resolveAuthReady();
-  }
+  ready = true;
+  signalChange();
 }
 
 /**
- * Await this before opening Firestore listeners to guarantee auth is resolved.
- * Resolves immediately if auth has already fired.
+ * Wait through account changes until the current verification has completed.
  */
-export function waitForAuth(): Promise<void> {
-  return authReadyPromise;
+export async function waitForAuth(): Promise<void> {
+  while (!ready) await changed;
 }

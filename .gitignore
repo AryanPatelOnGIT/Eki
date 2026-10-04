@@ -88,6 +88,8 @@ frontend/fetch_route.js
 frontend/google_maps_recovery_instructions.md
 
 # Build artifacts
+test-results/
+.playwright-admin-access-results/
 frontend/tsconfig.tsbuildinfo
 __pycache__/
 

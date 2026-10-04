@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { notifyAuthReady } from "@/lib/authState";
+import { beginAuthVerification, getAuthVerificationGeneration, notifyAuthReady } from "@/lib/authState";
 import { withTimeout } from "@/lib/promiseTimeout";
 import { apiRequest } from "@/lib/apiClient";
 
@@ -94,7 +94,7 @@ function useAuthState(): AuthContextValue {
     const authTimeout = window.setTimeout(() => {
       if (!disposed) {
         console.warn("Firebase auth restoration timed out.");
-        notifyAuthReady();
+        setRoleError("Sign-in restoration timed out. Reload the page to try again.");
         setLoading(false);
       }
     }, 8000);
@@ -129,52 +129,31 @@ function useAuthState(): AuthContextValue {
         unsubscribe = authModule.onAuthStateChanged(auth, async (firebaseUser) => {
           clearTimeout(authTimeout);
           const currentGen = ++generation;
-          notifyAuthReady();
+          beginAuthVerification();
+          const verificationGeneration = getAuthVerificationGeneration();
+          setUser(null);
 
           if (firebaseUser) {
             setLoading(true);
             setLoginLoading(false);
             setLoginError(null);
             setLoginFallbackAvailable(false);
-            setUser({
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              photoURL: firebaseUser.photoURL,
-              role: null,
-              isAnonymous: firebaseUser.isAnonymous,
-            });
 
-            // Signed-out visitors never need App Check. For returning users,
-            // load it in parallel with token restoration and await it only at
-            // the point where protected data can begin loading.
-            const appCheckReady = import("@/lib/firebaseAppCheck")
-              .then(({ ensureAppCheck }) => ensureAppCheck());
+            // Signed-out visitors never need App Check. For signed-in users,
+            // wait for the first App Check token before publishing the user;
+            // Firestore listeners use that state to avoid permission-denied
+            // requests made before App Check is ready.
             const isCurrentAuth = () =>
               !disposed &&
               currentGen === generation &&
+              verificationGeneration === getAuthVerificationGeneration() &&
               auth.currentUser?.uid === firebaseUser.uid;
             setRoleError(null);
-            const storedRole = window.localStorage.getItem(`eki:role:${firebaseUser.uid}`);
-            const cachedRole: UserRole =
-              storedRole === "passenger" || storedRole === "driver" || storedRole === "admin"
-                ? storedRole
-                : null;
-
-            // Restore identity for display only. A cached role must never unlock a
-            // workspace while authoritative claims/profile verification is pending.
-            if (cachedRole) {
-              setUser({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName,
-                photoURL: firebaseUser.photoURL,
-                role: null,
-                isAnonymous: firebaseUser.isAnonymous,
-              });
-            }
 
             try {
+              const { ensureAppCheck } = await import("@/lib/firebaseAppCheck");
+              await ensureAppCheck();
+              if (!isCurrentAuth()) return;
               // Role claims are already present in a persisted Firebase session, so
               // this returns without a Firestore round trip for normal app starts.
               // They are issued by the trusted admin sync job, unlike client data.
@@ -191,8 +170,6 @@ function useAuthState(): AuthContextValue {
                 claimedRole === "admin"
               ) {
                 if (!isCurrentAuth()) return;
-                await appCheckReady;
-                if (!isCurrentAuth()) return;
                 window.localStorage.setItem(`eki:role:${firebaseUser.uid}`, claimedRole);
                 setUser({
                   uid: firebaseUser.uid,
@@ -202,6 +179,7 @@ function useAuthState(): AuthContextValue {
                   role: claimedRole,
                   isAnonymous: firebaseUser.isAnonymous,
                 });
+                notifyAuthReady();
                 return;
               }
 
@@ -210,11 +188,11 @@ function useAuthState(): AuthContextValue {
               // is server-authoritative (POST /api/users/bootstrap).
               const [{ getFirestore, doc, getDoc }, { firebaseApp }] =
                 await Promise.all([
-                  appCheckReady,
                   import("firebase/firestore"),
                   import("@/lib/firebaseCore"),
-                ]).then(([, firestore, core]) => [firestore, core] as const);
+                ]).then(([firestore, core]) => [firestore, core] as const);
               const db = getFirestore(firebaseApp);
+              if (!isCurrentAuth()) return;
               const userDocRef = doc(db, "users", firebaseUser.uid);
               const userSnap = await withTimeout(
                 getDoc(userDocRef),
@@ -270,7 +248,17 @@ function useAuthState(): AuthContextValue {
                 role,
                 isAnonymous: firebaseUser.isAnonymous,
               });
+              notifyAuthReady();
             } catch (err) {
+              if (err instanceof Error && err.name === "AppCheckVerificationError") {
+                // Do not publish an authenticated user when App Check failed;
+                // otherwise every protected Firestore listener immediately
+                // retries and surfaces a misleading permission-denied error.
+                if (!isCurrentAuth()) return;
+                setUser(null);
+                setRoleError("Security verification is unavailable. Check App Check configuration and try again.");
+                return;
+              }
               const code = (err as { code?: string })?.code;
               if (code === "permission-denied") {
                 console.warn("[Auth] Firestore role document read permission denied");
@@ -283,14 +271,7 @@ function useAuthState(): AuthContextValue {
                   ? "Your account is not permitted to verify this workspace."
                   : "We could not verify your access. Check your connection and try again.",
               );
-              setUser({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName,
-                photoURL: firebaseUser.photoURL,
-                role: null,
-                isAnonymous: firebaseUser.isAnonymous,
-              });
+              setUser(null);
             } finally {
               if (isCurrentAuth()) setLoading(false);
             }
@@ -299,6 +280,7 @@ function useAuthState(): AuthContextValue {
             setUser(null);
             setRoleError(null);
             setLoading(false);
+            notifyAuthReady();
           }
         });
         setLoginReady(true);
@@ -321,7 +303,6 @@ function useAuthState(): AuthContextValue {
         const code = authErrorCode(error);
         console.error("[Auth] Firebase auth initialization failed.", code);
         clearTimeout(authTimeout);
-        notifyAuthReady();
         if (!disposed) {
           loginDependencies.current = null;
           setLoginReady(false);
@@ -399,12 +380,17 @@ function useAuthState(): AuthContextValue {
   }, []);
 
   const logout = useCallback(async () => {
+    let logoutGeneration: number | null = null;
     try {
       const [{ signOut }, { auth }] = await Promise.all([
         import("firebase/auth"),
         import("@/lib/firebaseAuth"),
       ]);
       const signedOutUid = auth.currentUser?.uid;
+      beginAuthVerification();
+      logoutGeneration = getAuthVerificationGeneration();
+      setUser(null);
+      setLoading(true);
       await signOut(auth);
       if (signedOutUid) {
         window.localStorage.removeItem(`eki:role:${signedOutUid}`);
@@ -422,10 +408,12 @@ function useAuthState(): AuthContextValue {
       clearCollectionCache();
       clearSettingsCache();
       invalidateLiveBusCache();
-      setUser(null);
-      setRoleError(null);
     } catch (error) {
       console.error("Logout failed:", error);
+      if (logoutGeneration !== null && logoutGeneration === getAuthVerificationGeneration()) {
+        setLoading(false);
+        setRoleError("Sign-out could not complete. Reload the page and try again.");
+      }
     }
   }, []);
 

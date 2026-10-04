@@ -66,6 +66,7 @@ into the browser and should be treated as public identifiers.
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | Maps UI | Cloud map style identifier | Use the matching environment |
 | `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY` | Production/App Check | Firebase App Check browser site key | Use the matching environment; enforcement is configured in Firebase |
 | `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` | Local demo only | Registered App Check debug token | Keep commented out in production and never commit it |
+| `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced local development only | Set `true` to explicitly skip missing-key initialization locally | Use only after confirming enforcement is disabled in the local Firebase project; ignored in production; prefer a registered debug token for enforced projects |
 | `NEXT_PUBLIC_BACKEND_URL` | Yes | HTTPS backend origin used by REST mutations | Use an origin only—no `/api` suffix, path or query string |
 | `NEXT_PUBLIC_SERVICE_TIME_ZONE` | Optional | Display timezone; default template is `Asia/Kolkata` | Use an IANA timezone name |
 | `NEXT_PUBLIC_PASSENGER_BUS_START_TIME` | Optional | Passenger display default for service start | This is presentation configuration, not a dispatch rule |
