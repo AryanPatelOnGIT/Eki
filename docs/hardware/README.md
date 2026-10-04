@@ -239,8 +239,15 @@ done safely while retaining the current Wi-Fi stack.
   `secrets.h` and reflashing.
 - A 25-second watchdog covers both tasks. Authenticated remote diagnostics send
   bounded health state every five minutes while idle and never send credentials.
-- Fleet OTA checks are locally idle/stopped and server-gated against active
-  rides. Downloaded candidates are size/digest checked, secure-boot verified,
+- Fleet OTA discovery runs on its own watched task. Installation requires a
+  fresh, protected stopped-GNSS snapshot and an authenticated transactional
+  reservation of the same bus lock used by ride startup/turnaround. Motion or
+  stale GNSS aborts the candidate before activation. The lock has no timed
+  expiry: failed/rebooted boards release it through the authenticated
+  firmware installation endpoint, including uncertain acquire responses.
+  If a board is lost, an operator must prove flashing has stopped before
+  removing its firmware lock; never delete a live ride lock.
+  Downloaded candidates are size/digest checked, secure-boot verified,
   installed into the inactive slot and health-confirmed with automatic rollback.
 
 Read [Hardware telemetry](HARDWARE_TELEMETRY.md) for parameters,
