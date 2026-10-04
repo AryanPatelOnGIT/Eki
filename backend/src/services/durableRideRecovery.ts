@@ -1,3 +1,4 @@
+import { workerTransaction, workerRtdbTransaction } from "../lib/workerFence";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
 import type { DeviceAssignment } from "./deviceTelemetryService";
@@ -16,7 +17,7 @@ export function restoreDurableRide(assignment: DeviceAssignment, sample?: Teleme
   const miss = misses.get(nodeKey);
   if (miss && miss.claimId === claimId && miss.expiresAt > performance.now()) return Promise.resolve(false);
   const restore = (async () => {
-    const lifecycle = await db.runTransaction(async transaction => {
+    const lifecycle = await workerTransaction(db, async transaction => {
       const activeRide = await transaction.get(db.collection("active_rides").doc(nodeKey));
       const value = activeRide.exists ? durableLifecycle(activeRide.data()!) : null;
       if (!value) return null;
@@ -38,7 +39,7 @@ export function restoreDurableRide(assignment: DeviceAssignment, sample?: Teleme
       return false;
     }
     misses.delete(nodeKey);
-    const result = await rtdb.ref(`activeBuses/${nodeKey}`).transaction(current => {
+    const result = await workerRtdbTransaction(rtdb.ref(`activeBuses/${nodeKey}`), current => {
       const live = current as Record<string, unknown> | null;
       const sameSession = live?.sessionId === lifecycle.sessionId;
       if (live?.status === "active" && sameSession && ["pre_departure", "in_service"].includes(String(live.tripState))) return;

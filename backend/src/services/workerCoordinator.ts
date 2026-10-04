@@ -7,8 +7,9 @@ import { reconcileFleetAuthorization } from "../routes/fleet";
 import { startPrivacyDeletionWorker } from "./privacyDeletionWorker";
 import { startAbandonedRideReconciler } from "./abandonedRideReconciler";
 import { recordWorkerRun, setWorkerLeadership } from "../lib/metrics";
+import { WorkerFence, WORKER_CLOCK_SKEW_MS, WORKER_LEASE_ID } from "../lib/workerFence";
 
-const LEASE_ID = "trip-state-worker";
+const LEASE_ID = WORKER_LEASE_ID;
 const LEASE_DURATION_MS = 45_000;
 const RENEW_INTERVAL_MS = 15_000;
 
@@ -20,7 +21,8 @@ export function startWorkerCoordinator(): () => Promise<void> {
     return async () => undefined;
   }
 
-  const ownerId = process.env.WORKER_INSTANCE_ID || randomUUID();
+  // A configured label must not make two processes the same lease owner.
+  const ownerId = `${process.env.WORKER_INSTANCE_ID || "worker"}:${randomUUID()}`;
   const leaseRef = db.collection("_worker_leases").doc(LEASE_ID);
   let stopped = false;
   let active = false;
@@ -31,9 +33,17 @@ export function startWorkerCoordinator(): () => Promise<void> {
   let stopRideReconciliation: (() => void) | null = null;
   let stopWorkPromise: Promise<void> | null = null;
   let renewInFlight: Promise<void> | null = null;
+  let fence: WorkerFence | null = null;
+  let expiryTimer: NodeJS.Timeout | null = null;
+  let transition = 0;
+  let fleetInFlight: Promise<void> | null = null;
 
   /** Stops every leader-owned worker and waits for lifecycle cleanup. */
   const stopWork = async (): Promise<void> => {
+    fence?.revoke();
+    fence = null;
+    if (expiryTimer) clearTimeout(expiryTimer);
+    expiryTimer = null;
     if (!active) {
       await stopWorkPromise;
       return;
@@ -72,56 +82,78 @@ export function startWorkerCoordinator(): () => Promise<void> {
   /** Acquires or renews leadership, serializing transitions with shutdown. */
   const renew = async () => {
     if (stopped) return;
-    const now = Date.now();
+    const attempt = transition;
+    const started = performance.now();
     try {
       const acquired = await db.runTransaction(async (transaction) => {
+        if (stopped || attempt !== transition) return null;
         const lease = await transaction.get(leaseRef);
+        if (stopped || attempt !== transition) return null;
+        // Firestore may retry the callback: never reuse an earlier wall time.
+        const now = Date.now();
         const data = lease.data();
         const expiresAt =
           data?.expiresAt instanceof Timestamp ? data.expiresAt.toMillis() : 0;
         const currentOwner = typeof data?.ownerId === "string" ? data.ownerId : null;
-        if (currentOwner !== ownerId && expiresAt > now) return false;
+        if (currentOwner !== ownerId && expiresAt + WORKER_CLOCK_SKEW_MS > now) return null;
+        const previousGeneration = Number.isSafeInteger(data?.generation) ? data!.generation : 0;
+        const generation = currentOwner === ownerId && expiresAt > now
+          ? previousGeneration : previousGeneration + 1;
 
         transaction.set(leaseRef, {
           ownerId,
+          generation,
           renewedAt: Timestamp.fromMillis(now),
           expiresAt: Timestamp.fromMillis(now + LEASE_DURATION_MS),
         });
-        return true;
+        return { generation, expiresAt: now + LEASE_DURATION_MS };
       });
-
-      if (acquired && !active) {
+      const remaining = acquired ? Math.min(
+        LEASE_DURATION_MS - 2 * WORKER_CLOCK_SKEW_MS - (performance.now() - started),
+        acquired.expiresAt - Date.now() - WORKER_CLOCK_SKEW_MS,
+      ) : 0;
+      if (stopped || attempt !== transition) return;
+      if (!acquired || remaining <= 0) { transition += 1; await stopWork(); return; }
+      const deadline = performance.now() + remaining;
+      if (active && fence?.generation !== acquired.generation) await stopWork();
+      if (!active) {
         await stopWorkPromise;
-        if (stopped || active) return;
+        if (stopped || active || attempt !== transition || performance.now() >= deadline) return;
+        fence = new WorkerFence(ownerId, acquired.generation, deadline);
         active = true;
         setWorkerLeadership(true);
-        stopTripEngine = startTripStateEngine();
-        stopRetention = startRetentionSweeper();
-        stopPrivacyDeletion = startPrivacyDeletionWorker();
-        stopRideReconciliation = startAbandonedRideReconciler();
-        void reconcileFleetAuthorization().then(
-          () => recordWorkerRun("fleet_reconciliation", "success"),
-          (error) => {
-            recordWorkerRun("fleet_reconciliation", "failure");
-            console.error("[Worker] Initial fleet reconciliation failed:", error);
-          },
-        );
-        fleetReconcileTimer = setInterval(() => {
-          void reconcileFleetAuthorization().then(
-            () => recordWorkerRun("fleet_reconciliation", "success"),
-            (error) => {
-              recordWorkerRun("fleet_reconciliation", "failure");
-              console.error("[Worker] Fleet reconciliation failed:", error);
-            },
-          );
-        }, 10 * 60 * 1000);
-        fleetReconcileTimer.unref();
+        const currentFence = fence;
+        currentFence.run(() => {
+          stopTripEngine = startTripStateEngine();
+          stopRetention = startRetentionSweeper();
+          stopPrivacyDeletion = startPrivacyDeletionWorker();
+          stopRideReconciliation = startAbandonedRideReconciler();
+          const runFleet = () => {
+            if (stopped || !active || fence !== currentFence || fleetInFlight) return;
+            const running = reconcileFleetAuthorization().then(
+              () => recordWorkerRun("fleet_reconciliation", "success"),
+              (error) => {
+                recordWorkerRun("fleet_reconciliation", "failure");
+                console.error("[Worker] Fleet reconciliation failed:", error);
+              },
+            ).finally(() => { if (fleetInFlight === running) fleetInFlight = null; });
+            fleetInFlight = running;
+          };
+          runFleet();
+          fleetReconcileTimer = setInterval(runFleet, 10 * 60 * 1000);
+          fleetReconcileTimer.unref();
+        });
         console.log(`[Worker] Leadership acquired by ${ownerId}.`);
-      } else if (!acquired) {
-        await stopWork();
-      }
+      } else fence!.extend(deadline);
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = setTimeout(() => {
+        transition += 1;
+        void stopWork();
+      }, Math.max(0, deadline - performance.now()));
+      expiryTimer.unref();
     } catch (error) {
       console.error("[Worker] Lease renewal failed:", error);
+      transition += 1;
       await stopWork();
     }
   };
@@ -140,15 +172,20 @@ export function startWorkerCoordinator(): () => Promise<void> {
   timer.unref();
 
   return async () => {
+    const releaseLease = active;
     stopped = true;
+    transition += 1;
     clearInterval(timer);
-    await renewInFlight;
     await stopWork();
+    // Neither shutdown nor revocation may wait for an unbounded renewal.
+    // A dispatched lease commit can settle late; its response is fenced above.
+    if (renewInFlight || !releaseLease) return;
     try {
       await db.runTransaction(async (transaction) => {
         const snapshot = await transaction.get(leaseRef);
         if (snapshot.data()?.ownerId === ownerId) {
-          transaction.delete(leaseRef);
+          // Keep generations monotonic across orderly restarts.
+          transaction.set(leaseRef, { ownerId: null, expiresAt: Timestamp.fromMillis(0) }, { merge: true });
         }
       });
     } catch (error) {

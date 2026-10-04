@@ -1,3 +1,4 @@
+import { assertWorkerLeadership, workerWrite, workerSet, workerDelete } from "../lib/workerFence";
 import { FieldPath, Timestamp, type DocumentReference, type Query } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
 import { deleteTerminalRideHistory } from "./rideHistoryDeletion";
@@ -21,9 +22,7 @@ async function deleteDocuments(query: Query, recursive = false): Promise<number>
     if (recursive) {
       for (const document of snapshot.docs) await deleteRideSession(document.ref);
     } else {
-      const batch = db.batch();
-      snapshot.docs.forEach((document) => batch.delete(document.ref));
-      await batch.commit();
+      await workerWrite(db, batch => { snapshot.docs.forEach((document) => batch.delete(document.ref)); });
     }
     deleted += snapshot.size;
   }
@@ -35,9 +34,10 @@ async function deleteRideSession(sessionRef: DocumentReference): Promise<void> {
   // recursiveDelete can remove the parent even when a descendant fails. Keep
   // an independent durable reference until every descendant was removed, so
   // the next sweep can retry even when the age query no longer finds a parent.
-  await jobRef.set({ requestedAt: Timestamp.now() }, { merge: true });
+  await workerSet(db, jobRef, { requestedAt: Timestamp.now() }, { merge: true });
+  assertWorkerLeadership();
   await db.recursiveDelete(sessionRef);
-  await jobRef.delete();
+  await workerDelete(db, jobRef);
 }
 
 async function resumeRideDeletions(): Promise<number> {
@@ -47,8 +47,9 @@ async function resumeRideDeletions(): Promise<number> {
       .orderBy(FieldPath.documentId()).limit(BATCH_SIZE).get();
     if (jobs.empty) return resumed;
     for (const job of jobs.docs) {
+      assertWorkerLeadership();
       await db.recursiveDelete(db.collection("ride_sessions").doc(job.id));
-      await job.ref.delete();
+      await workerDelete(db, job.ref);
       resumed += 1;
     }
   }

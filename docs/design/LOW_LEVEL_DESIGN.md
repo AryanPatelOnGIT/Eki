@@ -75,7 +75,7 @@ Normalized live data is processed serially per RTDB child. Routes are cached fro
 
 The reducer receives current/previous points, next stop, motion state and existing lifecycle. It can advance one expected stop per fix and never skips ahead. Lifecycle writes are fingerprinted and serialized per bus/ride. Completion uses a Firestore transaction to write history and delete only recovery/lock documents matching the completing session; RTDB writes also compare session ID. Terminal live nodes remain briefly for UI observation and then become offline.
 
-The coordinator stores `_worker_leases/trip-state` with owner and expiry. Only the lease holder runs the engine, abandoned reconciliation, privacy worker and retention. Shutdown stops intake, drains dynamic queues, forces pending completion cleanup, releases the lease conditionally, and then closes Firebase.
+The coordinator stores `_worker_leases/trip-state-worker` with a unique process owner, persistent generation and expiry. A separate monotonic cutoff revokes the context even if renewal stalls; late responses cannot revive it. Worker Firestore transactions/batches validate that lease in their read set, while RTDB retries check local expiry and surviving projections reject older `_workerGeneration` values. Auth calls and recursive deletion already dispatched cannot be recalled; fleet reconciliation retains its durable lock until settlement. Shutdown stops intake before cleanup and does not wait for a hung renewal. Clock skew is limited to 2 seconds. See [worker leadership](../operations/WORKER_LEADERSHIP.md) for the cross-store and live-acceptance boundaries.
 
 ## Frontend composition
 

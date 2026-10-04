@@ -1,3 +1,4 @@
+import { workerTransaction, workerRtdbTransaction } from "../lib/workerFence";
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import type { Database } from "firebase-admin/database";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -126,7 +127,7 @@ export async function runAbandonedRideReconciliation(
     let liveBlocked = false;
     let retiredLiveRecord: Record<string, unknown> | null = null;
     const liveRef = realtimeDatabase.ref(`activeBuses/${key}`);
-    await liveRef.transaction((currentValue) => {
+    await workerRtdbTransaction(liveRef, (currentValue) => {
       const current = currentValue && typeof currentValue === "object"
         ? currentValue as Record<string, unknown>
         : null;
@@ -138,13 +139,13 @@ export async function runAbandonedRideReconciliation(
       }
       retiredLiveRecord = current;
       return null;
-    }, undefined, false);
+    });
     if (liveBlocked) {
       summary.protectedIds.push(sessionId);
       return;
     }
 
-    const transactionResult = await firestore.runTransaction(async (transaction) => {
+    const transactionResult = await workerTransaction(firestore, async (transaction) => {
       const sessionRef = firestore.collection("ride_sessions").doc(sessionId);
       const [currentSessionDocument, currentActiveRideDocument, currentBusLock] = await Promise.all([
         transaction.get(sessionRef),

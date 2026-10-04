@@ -1,3 +1,4 @@
+import { assertWorkerLeadership, workerWrite, workerSet, workerDelete } from "../lib/workerFence";
 import { FieldPath, FieldValue, type Query } from "firebase-admin/firestore";
 import { auth, db } from "../lib/firebaseAdmin";
 
@@ -10,9 +11,7 @@ async function deleteQuery(
   while (true) {
     const snapshot = await query.limit(BATCH_SIZE).get();
     if (snapshot.empty) return count;
-    const batch = db.batch();
-    snapshot.docs.forEach((document) => batch.delete(document.ref));
-    await batch.commit();
+    await workerWrite(db, batch => { snapshot.docs.forEach((document) => batch.delete(document.ref)); });
     count += snapshot.size;
   }
 }
@@ -24,14 +23,14 @@ export async function removePassengerManifest(uid: string): Promise<number> {
     while (true) {
       const sessions = await query.limit(BATCH_SIZE).get();
       if (sessions.empty) return removed;
-      const batch = db.batch();
-      sessions.docs.forEach((session) => {
-        batch.update(session.ref, {
-          passengerIds: FieldValue.arrayRemove(uid),
+      await workerWrite(db, batch => {
+        sessions.docs.forEach((session) => {
+          batch.update(session.ref, {
+            passengerIds: FieldValue.arrayRemove(uid),
+          });
+          batch.update(session.ref, new FieldPath("passengers", uid), FieldValue.delete());
         });
-        batch.update(session.ref, new FieldPath("passengers", uid), FieldValue.delete());
       });
-      await batch.commit();
       removed += sessions.size;
     }
   };
@@ -56,15 +55,16 @@ async function processDeletion(uid: string): Promise<void> {
     deleteQuery(db.collectionGroup("messageRateLimits").where("userId", "==", uid)),
   ]);
 
-  const batch = db.batch();
-  batch.delete(db.collection("users").doc(uid));
-  batch.delete(db.collection("feedbackCooldowns").doc(uid));
-  batch.delete(db.collection("passenger_requests").doc(uid));
-  await batch.commit();
+  await workerWrite(db, batch => {
+    batch.delete(db.collection("users").doc(uid));
+    batch.delete(db.collection("feedbackCooldowns").doc(uid));
+    batch.delete(db.collection("passenger_requests").doc(uid));
+  });
+  assertWorkerLeadership();
   await auth.deleteUser(uid).catch((error: any) => {
     if (error?.errorInfo?.code !== "auth/user-not-found") throw error;
   });
-  await db.collection("_privacy_deletion_requests").doc(uid).delete();
+  await workerDelete(db, db.collection("_privacy_deletion_requests").doc(uid));
 }
 
 async function runPrivacyDeletionQueue(): Promise<void> {
@@ -73,8 +73,9 @@ async function runPrivacyDeletionQueue(): Promise<void> {
     .limit(20)
     .get();
   for (const request of requests.docs) {
+    assertWorkerLeadership();
     try {
-      await request.ref.set({
+      await workerSet(db, request.ref, {
         attempts: FieldValue.increment(1),
         lastAttemptAt: FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -82,7 +83,7 @@ async function runPrivacyDeletionQueue(): Promise<void> {
       console.log("[Privacy] Completed one account deletion request.");
     } catch (error) {
       console.error("[Privacy] Account deletion attempt failed:", error);
-      await request.ref.set({
+      await workerSet(db, request.ref, {
         lastErrorAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });

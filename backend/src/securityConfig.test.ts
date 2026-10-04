@@ -828,9 +828,9 @@ describe("production security configuration", () => {
     expect(engine).not.toContain('.doc(data.sessionId).update({');
     expect(engine).toContain("live.sessionId !== data.sessionId");
     expect(engine).not.toContain("snapshot.ref.update({ status: \"offline\" })");
-    expect(completionBlock.indexOf("await db.runTransaction")).toBeGreaterThan(-1);
-    expect(completionBlock.indexOf("await snapshot.ref.transaction")).toBeGreaterThan(
-      completionBlock.indexOf("await db.runTransaction"),
+    expect(completionBlock.indexOf("await workerTransaction(db,")).toBeGreaterThan(-1);
+    expect(completionBlock.indexOf("await workerRtdbTransaction(snapshot.ref,")).toBeGreaterThan(
+      completionBlock.indexOf("await workerTransaction(db,"),
     );
     const telemetry = workspaceFile(
       "backend/src/services/deviceTelemetryService.ts",
