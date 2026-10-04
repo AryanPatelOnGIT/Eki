@@ -7,6 +7,7 @@ import {
 import { promisify } from "node:util";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { createConcurrencyLimiter } from "../lib/concurrency";
+import { createBoundedSingleFlight } from "../lib/boundedSingleFlight";
 import { recordBackgroundFailure } from "../lib/backgroundFailureTracker";
 import { evaluateOutageReacquisition, isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
@@ -49,6 +50,7 @@ interface CredentialCacheEntry {
   assignment: DeviceAssignment | null;
   secretDigest: Buffer | null;
   expiresAt: number;
+  expiresMonotonicAt: number;
 }
 
 export interface HttpsTelemetryStatus {
@@ -57,6 +59,7 @@ export interface HttpsTelemetryStatus {
   lastAcceptedAt: string | null;
   lastRejectedAt: string | null;
   credentialCacheHitRate: number | null;
+  credentialFills: { activeFills: number; waitingCallers: number };
   processingLatencyMs: LatencySummary;
   deviceQueueLatencyMs: LatencySummary;
   networkLatencyMs: LatencySummary;
@@ -160,6 +163,9 @@ export type TelemetryIngestResult =
     };
 
 const credentialCache = new Map<string, CredentialCacheEntry>();
+const credentialFills = createBoundedSingleFlight<DeviceAssignment | null>({
+  maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
+});
 const durableRideMisses = new Map<string, number>();
 const durableRideRestores = new Map<string, Promise<void>>();
 let credentialInvalidationListenerStarted = false;
@@ -305,6 +311,10 @@ function ensureDeviceCredentialInvalidationListener(): void {
   };
   const handleError = (error: Error) => {
     credentialInvalidationListenerStarted = false;
+    credentialCache.clear();
+    credentialFills.invalidate();
+    versions.off("child_added", invalidate);
+    versions.off("child_changed", invalidate);
     console.error("[Devices] Credential invalidation listener failed:", error);
   };
   versions.on("child_added", invalidate, handleError);
@@ -360,7 +370,7 @@ export async function authenticateDeviceCredentials(
   const suppliedDigest = digestSecret(secret);
   const cacheKey = credentialCacheKey(deviceId, suppliedDigest);
   const cached = credentialCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && cached.expiresMonotonicAt > performance.now()) {
     credentialCacheHits += 1;
     if (
       cached.assignment &&
@@ -373,49 +383,61 @@ export async function authenticateDeviceCredentials(
   }
 
   credentialCacheMisses += 1;
+  return credentialFills.run(cacheKey, deviceId, async isCurrent => {
+    const fillStartedAt = performance.now();
+    const publish = (value: CredentialCacheEntry) => {
+      if (!isCurrent()) return false;
+      cacheCredential(cacheKey, value);
+      return true;
+    };
+    const deviceDoc = await db.collection("devices").doc(deviceId).get();
+    if (!isCurrent()) return null;
+    const device = deviceDoc.data() as Record<string, unknown> | undefined;
+    const assignment = deviceDoc.exists ? assignmentFromDevice(device) : null;
+    const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash);
+    if (!isCurrent()) return null;
+    if (!assignment || !secretMatches) {
+      publish({
+        assignment: null,
+        secretDigest: suppliedDigest,
+        expiresAt: now + NEGATIVE_CACHE_MS,
+        expiresMonotonicAt: fillStartedAt + NEGATIVE_CACHE_MS,
+      });
+      return null;
+    }
 
-  const deviceDoc = await db.collection("devices").doc(deviceId).get();
-  const device = deviceDoc.data() as Record<string, unknown> | undefined;
-  const assignment = deviceDoc.exists ? assignmentFromDevice(device) : null;
-  const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash);
-  if (!assignment || !secretMatches) {
-    cacheCredential(cacheKey, {
-      assignment: null,
+    const [busDoc, routeDoc] = await Promise.all([
+      db.collection("buses").doc(assignment.busId).get(),
+      db.collection("routes").doc(assignment.routeId).get(),
+    ]);
+    const bus = busDoc.data();
+    const assignedRoutes = Array.isArray(bus?.assignedRoutes)
+      ? bus.assignedRoutes
+      : typeof bus?.assignedRouteId === "string"
+        ? [bus.assignedRouteId]
+        : [];
+    if (
+      !busDoc.exists ||
+      !routeDoc.exists ||
+      !assignedRoutes.includes(assignment.routeId)
+    ) {
+      publish({
+        assignment: null,
+        secretDigest: suppliedDigest,
+        expiresAt: now + NEGATIVE_CACHE_MS,
+        expiresMonotonicAt: fillStartedAt + NEGATIVE_CACHE_MS,
+      });
+      return null;
+    }
+
+    const published = publish({
+      assignment,
       secretDigest: suppliedDigest,
-      expiresAt: now + NEGATIVE_CACHE_MS,
+      expiresAt: now + CREDENTIAL_CACHE_MS,
+      expiresMonotonicAt: fillStartedAt + CREDENTIAL_CACHE_MS,
     });
-    return null;
-  }
-
-  const [busDoc, routeDoc] = await Promise.all([
-    db.collection("buses").doc(assignment.busId).get(),
-    db.collection("routes").doc(assignment.routeId).get(),
-  ]);
-  const bus = busDoc.data();
-  const assignedRoutes = Array.isArray(bus?.assignedRoutes)
-    ? bus.assignedRoutes
-    : typeof bus?.assignedRouteId === "string"
-      ? [bus.assignedRouteId]
-      : [];
-  if (
-    !busDoc.exists ||
-    !routeDoc.exists ||
-    !assignedRoutes.includes(assignment.routeId)
-  ) {
-    cacheCredential(cacheKey, {
-      assignment: null,
-      secretDigest: suppliedDigest,
-      expiresAt: now + NEGATIVE_CACHE_MS,
-    });
-    return null;
-  }
-
-  cacheCredential(cacheKey, {
-    assignment,
-    secretDigest: suppliedDigest,
-    expiresAt: now + CREDENTIAL_CACHE_MS,
+    return published ? assignment : null;
   });
-  return assignment;
 }
 
 async function deviceRateLimitRetryAfterMs(
@@ -839,6 +861,7 @@ export function recordTelemetryRejection(now = Date.now()): void {
 }
 
 export function invalidateDeviceCredentialCache(deviceId: string): void {
+  credentialFills.invalidate(deviceId);
   const prefix = `${deviceId}:`;
   for (const key of credentialCache.keys()) {
     if (key.startsWith(prefix)) credentialCache.delete(key);
@@ -862,6 +885,7 @@ export function getHttpsTelemetryStatus(): HttpsTelemetryStatus {
       credentialAttempts === 0
         ? null
         : Number((credentialCacheHits / credentialAttempts).toFixed(3)),
+    credentialFills: credentialFills.snapshot(),
     processingLatencyMs: summarizeLatencySamples(processingLatencySamples),
     deviceQueueLatencyMs: summarizeLatencySamples(deviceQueueLatencySamples),
     networkLatencyMs: summarizeLatencySamples(networkLatencySamples),

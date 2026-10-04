@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 ## Start with the current gates
 
@@ -26,7 +26,14 @@ configuration changes for [issue #246](https://github.com/notnamansinha/Eki/issu
 Use that issue's merged PR checklist and exact-head CI for current implementation
 status. R34 and the physical/deployment gates in issue #245 remain open.
 
-`testing` at `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
+The [5 October priority record](ISSUE_246_PRIORITY_PARTS_2026_10_05.md) covers
+the subsequent R01–R11/R25 continuation. R01 ([#254](https://github.com/notnamansinha/Eki/pull/254))
+and R04 ([#255](https://github.com/notnamansinha/Eki/pull/255)) are merged into
+`testing` at `6d3b24b` with their exact-head checks. Follow #246 for later merges;
+the record names software tests and separates stationary GNSS baseline evidence
+from acceptance of newly installed firmware.
+
+The historical admin baseline `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
 the development-only opt-out, admin feedback HTTP loading/status and pending
 verification/session guards during sign-out. PR #244 adds passenger in-app
 station/bus dropdowns. Their behavior is maintained in [frontend guide](../../frontend/README.md),

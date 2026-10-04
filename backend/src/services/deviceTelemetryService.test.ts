@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
   collections: new Map<string, Map<string, Record<string, unknown>>>(),
+  reads: [] as string[],
+  beforeReturn: undefined as ((collection: string, id: string) => Promise<void>) | undefined,
+  invalidationError: undefined as ((error: Error) => void) | undefined,
 }));
 
 vi.mock("../lib/firebaseAdmin", () => ({
@@ -10,6 +13,8 @@ vi.mock("../lib/firebaseAdmin", () => ({
       doc: (id: string) => ({
         get: async () => {
           const value = harness.collections.get(name)?.get(id);
+          harness.reads.push(`${name}/${id}`);
+          await harness.beforeReturn?.(name, id);
           return { exists: value !== undefined, data: () => value };
         },
       }),
@@ -17,7 +22,8 @@ vi.mock("../lib/firebaseAdmin", () => ({
   },
   rtdb: {
     ref: () => ({
-      on: () => undefined,
+      on: (_event: string, _callback: unknown, error: (error: Error) => void) => { harness.invalidationError = error; },
+      off: () => undefined,
       set: async () => undefined,
     }),
   },
@@ -73,6 +79,8 @@ describe("initial device presence", () => {
 
 beforeEach(() => {
   harness.collections.clear();
+  harness.reads.length = 0;
+  harness.beforeReturn = undefined;
   invalidateDeviceCredentialCache("device_1");
 });
 
@@ -99,6 +107,75 @@ describe("HTTPS device rate-limit timing", () => {
 });
 
 describe("HTTPS device credentials", () => {
+  async function configure() {
+    const secret = "valid-device-secret-with-enough-entropy";
+    harness.collections.set("devices", new Map([["device_1", {
+      busId: "bus_1", routeId: "route_1", enabled: true, secretHash: await hashDeviceSecret(secret),
+    }]]));
+    harness.collections.set("buses", new Map([["bus_1", { assignedRoutes: ["route_1"] }], ["bus_2", { assignedRoutes: ["route_2"] }]]));
+    harness.collections.set("routes", new Map([["route_1", {}], ["route_2", {}]]));
+    return secret;
+  }
+  it("performs one DB/KDF fill for concurrent identical misses", async () => {
+    const secret = await configure();
+    const results = await Promise.all(Array.from({ length: 20 }, () => authenticateDeviceCredentials("device_1", secret, 1_000)));
+    expect(results).toEqual(Array.from({ length: 20 }, () => ({ busId: "bus_1", routeId: "route_1" })));
+    expect(harness.reads).toEqual(["devices/device_1", "buses/bus_1", "routes/route_1"]);
+    await authenticateDeviceCredentials("device_1", secret, 1_001);
+    expect(harness.reads).toHaveLength(3);
+  });
+  it.each([ ["rotation", "devices"], ["reassignment", "devices"], ["rotation", "buses"], ["reassignment", "buses"] ])("fences %s during %s fill", async (change, blockedCollection) => {
+    const secret = await configure();
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>(done => { entered = done; });
+    const gate = new Promise<void>(done => { release = done; });
+    harness.beforeReturn = async collection => { if (collection === blockedCollection) { entered(); await gate; } };
+    const pending = authenticateDeviceCredentials("device_1", secret, 1_000);
+    await blocked;
+    const device = harness.collections.get("devices")!.get("device_1")!;
+    const nextSecret = change === "rotation" ? "rotated-device-secret-with-enough-entropy" : secret;
+    harness.collections.get("devices")!.set("device_1", {
+      ...device,
+      ...(change === "rotation" ? { secretHash: await hashDeviceSecret(nextSecret) } : { busId: "bus_2", routeId: "route_2" }),
+    });
+    invalidateDeviceCredentialCache("device_1");
+    release();
+    await expect(pending).resolves.toBeNull();
+    harness.beforeReturn = undefined;
+    if (change === "rotation") await expect(authenticateDeviceCredentials("device_1", secret, 1_001)).resolves.toBeNull();
+    await expect(authenticateDeviceCredentials("device_1", nextSecret, 1_002)).resolves.toEqual({
+      busId: change === "rotation" ? "bus_1" : "bus_2", routeId: change === "rotation" ? "route_1" : "route_2",
+    });
+  });
+  it("clears a failed database fill and refreshes after the positive TTL", async () => {
+    const secret = await configure();
+    harness.beforeReturn = async () => { throw new Error("DB unavailable"); };
+    await expect(authenticateDeviceCredentials("device_1", secret, 1_000)).rejects.toThrow("DB unavailable");
+    harness.beforeReturn = undefined;
+    await authenticateDeviceCredentials("device_1", secret, 1_001);
+    harness.collections.get("devices")!.get("device_1")!.enabled = false;
+    await expect(authenticateDeviceCredentials("device_1", secret, 61_001)).resolves.toBeNull();
+  });
+  it("coalesces and expires negative fills without extending their TTL on access", async () => {
+    const secret = await configure();
+    const device = harness.collections.get("devices")!.get("device_1")!;
+    harness.collections.get("devices")!.delete("device_1");
+    await expect(Promise.all(Array.from({ length: 10 }, () => authenticateDeviceCredentials("device_1", secret, 1_000)))).resolves.toEqual(Array(10).fill(null));
+    expect(harness.reads).toEqual(["devices/device_1"]);
+    harness.collections.get("devices")!.set("device_1", device);
+    await expect(authenticateDeviceCredentials("device_1", secret, 5_999)).resolves.toBeNull();
+    await expect(authenticateDeviceCredentials("device_1", secret, 6_000)).resolves.toEqual({ busId: "bus_1", routeId: "route_1" });
+  });
+  it("clears authorization when the invalidation listener fails", async () => {
+    const secret = await configure();
+    await authenticateDeviceCredentials("device_1", secret, 1_000);
+    harness.collections.get("devices")!.get("device_1")!.enabled = false;
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try { harness.invalidationError!(new Error("Listener unavailable")); }
+    finally { log.mockRestore(); }
+    await expect(authenticateDeviceCredentials("device_1", secret, 1_001)).resolves.toBeNull();
+  });
   it("does not let a wrong secret poison the legitimate device cache entry", async () => {
     const validSecret = "valid-device-secret-with-enough-entropy";
     const secretHash = await hashDeviceSecret(validSecret);

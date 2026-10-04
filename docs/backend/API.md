@@ -177,6 +177,19 @@ probe down.
 
 ## Device endpoints
 
+Device authentication coalesces concurrent misses for the same device ID and
+secret digest into one registry/KDF fill. It admits at most 16 unsettled fills
+and 64 waiting callers per digest; overload and a 5-second monotonic cache-miss
+response deadline return transient 503. A timed-out underlying fill keeps its
+slot until it actually settles. It cannot publish late authorization, and
+expired work does not dispatch subsequent reads. Successful authorization is
+cached for at most 60s, negative results for 5s, anchored to fill start with
+monotonic expiry; access does not extend TTL. Rotation/reassignment invalidation
+fences all in-flight digests as well as existing cache entries. A failed
+invalidation listener clears authorization and detaches before reconnecting.
+Detailed admin health exposes `telemetry.credentialFills.activeFills` and
+`waitingCallers` without device IDs, digests or secrets.
+
 ### `POST /api/devices/:deviceId/telemetry` — device
 
 The body schema is nine fields today; during the staged rollout the parser also accepts the immediate previous bounded eight-field sequenced schema (no `gpsHdop`) and the legacy six-field schema (no `seq`/`deviceSentAt`):

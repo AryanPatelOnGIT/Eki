@@ -93,6 +93,14 @@ browser reconciles unknown outcomes using the same save ID. Current 202 route
 responses carry `retryAfterMs`; they do not yet emit `Location` or `Retry-After`.
 Fleet audit fingerprints are audit records, not durable HTTP replay guarantees.
 
+Device authentication cache misses have a separate 5s monotonic response budget
+and bounded single-flight capacity: 16 unsettled fills, 64 waiting callers per
+digest. Timeout preserves the underlying slot until actual settlement, and
+expired/invalidation-fenced fills cannot publish authorization. Positive/negative
+TTLs are at most 60s/5s from fill start and are never extended by cache access.
+Capacity/deadline failures are transient 503; this budget does not yet bound
+every subsequent ingestion dependency (R03). See the device operation policies.
+
 ## Realtime channels are Firebase SDK subscriptions
 
 These channels are deliberately excluded from OpenAPI `paths`. HTTP remains
