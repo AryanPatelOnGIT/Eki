@@ -4,7 +4,17 @@ import {
   analyzeTelemetryTraces,
   estimateDeviceClockOffset,
   percentileSummary,
+  parseDeviceRecords,
 } from "./analyze-telemetry-trace.mjs";
+
+test("accepts configured handshake limits and legacy labels without reporting them as measured duration", () => {
+  for (const label of ["handshakeMs", "configuredHandshakeTimeoutMs"]) {
+    const records = parseDeviceRecords(`[NetworkTiming] dnsMs=1 tlsConnectMs=20 timeoutMs=3000 ${label}=8000 result=1 channel=telemetry preparationMs=5`);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].tlsConnectMs, 20);
+    assert.equal(records[0].handshakeMs, undefined);
+  }
+});
 
 test("estimates clock offset and network uncertainty from four timestamps", () => {
   assert.deepEqual(estimateDeviceClockOffset({
@@ -61,6 +71,14 @@ test("correlates device, listener, and render phases without mixing clocks", () 
     motionState: "moving",
     attempts: 1,
     deviceQueueMs: 100,
+    receiverUtcMs: null,
+    receiverClockToCaptureMs: null,
+    rmcReadMs: null,
+    receiverToEvaluationMs: null,
+    evaluationToEnqueueMs: null,
+    enqueueToSendMs: null,
+    responseDrainMs: null,
+    completeDeviceCycleMs: null,
     httpRoundTripMs: 250,
     clockOffsetMs: 0,
     clockUncertaintyMs: 100,
@@ -184,4 +202,41 @@ test("rejects a wall-clock jump instead of calling it transport latency", () => 
   assert.equal(estimateDeviceClockOffset({ deviceSentAtDeviceMs: 1000,
     deviceReceivedAtDeviceMs: 8250, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150,
     httpDurationMs: 250 }), null);
+});
+
+test("retains receiver evaluation queue and body-drain delays across monotonic rollover", () => {
+  const common = { seq: 1, sampledAtDeviceMs: 900 };
+  const records = [
+    { ...common, event: "device_capture", receiverBacked: true,
+      receiverStartedAtMonotonicMs: 0xffffffd0, receiverAtMonotonicMs: 0xffffffe0,
+      evaluationAtMonotonicMs: 0xfffffff0, enqueuedAtMonotonicMs: 0xfffffff8 },
+    { ...common, httpStatus: 202, attempt: 2, deviceSentAtDeviceMs: 1000,
+      deviceReceivedAtDeviceMs: 1250, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150 },
+    { ...common, event: "device_http_complete", attempt: 1, responseComplete: false,
+      sendAtMonotonicMs: 1, headersAtMonotonicMs: 2, drainCompletedAtMonotonicMs: 3 },
+    { ...common, event: "device_http_complete", attempt: 2, responseComplete: true,
+      sendAtMonotonicMs: 0x10, headersAtMonotonicMs: 0x110, drainCompletedAtMonotonicMs: 0x210 },
+  ];
+  const { rows, counters } = analyzeTelemetryTraces(records, []);
+  assert.equal(counters.requests, 1);
+  assert.equal(rows[0].attempts, 1);
+  assert.equal(rows[0].rmcReadMs, 16);
+  assert.equal(rows[0].receiverToEvaluationMs, 16);
+  assert.equal(rows[0].evaluationToEnqueueMs, 8);
+  assert.equal(rows[0].enqueueToSendMs, 24);
+  assert.equal(rows[0].responseDrainMs, 256);
+  assert.equal(rows[0].completeDeviceCycleMs, 560);
+});
+
+test("does not invent receiver or complete-cycle evidence for recovered fixes or incomplete bodies", () => {
+  const common = { seq: 1, sampledAtDeviceMs: 900 };
+  const { rows } = analyzeTelemetryTraces([
+    { ...common, event: "device_capture", receiverBacked: false, receiverAtMonotonicMs: 1, enqueuedAtMonotonicMs: 5 },
+    { ...common, httpStatus: 202 },
+    { ...common, event: "device_http_complete", responseComplete: false, sendAtMonotonicMs: 10,
+      headersAtMonotonicMs: 20, drainCompletedAtMonotonicMs: 30 },
+  ], []);
+  assert.equal(rows[0].receiverToEvaluationMs, null);
+  assert.equal(rows[0].completeDeviceCycleMs, null);
+  assert.equal(rows[0].responseDrainMs, null);
 });

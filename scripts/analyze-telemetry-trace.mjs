@@ -71,15 +71,27 @@ function elapsedBetween(later, earlier) {
   return later === null || earlier === null ? null : nonNegative(later - earlier);
 }
 
+function monotonicElapsed(later, earlier) {
+  if (finite(later) === null || finite(earlier) === null ||
+      !Number.isInteger(later) || !Number.isInteger(earlier) ||
+      later < 0 || earlier < 0 || later > 0xffffffff || earlier > 0xffffffff) return null;
+  const elapsed = (later - earlier) >>> 0;
+  return elapsed <= 120_000 ? elapsed : null;
+}
+
 export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
   const deviceByKey = new Map();
   for (const record of deviceRecords) {
+    if (finite(record.httpStatus) === null) continue;
     const key = traceKey(record);
     if (!key) continue;
     const attempts = deviceByKey.get(key) ?? [];
     attempts.push(record);
     deviceByKey.set(key, attempts);
   }
+  const captures = earliestBy(deviceRecords.filter(record => record.event === "device_capture"), traceKey);
+  const completions = new Map(deviceRecords.filter(record => record.event === "device_http_complete")
+    .map(record => [`${traceKey(record)}:${record.attempt ?? 1}`, record]));
   const listeners = earliestBy(
     browserRecords.filter((record) => record.event === "browser_listener"),
     traceKey,
@@ -99,6 +111,13 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
     const accepted = attempts.find((record) => record.httpStatus === 200 || record.httpStatus === 202);
     if (!accepted) continue;
     const clock = estimateDeviceClockOffset(accepted);
+    const capture = captures.get(key);
+    const completion = completions.get(`${key}:${accepted.attempt ?? 1}`);
+    const receiverAt = capture?.receiverBacked === true ? finite(capture.receiverAtMonotonicMs) : null;
+    const evaluationAt = finite(capture?.evaluationAtMonotonicMs);
+    const enqueueAt = finite(capture?.enqueuedAtMonotonicMs);
+    const sendAt = finite(completion?.sendAtMonotonicMs);
+    const drainAt = completion?.responseComplete === true ? finite(completion.drainCompletedAtMonotonicMs) : null;
     const listener = listeners.get(key);
     const phaseKey = browserPhaseKey(listener);
     const render = phaseKey ? renders.get(phaseKey) : undefined;
@@ -123,6 +142,15 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
       motionState: accepted.motionState ?? listener?.motionState ?? "unknown",
       attempts: attempts.length,
       deviceQueueMs: elapsedBetween(deviceSentAt, sampledAt),
+      receiverUtcMs: capture?.receiverBacked === true ? finite(capture.receiverUtcMs) : null,
+      receiverClockToCaptureMs: capture?.receiverBacked === true && sampledAt !== null && finite(capture.receiverUtcMs) !== null
+        ? sampledAt - capture.receiverUtcMs : null,
+      rmcReadMs: monotonicElapsed(receiverAt, finite(capture?.receiverStartedAtMonotonicMs)),
+      receiverToEvaluationMs: monotonicElapsed(evaluationAt, receiverAt),
+      evaluationToEnqueueMs: monotonicElapsed(enqueueAt, evaluationAt),
+      enqueueToSendMs: monotonicElapsed(sendAt, enqueueAt),
+      responseDrainMs: monotonicElapsed(drainAt, finite(completion?.headersAtMonotonicMs)),
+      completeDeviceCycleMs: monotonicElapsed(drainAt, receiverAt),
       httpRoundTripMs: finite(accepted.httpDurationMs) ?? elapsedBetween(finite(accepted.deviceReceivedAtDeviceMs), deviceSentAt),
       clockOffsetMs: clock?.offsetMs ?? null,
       clockUncertaintyMs: clock?.uncertaintyMs ?? null,
@@ -203,6 +231,13 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
 }
 
 const METRICS = [
+  ["Receiver UTC → capture (device/receiver clock comparison)", "receiverClockToCaptureMs"],
+  ["RMC first byte → checksum commit", "rmcReadMs"],
+  ["RMC commit → evaluation", "receiverToEvaluationMs"],
+  ["Evaluation → enqueue", "evaluationToEnqueueMs"],
+  ["Enqueue → request send", "enqueueToSendMs"],
+  ["Response headers → bounded body drain", "responseDrainMs"],
+  ["RMC commit → completed response drain", "completeDeviceCycleMs"],
   ["Device queue", "deviceQueueMs"],
   ["HTTP round trip", "httpRoundTripMs"],
   ["Clock offset estimate", "clockOffsetMs"],
@@ -271,6 +306,7 @@ export function formatTelemetryReport(analysis, healthSnapshots = []) {
     "",
     "Clock offset uses the four HTTP timestamps. The uncertainty column is half of the network-only round trip; cross-clock latency values should be read with that bound.",
     "Use one device per input. Capture gaps describe accepted samples, not the underlying GNSS sampling cadence. Missing or malformed records limit gap and failure counts.",
+    "Version 2 firmware records retain receiver UTC, RMC first-byte/checksum arrival, evaluation/enqueue, request send, response headers and completed body drain separately. Monotonic phases handle one rollover and reject impossible intervals. Missing phases remain unavailable, including RTC/checkpoint recovery. Receiver UTC comparisons include clock disagreement and UART buffering; they are not pure network latency. HTTP round trip remains the header phase used for clock estimation; the complete device cycle includes body drain.",
     "",
     "## Correlation coverage",
     "",
@@ -342,12 +378,11 @@ function parseArguments(argv) {
   return parsed;
 }
 
-async function readDeviceRecords(filename) {
-  const text = await readFile(filename, "utf8");
+export function parseDeviceRecords(text) {
   return text.split(/\r?\n/).flatMap((line) => {
     const start = line.indexOf(DEVICE_TRACE_PREFIX);
     if (start < 0) {
-      const match = line.match(/\[NetworkTiming\] dnsMs=(\d+) tlsConnectMs=(\d+) timeoutMs=(\d+) handshakeMs=(\d+) result=(\d+)(?: channel=(\w+) preparationMs=(\d+))?/);
+      const match = line.match(/\[NetworkTiming\] dnsMs=(\d+) tlsConnectMs=(\d+) timeoutMs=(\d+) (?:handshakeMs|configuredHandshakeTimeoutMs)=(\d+) result=(\d+)(?: channel=(\w+) preparationMs=(\d+))?/);
       return match ? [{ event: "network_connect", dnsMs: Number(match[1]), tlsConnectMs: Number(match[2]), result: Number(match[5]), channel: match[6] ?? "unknown", preparationMs: match[7] ? Number(match[7]) : null }] : [];
     }
     try {
@@ -356,6 +391,10 @@ async function readDeviceRecords(filename) {
       return [{ event: "malformed_trace" }];
     }
   });
+}
+
+async function readDeviceRecords(filename) {
+  return parseDeviceRecords(await readFile(filename, "utf8"));
 }
 
 async function main() {
