@@ -17,8 +17,17 @@ const mocks = vi.hoisted(() => {
   const transactionCreate = vi.fn();
   const transactionGet = vi.fn(async () => ({ exists: false, data: () => undefined }));
   const reduceTripState = vi.fn();
+  const replayRead = vi.fn(async () => ({ forEach: vi.fn() }));
+  const replayQuery: any = { once: replayRead };
+  replayQuery.startAfter = vi.fn(() => replayQuery);
+  replayQuery.limitToFirst = vi.fn(() => replayQuery);
+  const fleetRead = vi.fn(async () => ({ docs: [], size: 0 }));
+  const fleetQuery: any = { get: fleetRead };
+  fleetQuery.startAfter = vi.fn(() => fleetQuery);
+  fleetQuery.limit = vi.fn(() => fleetQuery);
 
   const busesRef = {
+    orderByKey: vi.fn(() => replayQuery),
     on: vi.fn((event: string, handler: (snapshot: any) => void) => {
       rtdbHandlers.set(event, handler);
     }),
@@ -29,6 +38,7 @@ const mocks = vi.hoisted(() => {
   };
   const db = {
     collection: vi.fn((name: string) => ({
+      orderBy: vi.fn(() => fleetQuery),
       onSnapshot: name === "routes"
         ? vi.fn((next: (snapshot: any) => void, error: (error: unknown) => void) => {
             const unsubscribe = vi.fn();
@@ -66,6 +76,9 @@ const mocks = vi.hoisted(() => {
     db,
     documentSet,
     reduceTripState,
+    replayRead,
+    replayQuery,
+    fleetRead,
     routeDocumentGet,
     routeListeners,
     rtdbHandlers,
@@ -87,7 +100,7 @@ vi.mock("./tripStateReducer", () => ({
 }));
 vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => false) }));
 
-import { lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
+import { getTripStateQueueStatus, lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
 import { restoreDurableRide } from "./durableRideRecovery";
 import { WorkerFence } from "../lib/workerFence";
 
@@ -123,10 +136,63 @@ describe("trip-state engine lifecycle", () => {
       currentStopIndex: 1,
       hasDepartedOrigin: true,
     });
+    mocks.replayRead.mockResolvedValue({ forEach: vi.fn() });
+    mocks.fleetRead.mockResolvedValue({ docs: [], size: 0 });
+    mocks.busesRef.once.mockResolvedValue({ forEach: vi.fn() });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("bounds live intake during a route-read stall and recovers rejected current state from RTDB", async () => {
+    let release!: (value: any) => void;
+    mocks.routeDocumentGet.mockReturnValue(new Promise(done => { release = done; }));
+    const sample = (i: number) => ({ key: `bounded_${i}_route`, val: () => ({
+      busId: `bounded_${i}`, routeId: `route_bound_${i}`, sessionId: `session_bound_${i}`,
+      driverId: "driver", direction: null, lat: 23, lng: 72, status: "active", tripState: "pre_departure",
+    }) });
+    mocks.transactionGet.mockImplementation(async (ref: any) => ({ exists: true, data: () => ({
+      sessionId: `session_bound_${String(ref.id).replace("bounded_", "")}`,
+    }) }));
+    const stop = startTripStateEngine();
+    const handler = mocks.rtdbHandlers.get("child_changed")!;
+    for (let i = 0; i < 300; i++) handler(sample(i));
+    await flushMicrotasks();
+    expect(getTripStateQueueStatus().intake).toMatchObject({ active: 8, pending: 256, keys: 264 });
+    expect(mocks.routeDocumentGet).toHaveBeenCalledTimes(8);
+    expect(getTripStateQueueStatus().recovery.requested).toBe(true);
+    release({ exists: false, data: () => undefined });
+    await flushMicrotasks(600);
+    expect(getTripStateQueueStatus().intake).toMatchObject({ active: 0, pending: 0 });
+    mocks.replayRead.mockResolvedValue({ forEach: vi.fn(callback => callback(sample(299))) });
+    await vi.advanceTimersByTimeAsync(1_000); await flushMicrotasks(60);
+    expect(mocks.replayQuery.limitToFirst).toHaveBeenCalledWith(25);
+    expect(mocks.transactionSet.mock.calls.some(([ref]) => ref.collectionName === "bus_locations" && ref.id === "bounded_299")).toBe(true);
+    await stop();
+  });
+
+  it.each(["missing", "new-owner", "returned"])("recovers removed presence safely: %s", async mode => {
+    const stop = startTripStateEngine();
+    mocks.transactionGet.mockRejectedValueOnce(Error("trigger recovery"));
+    mocks.rtdbHandlers.get("child_removed")!({ key: "replay_trigger_route", val: () => ({
+      busId: "replay_trigger", routeId: "route", sessionId: "trigger", status: "active",
+    }) });
+    await flushMicrotasks();
+    const data = { sessionId: "old-session", routeId: "replay_route", driverId: "old-driver", status: "active" };
+    mocks.fleetRead.mockResolvedValue({ docs: [{ id: `replay_${mode}`, data: () => data }] as any, size: 1 });
+    mocks.busesRef.once.mockResolvedValue({ exists: () => mode === "returned", forEach: vi.fn() } as any);
+    mocks.transactionGet.mockImplementation(async (ref: any) => ({ exists: true, data: () =>
+      ref.collectionName === "_active_bus_locks"
+        ? { sessionId: "old-session", routeId: mode === "new-owner" ? "new-route" : "replay_route", driverId: "old-driver" }
+        : data }));
+    mocks.transactionSet.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000); await flushMicrotasks(60);
+    const writes = mocks.transactionSet.mock.calls.filter(([ref]) => ref.id === `replay_${mode}`);
+    if (mode === "missing") expect(writes).toHaveLength(1);
+    else expect(writes).toHaveLength(0);
+    if (mode === "missing") expect(writes[0][1]).toMatchObject({ status: "offline", sessionId: "old-session" });
+    await stop();
   });
 
   it("does not admit a removed-node event through a revoked leader listener", async () => {

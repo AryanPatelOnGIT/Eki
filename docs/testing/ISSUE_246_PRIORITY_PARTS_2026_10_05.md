@@ -132,3 +132,34 @@ evidence, not acceptance of newly built firmware or moving behavior.
 [Issue #245](https://github.com/notnamansinha/Eki/issues/245) retains moving,
 physical fault, secure-board and rollout gates. R25 bench evidence must name
 the actual installed build before it can certify that implementation.
+
+## R02 bounded admission verification
+
+Baseline actual helpers reproduced 4 active + 96 waiting KDF calls, 20 workers
+for 20 matcher keys, and 100 ordered writes with fingerprint capacity 1. Fixed
+ceilings and the five-second undispatched budget are documented in
+[work admission](../operations/WORK_ADMISSION.md). Admitted durable work remains
+FIFO; dispatched operations retain permits until actual settlement. Rejected
+lifecycle intake/write work requests one 25-item paginated current-state replay,
+with missing-node recovery guarded by current presence and canonical ownership.
+
+The engine stall regression admits 8 active/256 waiting out of 300 events and
+recovers a rejected current node; returned presence/new-owner regressions prevent
+stale offline recovery. Actual Linux-container Firebase emulators pass all 11
+rules/fencing/ordering cases, including a committed write with its acknowledgement
+held, queued expiry and a newer final write. The helper acceptance script submits
+250,000 jobs to each of the production KDF/writer/matcher primitives. Five post-GC
+heap samples were 7,072,992 / 7,104,680 / 7,150,704 / 6,267,696 / 6,273,296 bytes;
+retained growth was -799,696 bytes. Active/waiting stayed at 4/32, 8/256 and 8/256.
+RSS grew during warmup from 170,536,960 to 203,784,192, then was
+208,809,984 / 208,855,040 / 209,068,032 bytes. All pools drained/reopened and FIFO
+passed. These are synthetic local Node v24.19.0 measurements, not fleet-load or
+end-to-end latency evidence. The same script is an exact-head CI acceptance step.
+
+R08's merged testing commit c353318 also passed its own
+[verification run](https://github.com/notnamansinha/Eki/actions/runs/37234282478).
+R02 PR/head/merge and complete check results are tracked in #246 after verification.
+R03 retains whole-ingestion dependency/response deadlines; #245 retains staged
+replica and moving-route evidence. Recovery cannot reconstruct movement/times
+never observed or committed during overload. R34 remains open; the board and
+production remain untouched.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertResponse, assertSchema, spec } from "../test-support/openapi";
 import { parseTelemetryValue } from "./services/telemetryPayload";
+import { BoundedKeyedExecutor } from "./lib/boundedKeyedExecutor";
 
 const now = 1_800_000_000_000;
 const current = {
@@ -10,6 +11,13 @@ const current = {
 const telemetrySchema = { $ref: "#/components/schemas/TelemetryInput" };
 
 describe("published OpenAPI contract boundaries", () => {
+  it("validates the actual anonymous queue status and rejects leaked identifiers", () => {
+    const schema = { $ref: "#/components/schemas/ExecutionQueueStatus" };
+    const status = new BoundedKeyedExecutor().snapshot();
+    expect(() => assertSchema(schema, status)).not.toThrow();
+    expect(() => assertSchema(schema, { ...status, sessionId: "private" })).toThrow(/schema mismatch/);
+    expect(() => assertSchema(schema, { ...status, pending: -1 })).toThrow(/schema mismatch/);
+  });
   it.each([
     current,
     Object.fromEntries(Object.entries(current).filter(([key]) => key !== "gpsHdop")),

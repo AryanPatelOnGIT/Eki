@@ -87,3 +87,8 @@ Use the latest consolidated report and [deployment checklist](../operations/UNIV
 to track full-route/turnaround, weak-network and off-route paint evidence,
 long soak, secure fleet first boot/OTA, monitoring and institutional approval.
 Do not close a gate from source review or mock data alone.
+
+R02's [work admission guide](../operations/WORK_ADMISSION.md) documents bounded
+queues, current-state replay and the reproducible stalled-helper memory check.
+The priority record reports measured heap/RSS and emulator ordering evidence;
+it does not certify live fleet throughput or moving-route recovery.

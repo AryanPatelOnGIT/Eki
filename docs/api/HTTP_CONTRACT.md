@@ -174,3 +174,10 @@ in [RIDE_SESSION_CONTRACT.md](RIDE_SESSION_CONTRACT.md).
 
 Operation states, budgets, retention and crash recovery are documented in
 [OPERATION_RESOURCES.md](OPERATION_RESOURCES.md).
+
+Admin health includes the closed `ExecutionQueueStatus` schema in
+`telemetry.workQueues`, with anonymous KDF/lifecycle/intake counters and the
+25-item recovery status. Public probes retain their existing shapes. Matcher
+and rerouter counters remain in the extensible `routeProcessing` object.
+[Work admission](../operations/WORK_ADMISSION.md) defines process-local ceilings,
+five-second undispatched expiry, retry behavior and real-settlement ordering.
