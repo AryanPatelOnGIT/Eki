@@ -1,6 +1,6 @@
 # Hardware telemetry, latency and failure design
 
-Last updated: 2026-10-04 16:07 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 Setup boundary: use [the hardware setup guide](README.md) before reading this
 design. It is the source for required `backend/.env`, frontend environment

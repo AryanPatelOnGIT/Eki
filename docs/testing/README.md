@@ -34,6 +34,11 @@ and R06 ([#257](https://github.com/notnamansinha/Eki/pull/257)) at `521310e`,
 with their exact-head checks. Follow #246 for later merges;
 the record names software tests and separates stationary GNSS baseline evidence
 from acceptance of newly installed firmware.
+R25's [bounded DNS guide](../hardware/DNS_COLD_CONNECT.md) and
+[PR #258](https://github.com/notnamansinha/Eki/pull/258) include native/SDK checks
+and 5 October stationary installed-image evidence for controlled DNS, Wi-Fi and
+TLS failure/recovery. The priority record names the final image hash, cold/warm
+timings, GNSS continuity and the remaining physical/moving gates.
 
 The historical admin baseline `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
 the development-only opt-out, admin feedback HTTP loading/status and pending

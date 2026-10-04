@@ -55,9 +55,65 @@ Eight native policy cases and seven tests of the actual production resolver
 under controlled native radio/TCP-IP adapters cover stalls, overload, retries,
 disconnection and recovery. All 82 native cases pass and the actual pinned SDK
 development build passes. The new [DNS guide](../hardware/DNS_COLD_CONNECT.md)
-documents budgets, transport scope and physical limits. Bench results below must
-identify the actual installed private journal image; no image has been installed
-by this R25 verification yet.
+documents budgets, transport scope and physical limits. The source is reviewed in
+[PR #258](https://github.com/notnamansinha/Eki/pull/258). Both initial exact-head
+CI runs passed, including all web/backend, actual rules, synthetic browser,
+strict export, container, quiet/journal/signed fleet build checks. The Windows
+private journal build also passed after resolving ESP-IDF's path-space/tooling
+limitations; there was no change to repository build or provisioning security.
+
+Stationary R25 fault acceptance on COM3: first inspect security flags read-only,
+validate the original app0/coredump layout, back up the complete current app and
+journal, and validate the app checksum/hash. The stub's full read encountered a
+digest error; bounded chunk reads and one ROM read completed the backup before
+installation. A temporary private publisher fixture compiled from R25 code
+blackholed DNS to loopback, restored DNS, disconnected/reconnected Wi-Fi and
+performed a wrong-hostname TLS handshake with the original CA. It sent no HTTP
+request or credentials on the TLS probe. Its app-only image SHA-256 was
+`c7245995f62b02d877e1779af60eb9f7b071d1cc61d5407360aff37bbeaae4a0`;
+esptool verified the write at `0x10000`. No bootloader, partition table, NVS or
+fuse write was performed. The fixture is excluded from the PR and final app.
+
+Measured: blackholed DNS rejected at 1,000 ms; 100 expired retries rejected in
+1 ms total; offline DNS rejected in 0 ms; wrong-hostname TLS rejected in 110 ms.
+The 120-second capture recorded 119 GNSS samples (maximum serial sample gap
+1,047 ms), 109 HTTP 202 acknowledgements, all with stopped motion state, and no
+watchdog/panic/brownout/credential-fault log. Successful telemetry reconnected
+with DNS 1 ms, key preparation 258 ms and TLS connect 691 ms. HTTP duration
+p50/p95/max was 522/1,082/2,247 ms. Minimum heap was 165,740 bytes and publisher
+stack headroom 14,580 bytes. Twelve checkpoint commits succeeded. These are a
+stationary fault window, not fleet tail latency or a moving-route acceptance.
+
+Original source was restored exactly and the preserved reviewed private journal
+image installed and verified at `0x10000`: SHA-256
+`28cd2bdd9324145bafe25fe081f3a98c5eafe8fd9d76223c91cc635ee51e44c5`,
+952,736 bytes, source `3cb9bebb48f75acf0207fd25ee23f22935e4b86c` plus the matching
+ignored device configuration. Final documentation-only changes do not change
+that firmware source. The original five compiled device/network values were
+checked against the working app without exposing them. The 120-second normal
+image window recorded 120 GNSS samples (max serial gap 1,079 ms), 115 HTTP 202
+acknowledgements, no watchdog/panic/brownout/credential-fault log, and 12 successful
+checkpoint writes. Cold telemetry connection: DNS 63 ms, key preparation 252 ms,
+TLS connect 747 ms. HTTP duration p50/p95/max: 572/1,104/2,388 ms. One telemetry
+connection setup served all 115 acknowledgements, preserving healthy reuse.
+Minimum heap was 166,396 bytes and publisher stack headroom 14,396 bytes.
+This tests firmware against the existing reachable backend; it does not establish
+a new backend deployment or the remaining authenticated browser/deployment gates.
+An independent post-installation read confirmed the partition table remained
+byte-for-byte unchanged. Its subsequent 60-second reset/cold capture had 60 GNSS
+samples and 55 complete parsed HTTP 202 records. It also contained 67 malformed
+or repeated serial trace fragments, which were excluded from acknowledgement
+counts; substring counting incorrectly reported 120 and is not valid evidence.
+Cold DNS/key/TLS was 65/253/698 ms. No watchdog/panic/brownout/credential-fault log
+was observed. The two earlier 120-second windows had no malformed trace lines.
+The subsequent clean 60-second warm window had 60 GNSS samples and 60 fully
+parsed HTTP 202 acknowledgements, no malformed trace or fault line, no new
+telemetry/diagnostic connection setup, and six successful checkpoint commits.
+HTTP duration p50/p95/max was 573/1,165/1,264 ms, with max GNSS serial gap 1,063 ms.
+The normal reviewed image remains installed; the temporary fault fixture and
+its DNS/radio changes have been removed.
+Captures/configurations remain ignored
+and private; public evidence contains no location, hostname or credentials.
 
 Stationary baseline: COM3 was read without flash, reboot or serial writes.
 Twenty GNSS/telemetry samples from the previously installed firmware received

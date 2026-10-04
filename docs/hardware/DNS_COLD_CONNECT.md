@@ -62,7 +62,9 @@ quiet, legacy journal and signed fleet environments.
 
 Record cold/warm `[NetworkTiming]` and `[TelemetryTrace]` distributions against
 the installed image hash, plus GNSS/UART, watchdog and reset evidence. Controlled
-physical DNS, Wi-Fi and certificate failures and moving behavior belong to
+Stationary blackholed DNS, timeout retries, Wi-Fi disconnect/reconnect and
+wrong-hostname TLS rejection passed on 5 October; see the source/image-specific
+record linked above. Broader physical failures, long outages and moving behavior belong to
 [issue #245](https://github.com/notnamansinha/Eki/issues/245). Use the app-only
 [legacy-board procedure](COLD_POWER_RECOVERY.md) when applicable; build success
 alone does not authorize changing partition tables or security fuses.

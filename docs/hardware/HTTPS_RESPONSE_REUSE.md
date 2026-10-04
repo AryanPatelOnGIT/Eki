@@ -1,6 +1,6 @@
 # Telemetry HTTPS response reuse
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 ## Scope
 
