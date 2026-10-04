@@ -9,6 +9,10 @@ merge/checklist status and each PR's exact-head CI. Dated reports retain their
 original builds and measurements; this record does not rerun their field work.
 The subsequent R01–R11/R25 work is recorded in
 [the 5 October priority evidence](ISSUE_246_PRIORITY_PARTS_2026_10_05.md).
+That later record includes an installed image containing these earlier firmware
+changes, stationary network-fault/recovery windows, heap/stack measurements and
+cold/warm HTTPS timings. It supplements this dated software record; controlled
+clock injection, secure OTA and moving-route acceptance remain in #245/R34.
 
 | Part | Change and targeted evidence |
 |---|---|
