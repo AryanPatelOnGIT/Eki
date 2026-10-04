@@ -56,8 +56,11 @@ under controlled native radio/TCP-IP adapters cover stalls, overload, retries,
 disconnection and recovery. All 82 native cases pass and the actual pinned SDK
 development build passes. The new [DNS guide](../hardware/DNS_COLD_CONNECT.md)
 documents budgets, transport scope and physical limits. The source is reviewed in
-[PR #258](https://github.com/notnamansinha/Eki/pull/258). Both initial exact-head
-CI runs passed, including all web/backend, actual rules, synthetic browser,
+[PR #258](https://github.com/notnamansinha/Eki/pull/258), merged into `testing`
+at `c9bfee775b2ce694ebb76e2be5977843b367c66f`. Both final exact-head CI runs
+([push](https://github.com/notnamansinha/Eki/actions/runs/37231192272),
+[PR](https://github.com/notnamansinha/Eki/actions/runs/37231195726)) passed on
+`e43a11f73e94ae1f208c22e6c3a2967dfa094133`, including all web/backend, actual rules, synthetic browser,
 strict export, container, quiet/journal/signed fleet build checks. The Windows
 private journal build also passed after resolving ESP-IDF's path-space/tooling
 limitations; there was no change to repository build or provisioning security.
@@ -112,6 +115,12 @@ telemetry/diagnostic connection setup, and six successful checkpoint commits.
 HTTP duration p50/p95/max was 573/1,165/1,264 ms, with max GNSS serial gap 1,063 ms.
 The normal reviewed image remains installed; the temporary fault fixture and
 its DNS/radio changes have been removed.
+After merge, #246's R25 checklist and #245's baseline were updated immediately.
+Related existing closed issues #26/#30/#31/#56/#67/#159/#225 have refreshed
+documentation and scope qualifications. Earlier priority updates already refreshed
+#28/#48/#74/#207 and the still-open deployment tracker #204. Neither #245 nor
+#246 currently has attached GitHub child subissues; their existing referenced
+issues were updated without inventing new issues or closing physical gates.
 Captures/configurations remain ignored
 and private; public evidence contains no location, hostname or credentials.
 

@@ -1,6 +1,6 @@
 # Firmware policy tests
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 Run from the repository root:
 
@@ -10,7 +10,9 @@ py -m platformio test --project-dir hardware -e native
 
 The native Unity suites execute production header policies:
 
-The selected #246 changes have seven suites and 67 native cases. Use the
+The current #246 firmware has nine suites and 82 native cases, including DNS
+policy and production resolver tests with native radio/TCP-IP adapters. These
+adapters are native-only; all board builds compile against the actual SDK. Use the
 actual runner output at the tested commit to confirm the count.
 
 | Suite | Coverage |
@@ -22,6 +24,8 @@ actual runner output at the tested commit to confirm the count.
 | `test_http_reuse_guard` | Safe persistent HTTPS reuse across response outcomes |
 | `test_reset_stats` | Reset-history normalization and counters |
 | `test_json_payload` | Actual ArduinoJson allocation exhaustion, schema completeness and output-capacity rejection |
+| `test_dns_resolution_policy` | Single-slot admission, bounded waits, retained underlying work, network epochs, stale tickets and millis rollover |
+| `test_bounded_dns_resolver` | Production resolver under native radio/TCP-IP adapters: DNS/queue stalls, overload, failure, offline admission and reconnect recovery |
 
 Use actual runner output for case counts. Host policy tests and firmware builds
 do not establish physical radio, UART, GNSS, power, TLS or fleet security
