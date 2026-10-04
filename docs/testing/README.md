@@ -30,7 +30,8 @@ The [5 October priority record](ISSUE_246_PRIORITY_PARTS_2026_10_05.md) covers
 the subsequent R01–R11/R25 continuation. R01 ([#254](https://github.com/notnamansinha/Eki/pull/254))
 and R04 ([#255](https://github.com/notnamansinha/Eki/pull/255)) are merged into
 `testing`, followed by R05 ([#256](https://github.com/notnamansinha/Eki/pull/256))
-at `e46d6f3`, with their exact-head checks. Follow #246 for later merges;
+and R06 ([#257](https://github.com/notnamansinha/Eki/pull/257)) at `521310e`,
+with their exact-head checks. Follow #246 for later merges;
 the record names software tests and separates stationary GNSS baseline evidence
 from acceptance of newly installed firmware.
 

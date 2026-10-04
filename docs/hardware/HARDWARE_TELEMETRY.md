@@ -97,6 +97,7 @@ Follow [cold-power recovery](COLD_POWER_RECOVERY.md), including the legacy-board
 | Speed change | 5 km/h | Velocity materiality |
 | Moving/stopped heartbeat | 1 / 1 s | Live movement plus fresh stopped endpoint state |
 | HTTP connect/request timeout | 1 / 1.5 s | Separate TCP/request bounds; not an end-to-end SLA |
+| HTTPS publisher/diagnostic DNS wait | 1 s | One retained lwIP owner slot; late completion cannot extend caller wait |
 | TLS handshake timeout | 10 s | Independent secure-client safety budget |
 | GNSS UTC maximum age | 2 s | Reject stale date/time sentences |
 | GNSS correction | >=1.5 s, at most once/minute | Primary clock discipline without rapid jumps |
@@ -121,8 +122,9 @@ The body fields and limits are defined in [Firebase data model](../data/FIREBASE
 
 The configured baseline is a one-second evaluation and moving/stopped heartbeat,
 three consecutive qualifying motion readings, a one-second HTTP connect limit,
-a 1.5-second HTTP request/read limit and a separate ten-second TLS handshake
-limit. These are separate phase limits, not a total request deadline. Validate
+a one-second bounded DNS wait, a 1.5-second HTTP request/read limit and a separate ten-second TLS handshake
+limit. See [DNS ownership and cold-connect limits](DNS_COLD_CONNECT.md), including
+which worker transports it covers. These are separate phase limits, not a total request deadline. Validate
 the budgets with route traces and staging latency measurements. The serial log
 records each accepted request duration, retry number/delay, stale-queue eviction,
 and a periodic `Telemetry Evidence` line containing capture, attempt and retry

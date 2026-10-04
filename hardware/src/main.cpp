@@ -4,6 +4,7 @@
 #include "firmware_config.h"
 #include "firmware_update_policy.h"
 #include "http_response.h"
+#include "bounded_dns_resolver.h"
 #include "secrets.h"
 #include "telemetry_policy.h"
 #include "telemetry_queue.h"
@@ -102,6 +103,10 @@ constexpr uint32_t GNSS_EPOCH_REFERENCE_MAX_AGE_MS = 24UL * 60 * 60 * 1000;
 constexpr uint32_t NTP_CROSS_CHECK_INTERVAL_MS = 6UL * 60 * 60 * 1000;
 constexpr uint32_t HTTP_TIMEOUT_MS = eki::telemetry::HTTP_REQUEST_TIMEOUT_MS;
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 25000;
+static_assert(eki::dns::RESPONSE_BUDGET_MS + eki::telemetry::HTTP_CONNECT_TIMEOUT_MS +
+  eki::telemetry::TLS_HANDSHAKE_TIMEOUT_SECONDS * 1000 + HTTP_TIMEOUT_MS +
+  eki::http::TELEMETRY_RESPONSE_DRAIN_TIMEOUT_MS < WATCHDOG_TIMEOUT_MS,
+  "Cold network phase budgets must leave publisher watchdog headroom.");
 static_assert(
   HTTP_TIMEOUT_MS < WATCHDOG_TIMEOUT_MS,
   "A bounded HTTP request must leave time for the publisher watchdog."
@@ -145,6 +150,7 @@ TinyGPSPlus gps;
 HardwareSerial &gpsSerial = Serial2;
 using ReuseSafePlainClient = eki::http::ReuseGuardedClient<WiFiClient>;
 using ReuseSafeSecureClient = eki::http::ReuseGuardedClient<WiFiClientSecure>;
+eki::dns::BoundedResolver dnsResolver;
 class TimedSecureClient : public ReuseSafeSecureClient {
   const char *channel;
 public:
@@ -152,12 +158,13 @@ public:
   using ReuseSafeSecureClient::connect;
   int connect(const char *host, uint16_t port, int32_t timeout) override {
     const uint32_t heapBefore = EKI_ENABLE_FLEET_TRACES ? ESP.getFreeHeap() : 0;
-    const uint32_t preparingAt = millis();
-    prepareTelemetryTlsKey();
     const uint32_t started = millis();
     IPAddress address;
-    const bool resolved = WiFi.hostByName(host, address);
+    const bool resolved = dnsResolver.resolve(host, address);
     const uint32_t resolvedAt = millis();
+    const uint32_t preparingAt = millis();
+    if (resolved) prepareTelemetryTlsKey();
+    const uint32_t preparedAt = millis();
     _timeout = timeout;
     const int result = resolved ? WiFiClientSecure::connect(
       address, port, host, _CA_cert, _cert, _private_key) : 0;
@@ -169,9 +176,9 @@ public:
       static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
     EKI_TRACE_PRINTF("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld configuredHandshakeTimeoutMs=%lu result=%d channel=%s preparationMs=%lu\n",
       static_cast<unsigned long>(resolvedAt - started),
-      static_cast<unsigned long>(millis() - resolvedAt), static_cast<long>(timeout),
+      static_cast<unsigned long>(millis() - preparedAt), static_cast<long>(timeout),
       static_cast<unsigned long>(sslclient->handshake_timeout), result, channel,
-      static_cast<unsigned long>(started - preparingAt));
+      static_cast<unsigned long>(preparedAt - preparingAt));
     return result;
   }
 };
@@ -2136,6 +2143,9 @@ void setup() {
   }
   clockDisciplineMutex = xSemaphoreCreateMutex();
   if (!clockDisciplineMutex) haltWithStatusLed(2);
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED || event == ARDUINO_EVENT_WIFI_STA_GOT_IP) dnsResolver.networkChanged();
+  });
   configureWatchdog();
 #if EKI_FLEET_BUILD
   if (xTaskCreatePinnedToCore(firmwareMaintenanceWorker, "firmware-maintenance", 12288,

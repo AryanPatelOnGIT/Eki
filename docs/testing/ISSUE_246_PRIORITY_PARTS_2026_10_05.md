@@ -16,6 +16,7 @@ R01 is merged in [PR #254](https://github.com/notnamansinha/Eki/pull/254);
 R04 and its request-authentication correction are merged in
 [PR #255](https://github.com/notnamansinha/Eki/pull/255).
 R05 is merged in [PR #256](https://github.com/notnamansinha/Eki/pull/256).
+R06 is merged in [PR #257](https://github.com/notnamansinha/Eki/pull/257).
 API policy changes are reflected in `backend/API.md`, its generated mirror,
 `backend/openapi.json`, the HTTP contract and low-level design.
 
@@ -45,6 +46,18 @@ All 668 backend cases, 59 script cases, OpenAPI 62 operations, lint and TypeScri
 pass locally. One legacy source-string assertion initially referenced the old
 two-argument scheduling call; it now checks propagation of the actual claim ID.
 Moving and physical crash acceptance remain separate in #245.
+
+R25 software: publisher/diagnostic DNS runs on the TCP/IP callback thread with
+one retained owner slot and a one-second caller budget. Expiry cannot spawn more
+queries; late results and changed network epochs fail closed. The SDK DNS cache,
+hostname-validated TLS, per-task key ownership and healthy HTTP reuse remain.
+Eight native policy cases and seven tests of the actual production resolver
+under controlled native radio/TCP-IP adapters cover stalls, overload, retries,
+disconnection and recovery. All 82 native cases pass and the actual pinned SDK
+development build passes. The new [DNS guide](../hardware/DNS_COLD_CONNECT.md)
+documents budgets, transport scope and physical limits. Bench results below must
+identify the actual installed private journal image; no image has been installed
+by this R25 verification yet.
 
 Stationary baseline: COM3 was read without flash, reboot or serial writes.
 Twenty GNSS/telemetry samples from the previously installed firmware received

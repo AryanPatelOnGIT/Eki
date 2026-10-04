@@ -7,6 +7,9 @@ Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 This change hardens the existing persistent telemetry connection on the current
 `testing` branch. It does not replace the telemetry trace format, DNS/TLS timing,
 retry classification, diagnostic worker, maintenance client or OTA client.
+The later R25 change bounds publisher/diagnostic DNS on new connections; see
+[DNS cold-connect scheduling](DNS_COLD_CONNECT.md). Existing healthy sockets
+still bypass that connection setup and retain this response-boundary guard.
 
 The optimization is HTTP connection reuse. It avoids another DNS/TCP/TLS setup
 while the peer keeps a verified socket open. It does not make the first
