@@ -34,6 +34,11 @@ describe("App Check verification", () => {
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN", "debug-only");
     await expect((await import("./firebaseAppCheck")).ensureAppCheck()).rejects.toMatchObject({ name: "AppCheckVerificationError" });
   });
+  it.each(["test", "staging", ""])("does not enable the local opt-out in NODE_ENV=%s", async environment => {
+    vi.stubEnv("NODE_ENV", environment); vi.stubEnv("NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED", "true");
+    await expect((await import("./firebaseAppCheck")).ensureAppCheck()).rejects.toMatchObject({ name: "AppCheckVerificationError" });
+    expect(sdk.token).not.toHaveBeenCalled();
+  });
   it("exchanges the configured local debug token", async () => {
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN", "registered-debug");
     await (await import("./firebaseAppCheck")).ensureAppCheck();

@@ -45,7 +45,7 @@ function initializeFirebaseAppCheck(): AppCheck | null {
   if (!siteKey && !isDebug) {
     // Console enforcement cannot be inferred from NODE_ENV. Local opt-out
     // requires an explicit setting and is never accepted in production.
-    if (process.env.NODE_ENV !== "production" &&
+    if (process.env.NODE_ENV === "development" &&
       process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED === "true") return null;
     throw new Error("[AppCheck] reCAPTCHA Enterprise site key is not configured.");
   }
