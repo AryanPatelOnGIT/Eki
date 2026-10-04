@@ -59,6 +59,7 @@ interface DirectionsRouteProps {
   color?: string;
   hasBuses?: boolean;
   direction: "forward" | "reverse";
+  onGeometryReady?: (path: LatLng[]) => void;
 }
 
 /**
@@ -66,7 +67,7 @@ interface DirectionsRouteProps {
  * does not call the browser Directions service: rendering a map must not add
  * routing cost, quota pressure, or delay to the live GNSS stream.
  */
-export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color = "#3b82f6", hasBuses = false, direction }: DirectionsRouteProps) {
+export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color = "#3b82f6", hasBuses = false, direction, onGeometryReady }: DirectionsRouteProps) {
   const map = useMap();
   const outlineRef = useRef<google.maps.Polyline | null>(null);
   const lineRef = useRef<google.maps.Polyline | null>(null);
@@ -92,6 +93,10 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
       ? routeDisplayPath(repairedPolyline, stops, Boolean(routeId))
       : storedPath;
   }, [repairedPolyline, routeId, stops, storedPath]);
+
+  useEffect(() => {
+    onGeometryReady?.(path);
+  }, [onGeometryReady, path]);
 
   useEffect(() => {
     if (!routeId || storedPath.length >= 2) return;

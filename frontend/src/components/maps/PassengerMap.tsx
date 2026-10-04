@@ -33,6 +33,8 @@ import { busStopArrivalTimestamps } from "@/lib/busEta";
 import { useDynamicRouteGeometries } from "@/hooks/useDynamicRouteGeometries";
 import { useTelemetryRenderTrace } from "@/hooks/useTelemetryRenderTrace";
 import { stopLabel } from "@/lib/stopLabel";
+import { routeDisplayPath } from "@/lib/routeDisplayPath";
+import type { LatLng } from "@/lib/polyline";
 
 export interface PassengerMapProps {
   targetStop: RouteStop;
@@ -215,6 +217,21 @@ function PassengerMapInner({
     () => decodeRoutePathForDisplay(route, null),
     [route],
   );
+  const [repairedRoadPath, setRepairedRoadPath] = useState<LatLng[]>([]);
+  const roadPath = useMemo(
+    () => repairedRoadPath.length >= 2 ? repairedRoadPath :
+      routeDisplayPath(route.polylineQuality === "HIGH_QUALITY" ? route.polyline : undefined, [], true),
+    [repairedRoadPath, route.polyline, route.polylineQuality],
+  );
+  const onConfiguredGeometryReady = useCallback((path: LatLng[]) => {
+    setRepairedRoadPath(path);
+  }, []);
+  const geometryUnavailable = !preview && [...buses.values()].some(bus =>
+    bus.routeSource === "dynamic-reroute"
+      ? !dynamicGeometries.has(bus.busId)
+      : roadPath.length < 2,
+  );
+  const aggregateArrivals = !selectedBusKey && buses.size > 1;
 
   // ── Passenger geolocation (read-only — ESP32 is sole source for bus GPS) ──
   useEffect(() => {
@@ -361,9 +378,10 @@ function PassengerMapInner({
           }
         });
         setBuses(activeBuses);
-        // Update activeBusStopIndex reactively from the first bus
+        // Progress belongs to one bus. A fleet view aggregates earliest
+        // arrivals but never borrows one bus's passed/next-stop state.
         const firstEntry = activeBuses.values().next().value as IncomingBusData | undefined;
-        setActiveBusStopIndex(firstEntry && !preview
+        setActiveBusStopIndex(firstEntry && !preview && activeBuses.size === 1
           ? lastStopIndexRef.current[firstEntry.busId] ?? 0 : undefined);
       }, (error) => {
         console.warn("[RTDB] activeBuses read failed:", error.message);
@@ -413,8 +431,9 @@ function PassengerMapInner({
         // dynamic reroute on one bus never shifts another bus's ETA. Dynamic
         // geometry is fetched once per route version; until it resolves the
         // bus falls back to the shared configured path.
-        const busPath =
-          busEtaPath(bus.busId, dynamicGeometries, routePath);
+        if (bus.routeSource === "dynamic-reroute" && !dynamicGeometries.has(bus.busId)) continue;
+        const busPath = busEtaPath(bus.busId, dynamicGeometries, roadPath);
+        if (busPath.length < 2) continue;
         const selection = selectLiveBusMarkerPosition(bus, etaMarkerSelections.current.get(bus.busId), now);
         etaMarkerSelections.current.set(bus.busId, selection);
         const arrivals = busStopArrivalTimestamps({
@@ -451,7 +470,7 @@ function PassengerMapInner({
     preview,
     route.id,
     route.stops,
-    routePath,
+    roadPath,
     dynamicGeometries,
   ]);
 
@@ -559,6 +578,7 @@ function PassengerMapInner({
             color={route.color || "#3b82f6"}
             hasBuses={buses.size > 0}
             direction={route.rideDirection}
+            onGeometryReady={!activeRoute ? onConfiguredGeometryReady : undefined}
           />
 
           {!activeRoute && [...dynamicGeometries.entries()].map(([busId, geometry]) => (
@@ -681,6 +701,8 @@ function PassengerMapInner({
         stopETAs={stopETAs}
         walkMinutesToTarget={walkMinutesToTarget}
         currentStopIndex={activeBusStopIndex}
+        aggregateArrivals={aggregateArrivals}
+        geometryUnavailable={geometryUnavailable}
       />
     </>
   );
