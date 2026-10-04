@@ -62,8 +62,8 @@ Parser and authentication failures can precede handler-specific headers/errors.
 On detailed health, 503 can be a readiness snapshot or authentication-busy error.
 
 The server applies strict JSON parsers: 16 KiB generally, telemetry 512 bytes,
-diagnostics 1 KiB. Global rate limiting is 200/identity/minute; many mounts also
-apply 30/identity/minute even to GETs. `/api/routes` applies the 10/IP/minute
+diagnostics 1 KiB. Global browser rate limiting is 200/normalized-IP/minute;
+many mounts also apply 30/normalized-IP/minute even to GETs. `/api/routes` applies the 10/IP/minute
 compute budget to geometry reads and deletion too; save-operation reads skip
 that budget. Segment planning uses 30/IP/minute. Places has an unsharded
 20/IP/minute limiter. Device ingress has separate pre-auth IP pools and an

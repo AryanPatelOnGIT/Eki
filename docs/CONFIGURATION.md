@@ -61,6 +61,8 @@ into the browser and should be treated as public identifiers.
 
 | Variable | Required | Meaning | Safe guidance |
 |---|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | Custom frontend origin | Build-time origin for canonical/social metadata, robots and sitemap | HTTPS origin only; no credentials/path/query/fragment. Omission retains `https://bustrack-be165.web.app`; set for other Hosting sites/custom domains |
+| `NEXT_PUBLIC_SITE_INDEXING` | Preview/staging | Set `false` to disable indexing and sitemap discovery | Rebuild to change; use `false` for preview/staging and `true` only for the intended public site |
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | Yes | Browser Firebase API identifier | Restrict by host and Firebase APIs; it is not a service-account secret |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Yes | Firebase Auth domain | Use the matching environment. The project's primary Firebase Hosting site resolves to its live hostname at runtime. Set this explicitly to the frontend hostname for secondary sites and custom domains, and add `https://<frontend-hostname>/__/auth/handler` to the Google OAuth client's authorized redirect URIs. |
 | `NEXT_PUBLIC_FIREBASE_DATABASE_URL` | Yes | Browser RTDB URL | Use the matching environment |
@@ -74,7 +76,6 @@ into the browser and should be treated as public identifiers.
 | `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY` | Production/App Check | Firebase App Check browser site key | Use the matching environment; enforcement is configured in Firebase |
 | `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` | Local development only | Registered Firebase App Check debug token; `true` requests a generated debug token that still requires registration | Ignored by production runtime; never include it in a production build or commit it |
 | `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced development only | Explicit `true` opt-out when no provider key/debug token is configured and `NODE_ENV=development` | Does not disable Firebase Console enforcement; ignored in test/staging/production modes |
-| `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced local development only | Set `true` to explicitly skip missing-key initialization locally | Use only after confirming enforcement is disabled in the local Firebase project; ignored in production; prefer a registered debug token for enforced projects |
 | `NEXT_PUBLIC_BACKEND_URL` | Yes | HTTPS backend origin used by REST mutations | Use an origin only—no `/api` suffix, path or query string |
 | `NEXT_PUBLIC_SERVICE_TIME_ZONE` | Optional | Display timezone; default template is `Asia/Kolkata` | Use an IANA timezone name |
 | `NEXT_PUBLIC_PASSENGER_BUS_START_TIME` | Optional | Passenger display default for service start | This is presentation configuration, not a dispatch rule |

@@ -3,6 +3,7 @@ import "./globals.css";
 
 import Providers from "@/components/Providers";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
+import { siteOrigin, siteIndexingEnabled } from "@/lib/siteMetadata";
 
 
 export const metadata: Metadata = {
@@ -13,9 +14,9 @@ export const metadata: Metadata = {
   description:
     "Real-time bus tracking for Ahmedabad. Live GPS, speed-aware ETAs, and passenger-admin communication.",
   keywords: ["Ahmedabad", "bus tracking", "live GPS", "BRTS", "transit", "Eki"],
-  metadataBase: new URL("https://bustrack-be165.web.app"),
+  metadataBase: new URL(siteOrigin()),
   alternates: { canonical: "/" },
-  robots: { index: true, follow: true },
+  robots: { index: siteIndexingEnabled(), follow: siteIndexingEnabled() },
   openGraph: {
     type: "website",
     url: "/",

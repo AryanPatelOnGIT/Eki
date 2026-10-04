@@ -125,6 +125,14 @@ The software does not promise an absolute end-to-end SLA without real deployment
 
 Admin-only `GET /api/health` returns rolling p50/p95/p99 processing, device-to-server, RTDB-write, and authenticated rate-limit decision latency plus credential cache efficiency and shared limiter transaction/retry counters. Public `GET /health` exposes readiness only. A device clock anomaly over 24 hours is excluded from the device-to-server window.
 
+Rate-limit `storeTransactions` counts SDK transaction invocations for token
+reservations. `storeTransactionRetries` counts additional transaction callback
+evaluations beyond the first, including SDK local-state/server reconciliation;
+it is neither HTTP retry count nor proof of an extra billed operation. Browser
+catalog subscriptions still incur Firestore reads/reconnects. Client-side ETA
+math avoids additional Routes API calls, but does not make catalog, map or
+Firebase usage zero-cost.
+
 ## Deployment view
 
 The static frontend is deployed to Firebase Hosting. The Express container/runtime must expose managed HTTPS near the Firebase region and use Application Default Credentials/Workload Identity or a secret-managed service-account JSON. It should sit behind university WAF/global rate limits. The worker lease supports multiple API replicas while keeping one background owner.
