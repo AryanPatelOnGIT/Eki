@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 import { AuthProvider } from "@/hooks/useAuth";
 import RoleGuard from "@/components/shared/RoleGuard";
 import FeedbackPanel from "@/components/admin/FeedbackPanel";
-import { approveVerification, rejectVerification, switchAccount, signOut, tokenWaiting, subscribeTokenWaiting } from "./firebase";
+import { approveVerification, rejectVerification, reverifyAccount, switchAccount, signOut, tokenWaiting, subscribeTokenWaiting } from "./firebase";
 import "../../frontend/src/app/globals.css";
 function Fixture() {
   const waiting = useSyncExternalStore(subscribeTokenWaiting, tokenWaiting);
@@ -12,6 +12,7 @@ function Fixture() {
     <button disabled={!waiting} onClick={approveVerification}>Approve verification</button>{" "}
     <button disabled={!waiting} onClick={rejectVerification}>Reject verification</button>{" "}
     <button onClick={switchAccount}>Switch account</button>{" "}
+    <button onClick={reverifyAccount}>Reverify account</button>{" "}
     <button onClick={() => void signOut()}>Synthetic sign out</button>
   </aside>
   <AuthProvider><RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: 65 }}>

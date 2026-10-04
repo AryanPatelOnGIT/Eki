@@ -19,6 +19,7 @@ export async function signInWithPopup() {}
 export async function signInWithRedirect() {}
 export async function signOut() { auth.currentUser = null; observers.forEach(callback => callback(null)); }
 export function switchAccount() { auth.currentUser = account("qa-second"); observers.forEach(callback => callback(auth.currentUser)); }
+export function reverifyAccount() { observers.forEach(callback => callback(auth.currentUser)); }
 export class ReCaptchaEnterpriseProvider {}
 export class CustomProvider {}
 export function initializeAppCheck() { return {}; }

@@ -46,3 +46,17 @@ test("account switches hide previous data and wait for fresh verification", asyn
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
   expect(tokens).toEqual(["Bearer token-qa-admin", "Bearer token-qa-second"]);
 });
+
+test("same-account verification hides and reloads protected feedback", async ({ page }) => {
+  let reads = 0;
+  await page.route("**/api/v2/feedback", async route => {
+    reads++; await route.fulfill({ json: { feedbacks: [{ ...entry, userName: `Session ${reads}` }] } });
+  });
+  await page.goto("/"); await page.getByRole("button", { name: "Approve verification" }).click();
+  await expect(page.getByText("Session 1")).toBeVisible();
+  await page.getByRole("button", { name: "Reverify account" }).click();
+  await expect(page.getByText("Session 1")).toHaveCount(0); await expect(page.getByText("Signing you in…")).toBeVisible();
+  expect(reads).toBe(1);
+  await page.getByRole("button", { name: "Approve verification" }).click();
+  await expect(page.getByText("Session 2")).toBeVisible(); expect(reads).toBe(2);
+});

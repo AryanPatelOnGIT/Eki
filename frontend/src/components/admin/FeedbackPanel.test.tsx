@@ -1,26 +1,74 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import FeedbackPanel from "./FeedbackPanel";
 const fixtures = vi.hoisted(() => ({
   entry: { id: "qa-feedback", userId: "qa-passenger", userName: "QA Passenger", type: "general", rating: null, busId: null, driverId: null, sessionId: null, comment: "Please improve the route card", timestamp: null, status: "new" },
   user: { uid: "admin", role: "admin" } as { uid: string; role: string } | null,
-  loading: false, auth: { currentUser: { uid: "admin", getIdToken: async () => "test-token" } },
+  loading: false, generation: 0, auth: { currentUser: { uid: "admin", getIdToken: async () => "test-token" } },
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: fixtures.user, loading: fixtures.loading }) }));
 vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: [] }) }));
 vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: [] }) }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: fixtures.auth }));
+vi.mock("@/lib/authState", () => ({ getAuthVerificationGeneration: () => fixtures.generation }));
 const listResponse = () => new Response(JSON.stringify({ feedbacks: [fixtures.entry] }));
 beforeEach(() => {
-  fixtures.user = { uid: "admin", role: "admin" }; fixtures.loading = false; fixtures.auth.currentUser.uid = "admin";
+  fixtures.user = { uid: "admin", role: "admin" }; fixtures.loading = false; fixtures.generation = 0; fixtures.auth.currentUser.uid = "admin";
   vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev");
   vi.spyOn(console, "error").mockImplementation(() => {}); vi.stubGlobal("fetch", vi.fn(async () => listResponse()));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 async function expand() { const user = userEvent.setup(); await user.click(await screen.findByRole("button", { expanded: false })); return user; }
 describe("admin feedback API workflow", () => {
+  it("restarts pending reads when the same account is verified again", async () => {
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; }))
+      .mockImplementation(async () => new Response(JSON.stringify({ feedbacks: [{ ...fixtures.entry, userName: "Fresh session" }] })));
+    vi.stubGlobal("fetch", fetch);
+    const view = render(<FeedbackPanel />); await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const signal = fetch.mock.calls[0][1]?.signal;
+    fixtures.generation++; view.rerender(<FeedbackPanel />);
+    await screen.findByText("Fresh session"); expect(signal.aborted).toBe(true);
+    await act(async () => { resolve(listResponse()); });
+    expect(screen.queryByText("QA Passenger")).toBeNull();
+  });
+  it("ignores an old status failure while a new-session write remains pending", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn((_url, init) => init?.method === "PATCH"
+      ? new Promise<Response>(done => pending.push(done)) : Promise.resolve(listResponse())));
+    const view = render(<FeedbackPanel />); let user = await expand();
+    await user.click(screen.getByRole("button", { name: "reviewed" })); expect(pending).toHaveLength(1);
+    fixtures.generation++; view.rerender(<FeedbackPanel />); await screen.findByRole("button", { expanded: false });
+    // The fresh list may retain card expansion across verification.
+    if (screen.queryByRole("button", { expanded: false })) user = await expand();
+    await user.click(screen.getByRole("button", { name: "resolved" })); expect(pending).toHaveLength(2);
+    await act(async () => { pending[0](new Response('{"error":"Old session failure"}', { status: 403 })); });
+    expect(screen.queryByText("Old session failure")).toBeNull();
+    expect((screen.getByRole("button", { name: "reviewed" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { pending[1](new Response('{"updated":true,"status":"resolved"}')); });
+    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("does not apply a late status success after verification closes before React cleanup", async () => {
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((_url, init) => init?.method === "PATCH"
+      ? new Promise<Response>(done => { resolve = done; }) : Promise.resolve(listResponse())));
+    render(<FeedbackPanel />); const user = await expand();
+    await user.click(screen.getByRole("button", { name: "reviewed" }));
+    fixtures.generation++;
+    await act(async () => { resolve(new Response('{"updated":true,"status":"reviewed"}')); });
+    if (screen.queryByRole("button", { expanded: false })) await expand();
+    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("accepts the backend's idempotent updated:false acknowledgement", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => init?.method === "PATCH"
+      ? new Response('{"updated":false,"status":"reviewed"}') : listResponse()));
+    render(<FeedbackPanel />); const user = await expand();
+    await user.click(screen.getByRole("button", { name: "reviewed" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
   it.each([false, true])("loads the shared panel through the API (embedded=%s)", async embedded => {
     render(<FeedbackPanel embedded={embedded} />); await screen.findByText("QA Passenger");
     const fetch = vi.mocked(globalThis.fetch); expect(fetch.mock.calls[0][0]).toBe("https://qa.ngrok-free.dev/api/v2/feedback");

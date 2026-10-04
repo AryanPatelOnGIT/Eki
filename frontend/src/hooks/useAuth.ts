@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { beginAuthVerification, notifyAuthReady } from "@/lib/authState";
+import { beginAuthVerification, getAuthVerificationGeneration, notifyAuthReady } from "@/lib/authState";
 import { withTimeout } from "@/lib/promiseTimeout";
 import { apiRequest } from "@/lib/apiClient";
 
@@ -130,6 +130,7 @@ function useAuthState(): AuthContextValue {
           clearTimeout(authTimeout);
           const currentGen = ++generation;
           beginAuthVerification();
+          const verificationGeneration = getAuthVerificationGeneration();
           setUser(null);
 
           if (firebaseUser) {
@@ -145,6 +146,7 @@ function useAuthState(): AuthContextValue {
             const isCurrentAuth = () =>
               !disposed &&
               currentGen === generation &&
+              verificationGeneration === getAuthVerificationGeneration() &&
               auth.currentUser?.uid === firebaseUser.uid;
             setRoleError(null);
 
@@ -378,6 +380,7 @@ function useAuthState(): AuthContextValue {
   }, []);
 
   const logout = useCallback(async () => {
+    let logoutGeneration: number | null = null;
     try {
       const [{ signOut }, { auth }] = await Promise.all([
         import("firebase/auth"),
@@ -385,7 +388,9 @@ function useAuthState(): AuthContextValue {
       ]);
       const signedOutUid = auth.currentUser?.uid;
       beginAuthVerification();
+      logoutGeneration = getAuthVerificationGeneration();
       setUser(null);
+      setLoading(true);
       await signOut(auth);
       if (signedOutUid) {
         window.localStorage.removeItem(`eki:role:${signedOutUid}`);
@@ -403,10 +408,12 @@ function useAuthState(): AuthContextValue {
       clearCollectionCache();
       clearSettingsCache();
       invalidateLiveBusCache();
-      setUser(null);
-      setRoleError(null);
     } catch (error) {
       console.error("Logout failed:", error);
+      if (logoutGeneration !== null && logoutGeneration === getAuthVerificationGeneration()) {
+        setLoading(false);
+        setRoleError("Sign-out could not complete. Reload the page and try again.");
+      }
     }
   }, []);
 

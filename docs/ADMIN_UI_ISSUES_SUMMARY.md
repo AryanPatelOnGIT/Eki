@@ -62,6 +62,7 @@ The authenticated user was published to React state before the first App Check t
 - Authentication waits for App Check and role verification before publishing the signed-in user and opening protected readiness; readiness resets on account changes. Timeouts never grant readiness.
 - Firestore listeners therefore start only after authentication and App Check are ready.
 - If App Check fails, the app does not publish a partially verified user and show a misleading Firestore permission error.
+- Sign-out closes readiness immediately and invalidates pending role verification. Failed sign-out keeps protected content hidden and offers reload recovery.
 
 **Relevant files**
 
@@ -96,7 +97,7 @@ The feedback screen read the sensitive Firestore `feedbacks` collection directly
 - Added an admin-protected `GET /api/v2/feedback` endpoint.
 - The backend reads and serializes the latest 200 feedback records with the Admin SDK.
 - The Admin UI now loads feedback through that endpoint using the Firebase ID token.
-- Standalone and embedded feedback views use the shared panel, validate list responses, abort stale reads, and hide previous-account data. Status changes update the local list only after a valid acknowledgement from the admin-protected PATCH.
+- Standalone and embedded feedback views use the shared panel, validate list responses, abort stale reads and writes, and hide previous-session data even when the same account is verified again. Status changes update the local list only after a valid acknowledgement from the admin-protected PATCH; old completions cannot clear a new request's loading or error state.
 - Firestore rules remain restricted to `allow read: if isAdmin();`; no public access was added.
 
 ## 4. Settings save shows `Failed to fetch`

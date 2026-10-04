@@ -6,13 +6,16 @@ import { beginAuthVerification, waitForAuth } from "@/lib/authState";
 type TestUser = { uid: string; getIdTokenResult: () => Promise<{ claims: { role: string } }> };
 const mocks = vi.hoisted(() => ({
   callback: null as null | ((user: TestUser | null) => Promise<void>),
-  auth: { currentUser: null as TestUser | null }, check: vi.fn(), observe: vi.fn(),
+  auth: { currentUser: null as TestUser | null }, check: vi.fn(), observe: vi.fn(), signOut: vi.fn(),
 }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: mocks.auth, googleProvider: {} }));
 vi.mock("@/lib/firebaseAppCheck", () => ({ ensureAppCheck: mocks.check }));
+vi.mock("@/hooks/useCollection", () => ({ clearCollectionCache: vi.fn() }));
+vi.mock("@/hooks/useSettings", () => ({ clearSettingsCache: vi.fn() }));
+vi.mock("@/lib/liveBusStore", () => ({ invalidateLiveBusCache: vi.fn() }));
 vi.mock("firebase/auth", () => ({
   onAuthStateChanged: mocks.observe, setPersistence: async () => {}, browserLocalPersistence: {},
-  getRedirectResult: async () => null, signInWithPopup: vi.fn(), signInWithRedirect: vi.fn(), signOut: vi.fn(),
+  getRedirectResult: async () => null, signInWithPopup: vi.fn(), signInWithRedirect: vi.fn(), signOut: mocks.signOut,
 }));
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const user = (uid: string): TestUser => ({ uid, getIdTokenResult: async () => ({ claims: { role: "admin" } }) });
@@ -24,6 +27,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 async function mount() { const hook = renderHook(() => useAuth(), { wrapper: AuthProvider }); await waitFor(() => expect(mocks.callback).not.toBeNull()); return hook; }
 describe("verified auth publication", () => {
+  it("keeps pending verification from republishing access during sign-out", async () => {
+    const check = deferred(), signOut = deferred(); mocks.check.mockReturnValue(check.promise); mocks.signOut.mockReturnValue(signOut.promise);
+    const hook = await mount(); const account = user("admin"); mocks.auth.currentUser = account;
+    let pending!: Promise<void>, logout!: Promise<void>;
+    await act(async () => { pending = mocks.callback!(account); await Promise.resolve(); });
+    await act(async () => { logout = hook.result.current.logout(); await Promise.resolve(); });
+    await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce());
+    await act(async () => { check.resolve(); await pending; });
+    expect(hook.result.current.user).toBeNull();
+    await act(async () => { signOut.resolve(); mocks.auth.currentUser = null; await mocks.callback!(null); await logout; });
+  });
+  it("shows recovery when Firebase sign-out fails instead of leaving a silent closed gate", async () => {
+    const hook = await mount(); const account = user("admin"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    mocks.signOut.mockRejectedValue(new Error("Sign-out unavailable"));
+    await act(async () => { await hook.result.current.logout(); });
+    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loading).toBe(false);
+    expect(hook.result.current.roleError).toContain("Sign-out could not complete");
+  });
   it("does not publish cached/admin identity or open readiness before App Check", async () => {
     const check = deferred(); mocks.check.mockReturnValue(check.promise); localStorage.setItem("eki:role:admin", "admin");
     const hook = await mount(); const opened = vi.fn(); void waitForAuth().then(opened);
