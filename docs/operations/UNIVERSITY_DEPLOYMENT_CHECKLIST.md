@@ -1,6 +1,6 @@
 # University handover checklist
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 This document separates university-owned production work from the student's
 local professor demonstration.
@@ -20,7 +20,10 @@ local professor demonstration.
   beyond that scale. The WAF provides the authoritative global cap (issue #28).
   Configure the load balancer to fail over on non-200
   `/health` (`/health` returns 200 only while both Firestore and RTDB probes
-  pass); the Firestore worker lease keeps lifecycle work single-leader across
+  are fresh and pass; RTDB must return a true connected snapshot). Configure
+  container restart/liveness probes on `/live`, which stays 200 while Firebase
+  is degraded. Do not restart healthy processes merely because a dependency
+  is unavailable. The Firestore worker lease keeps lifecycle work single-leader across
   replicas, so failover must not duplicate lifecycle transitions.
 - [ ] Use Workload Identity or Secret Manager for server credentials; never
   store service-account JSON or secrets in the repository or firmware build

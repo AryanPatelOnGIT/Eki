@@ -217,7 +217,12 @@ healthProbeTimer.unref();
 
 // Return only cached readiness publicly, so load balancers can probe the
 // service without learning internal dependency, telemetry, or failure data.
+app.get("/live", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.status(200).json({ status: "alive" });
+});
 app.get("/health", (_req, res) => {
+  res.set("Cache-Control", "no-store");
   const state = health.snapshot();
   res.status(state.ready ? 200 : 503).json({
     status: state.ready ? "ok" : "degraded",
@@ -228,6 +233,7 @@ app.get("/health", (_req, res) => {
 // the same cached probes as /health, so monitoring cannot amplify billable
 // Firebase reads.
 app.get("/api/health", requireAdmin, (_req, res) => {
+  res.set("Cache-Control", "no-store");
   const telemetry = getHttpsTelemetryStatus();
   const routeProcessing = getRouteProcessingStatus();
   const backgroundTasks = backgroundFailures.snapshot();

@@ -1,6 +1,6 @@
 # CI, deployment, and release guide
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 This document explains what the repository automation verifies, what it deploys,
 and which production actions still belong to the university operations team.
@@ -27,7 +27,8 @@ The workflow performs:
 6. Runtime dependency audit plus a full development-tooling dependency audit.
 7. Backend Docker image build and smoke boot. A degraded `503 /health` is
    expected with placeholder Firebase configuration and proves the container
-   starts and exposes the load-balancer contract.
+   starts and exposes the load-balancer contract. The same smoke requires
+   `200 /live` with `status: alive` and checks Docker uses that liveness URL.
 8. Native firmware tests, development and legacy journal ESP32 compilation, and a secure firmware
    compilation using an ephemeral CI-only signing key. CI must never produce a
    fleet artifact or handle the university production key.

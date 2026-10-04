@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -11,11 +11,12 @@ Base path is the deployed backend origin. JSON request bodies are strict and lim
 
 ## Quick start
 
-Use the backend origin without an `/api` suffix. The only public endpoint is
-the cached health probe:
+Use the backend origin without an `/api` suffix. Public probes separate
+dependency readiness from process liveness:
 
 ```bash
 curl -i https://api.example.edu/health
+curl -i https://api.example.edu/live
 ```
 
 Browser endpoints use a Firebase ID token. The frontend obtains that token
@@ -54,7 +55,7 @@ available during the rollout.
 
 | Area | Endpoints | Authentication |
 |---|---|---|
-| Health | `GET /health`; `GET /api/health` | Public readiness; admin diagnostics |
+| Health | `GET /health`; `GET /live`; `GET /api/health` | Public readiness/liveness; admin diagnostics |
 | Live buses | `GET /api/buses`, `GET /api/buses/:busId` | Authenticated |
 | Device ingestion/update | `POST /api/devices/:deviceId/telemetry`, `POST /api/devices/:deviceId/diagnostics`, `GET /api/devices/:deviceId/firmware` | Device credential |
 | Device administration | `GET /api/devices/:deviceId/diagnostics`, `PUT /api/devices/:deviceId`, `POST /api/devices/:deviceId/disable` | Admin |
