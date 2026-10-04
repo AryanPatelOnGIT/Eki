@@ -13,6 +13,8 @@ interface RouteTimelineSheetProps {
   walkMinutesToTarget?: number;
   preview?: boolean;
   currentStopIndex?: number; // Authoritative index from driver/ESP32 via RTDB
+  aggregateArrivals?: boolean;
+  geometryUnavailable?: boolean;
 }
 
 export default function RouteTimelineSheet({
@@ -23,6 +25,8 @@ export default function RouteTimelineSheet({
   walkMinutesToTarget,
   currentStopIndex,
   preview = false,
+  aggregateArrivals = false,
+  geometryUnavailable = false,
 }: RouteTimelineSheetProps) {
   const [isOpen, setIsOpen] = useState(false);
   if (!route || !route.stops || route.stops.length === 0) return null;
@@ -41,6 +45,12 @@ export default function RouteTimelineSheet({
       <div className="text-[11px] font-semibold mb-5 text-center" style={{ color: "var(--text-ghost)" }}>
         {route.name}
       </div>
+      {!preview && (aggregateArrivals || geometryUnavailable) && (
+        <p role="status" className="text-xs mb-4" style={{ color: "var(--text-secondary)" }}>
+          {aggregateArrivals && "Earliest arrival across buses. Select a bus to see its stop progress. "}
+          {geometryUnavailable && "Road geometry unavailable for some buses. Their arrival estimates are unavailable."}
+        </p>
+      )}
 
       {/* Timeline */}
       <div className="relative pl-7 pb-4">
@@ -60,7 +70,7 @@ export default function RouteTimelineSheet({
             isPast = index < currentStopIndex;
           } else {
             // Fallback: infer from ETA engine (stop has no ETA = bus has passed it)
-            isPast = hasEtaData && etaMinutes === undefined;
+            isPast = !aggregateArrivals && !geometryUnavailable && hasEtaData && etaMinutes === undefined;
           }
 
           // Dim passed stops. Never dim future stops just because they're after the user's target.

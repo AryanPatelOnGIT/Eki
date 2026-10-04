@@ -31,8 +31,35 @@ beforeEach(() => {
   state.arrivals.mockReturnValue({ b: Date.now() + 60_000 });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
-const directed = routeInRideDirection(route, "forward");
+const directed = { ...routeInRideDirection(route, "forward"), polyline: "_ekkC_omvLo}@o}@", polylineQuality: "HIGH_QUALITY" as const };
 describe("passenger map device and ride contexts", () => {
+  it("does not use the first bus's progress in a multi-bus view", async () => {
+    state.snapshot = {
+      bus: { ...fixtureBus("forward"), currentStopIndex: 1 },
+      second: { ...fixtureBus("forward", "qa-session-2", "qa-bus-2"), currentStopIndex: 0 },
+    };
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Route Timeline" }));
+    expect(screen.queryByText("Next Stop")).toBeNull();
+    expect(screen.getByText(/Earliest arrival across buses/)).toBeTruthy();
+    act(() => state.listener?.({ second: state.snapshot.second, bus: state.snapshot.bus }));
+    expect(screen.queryByText("Next Stop")).toBeNull();
+  });
+  it("withholds road ETA for missing, corrupt, or untrusted geometry", async () => {
+    const { rerender } = render(<PassengerMap route={{ ...directed, polyline: "" }} targetStop={route.stops[1]} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Route Timeline" }));
+    expect(screen.getByText(/Road geometry unavailable/)).toBeTruthy();
+    expect(state.arrivals).not.toHaveBeenCalled();
+    rerender(<PassengerMap route={{ ...directed, polyline: "~" }} targetStop={route.stops[1]} />);
+    expect(state.arrivals).not.toHaveBeenCalled();
+    rerender(<PassengerMap route={{ ...directed, polylineQuality: undefined }} targetStop={route.stops[1]} />);
+    expect(state.arrivals).not.toHaveBeenCalled();
+  });
+  it("withholds a rerouted bus's ETA until its own geometry arrives", () => {
+    state.snapshot = { bus: { ...fixtureBus("forward"), routeSource: "dynamic-reroute", routeVersion: 2 } };
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    expect(state.arrivals).not.toHaveBeenCalled();
+  });
   it("renders stopped device coordinates and configured stops without computing ride ETAs or progress", async () => {
     state.snapshot = { bus: { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, speed: 0 } };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview selectedBusKey="bus:qa-route:qa-bus" />);
