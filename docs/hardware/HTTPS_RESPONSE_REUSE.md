@@ -1,5 +1,7 @@
 # Telemetry HTTPS response reuse
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 ## Scope
 
 This change hardens the existing persistent telemetry connection on the current

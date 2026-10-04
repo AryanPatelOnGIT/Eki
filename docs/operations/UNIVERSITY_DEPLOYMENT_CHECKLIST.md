@@ -1,6 +1,6 @@
 # University handover checklist
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This document separates university-owned production work from the student's
 local professor demonstration.

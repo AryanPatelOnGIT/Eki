@@ -1,12 +1,21 @@
 # Eki backend
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 The TypeScript/Express backend is the authority for hardware ingestion, fleet/route/device commands and ordered ride lifecycle. It uses Firebase Admin with service-account JSON or Application Default Credentials, writes current data to RTDB and durable state to Firestore, and elects one background worker with a Firestore lease.
 
 ```powershell
-npm install
+npm ci
 Copy-Item backend/.env.example backend/.env
+```
+
+For local use, change the copied values to `NODE_ENV=development`, `PORT=4000`
+and `CORS_ORIGIN=http://localhost:3000`. Fill the development RTDB URL and
+Firebase credentials; keep `RETENTION_SWEEPER_ENABLED=false`. The template
+uses production mode and port `8080`, and production intentionally refuses
+startup while retention is disabled.
+
+```powershell
 npm run dev --workspace=backend
 ```
 
@@ -17,6 +26,25 @@ npm run lint --workspace=backend
 npm run test --workspace=backend
 npm run build --workspace=backend
 ```
+
+Check `http://localhost:4000/health`: `200`/`status: ok` means Firestore and
+RTDB probes are ready; `503`/`status: degraded` means dependency readiness is
+failing. The admin-only `/api/health` contains detailed diagnostics.
+
+## API and jobs
+
+- `bootstrap.ts` initializes optional instrumentation before the server.
+- Device routes authenticate per-device credentials and preserve current plus
+  previous telemetry schemas during fleet rollout.
+- Browser HTTP routes verify Firebase ID tokens; privileged routes additionally
+  check trusted claims and assignments. Admin feedback reads use
+  `GET /api/v2/feedback`, returning at most 200 timestamp-ordered records.
+- The lease-owned worker advances ordered ride progress and runs recovery,
+  privacy and retention. Terminal deletion is resumable; active ownership and
+  current geometry pointers are protected.
+- `npm run retention:rtdb --workspace=backend -- --dry-run` inventories RTDB
+  retention without mutation. Follow [retention](../operations/RTDB_RETENTION.md)
+  before applying cleanup or enabling legacy-tree retirement.
 
 ## OpenTelemetry diagnostics
 

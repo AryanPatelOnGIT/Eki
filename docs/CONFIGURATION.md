@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -35,11 +35,19 @@ runtime secret/configuration system.
 | `WORKER_ENABLED` | No | Enables the Firestore-lease background worker; default `true` | Keep enabled for lifecycle recovery, abandonment and retention jobs |
 | `WORKER_INSTANCE_ID` | No | Stable diagnostic identity for a runtime instance | Do not use credentials or personal data |
 | `ABANDONED_RIDE_THRESHOLD_HOURS` | No | Age before conservative abandoned-ride reconciliation; minimum `1`, default `12` | Obtain privacy/operations approval before changing it |
-| `RETENTION_SWEEPER_ENABLED` | Required in production | Must be exactly `true`; development/test remain disabled when omitted | Production refuses to start until the retention schedule is explicitly enforced |
+| `RETENTION_SWEEPER_ENABLED` | Required in production | Explicit `true` after trimming/case normalization; development/test remain disabled when omitted | Production refuses to start until the retention schedule is explicitly enforced |
+| `LEGACY_RTDB_RETIRED` | No | Enables retired RTDB `users`/`messages` cleanup only after migration verification; default `false` | Review [retention](operations/RTDB_RETENTION.md) and inventory with dry run first |
+| `HTTPS_INGRESS_DEVICES_PER_IP` | No | Largest expected fleet behind one public IP; default `100`, maximum `100000` | Telemetry IP pool allows 15 requests/device/10 s; diagnostics and firmware have separate 2/device/10 s pools; all are replica-sharded |
 | `RIDE_SESSION_RETENTION_DAYS` | No | Terminal ride-session retention period; default `180` | Set `180` for the approved ride-history schedule; measured from `endTime` |
 | `FEEDBACK_RETENTION_DAYS` | No | Feedback retention period | Must match privacy approval |
 | `COMPLETED_TRIP_RETENTION_DAYS` | No | Completed-trip projection retention period; default `180` | Set `180` for the approved ride-history schedule; measured from `completedAt` |
-| `OPERATION_LOG_RETENTION_DAYS` | No | Operational log retention period | Avoid putting secrets or personal data in logs |
+| `OPERATION_LOG_RETENTION_DAYS` | No | Operational record retention; default `90` days | Avoid putting secrets or personal data in logs |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Optional | An endpoint enables backend instrumentation | Keep exporter authorization in runtime secrets; local stack uses port `4318` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Optional | Exporter authorization header | Secret; never commit or print it |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Optional | Template uses `http/protobuf` | Match the receiving Collector |
+| `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` | Optional | Service identity and bounded environment/version attributes | Do not include user/device secrets or personal identifiers |
+| `OTEL_SDK_DISABLED` | Optional | `true` disables instrumentation | Use as an exporter kill switch |
+| `LOG_LEVEL` | Optional | Structured application logging level; template `info` | `debug`, `info`, `warn` or `error` |
 
 The exact defaults and comments are maintained in [`backend/.env.example`](../backend/.env.example).
 Configuration is loaded before Firebase initialization; changing it requires a
@@ -54,7 +62,6 @@ into the browser and should be treated as public identifiers.
 | Variable | Required | Meaning | Safe guidance |
 |---|---|---|---|
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | Yes | Browser Firebase API identifier | Restrict by host and Firebase APIs; it is not a service-account secret |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Yes | Firebase Auth domain | Set to `<project>.web.app` or custom domain. On Firebase Hosting, the client normalizes this to same-origin to prevent Safari/Firefox storage-partitioning failures |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Yes | Firebase Auth domain | Use the matching environment. The project's primary Firebase Hosting site resolves to its live hostname at runtime. Set this explicitly to the frontend hostname for secondary sites and custom domains, and add `https://<frontend-hostname>/__/auth/handler` to the Google OAuth client's authorized redirect URIs. |
 | `NEXT_PUBLIC_FIREBASE_DATABASE_URL` | Yes | Browser RTDB URL | Use the matching environment |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Yes | Firebase project identifier | Do not mix staging and production projects |
@@ -65,7 +72,8 @@ into the browser and should be treated as public identifiers.
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Maps UI | Browser Maps JavaScript key | Restrict by approved hostnames and Maps APIs |
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | Maps UI | Cloud map style identifier | Use the matching environment |
 | `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY` | Production/App Check | Firebase App Check browser site key | Use the matching environment; enforcement is configured in Firebase |
-| `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` | Local demo only | Registered App Check debug token | Keep commented out in production and never commit it |
+| `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` | Local development only | Registered Firebase App Check debug token; `true` requests a generated debug token that still requires registration | Ignored by production runtime; never include it in a production build or commit it |
+| `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced development only | Explicit `true` opt-out when no provider key/debug token is configured and `NODE_ENV=development` | Does not disable Firebase Console enforcement; ignored in test/staging/production modes |
 | `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced local development only | Set `true` to explicitly skip missing-key initialization locally | Use only after confirming enforcement is disabled in the local Firebase project; ignored in production; prefer a registered debug token for enforced projects |
 | `NEXT_PUBLIC_BACKEND_URL` | Yes | HTTPS backend origin used by REST mutations | Use an origin only—no `/api` suffix, path or query string |
 | `NEXT_PUBLIC_SERVICE_TIME_ZONE` | Optional | Display timezone; default template is `Asia/Kolkata` | Use an IANA timezone name |
@@ -82,6 +90,34 @@ Optionally set `RTDB_EXPECTED_REGION` to the approved region. The preflight
 prints only the verified region and fails if the two instance hosts differ;
 it never prints configuration URLs or credentials. See the
 [RTDB region decision](design/RTDB_REGION_LATENCY_DECISION.md).
+
+## Local App Check and Auth setup
+
+Choose one App Check path for the development build:
+
+| Firebase project | Frontend configuration |
+|---|---|
+| Enforced, provider works on your hostname | Configure `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY`; register the hostname for the provider |
+| Enforced, local debug workflow | Register a debug token in Firebase Console; set it only in ignored `.env.local`. The debug provider also works without a site key |
+| Unenforced development project | With no site key/debug token, set `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED=true`; this works only when `NODE_ENV=development` |
+| Staging/production | Valid provider key and enforced Firebase services; no local opt-out or debug token |
+
+Do not leave a placeholder site key active while expecting the missing-key
+opt-out: a configured key selects the provider path. Restart the frontend after
+editing these values.
+
+`ensureAppCheck()` waits up to 10 seconds for a valid first token. Authentication
+then verifies the role before publishing the user and enabling protected
+Firestore/RTDB listeners. Provider, token, role and timeout failures keep access
+closed. Account changes and sign-out invalidate earlier pending verification.
+
+For Firebase Auth, the resolver uses the browser hostname automatically only
+on the project's primary `<project>.web.app`/`<project>.firebaseapp.com` sites.
+Configure custom/secondary Hosting domains explicitly, including authorized
+domains and the OAuth redirect URI `https://<frontend-host>/__/auth/handler`.
+Do not point the Auth helper at a frontend tunnel that cannot serve Firebase's
+`/__/auth/` helper routes. Keep the Hosting CSP auth frame policy generated by
+the build. See [domain setup](operations/DNS_AND_DOMAINS.md).
 
 ## Firmware configuration
 
@@ -133,7 +169,7 @@ network controls remain critical.
 | Backend credentials | Local ADC or ignored `.env` | Secret manager/GitHub environment | Workload Identity or Secret Manager |
 | CORS | Local frontend origin plus configured test origins | Exact staging frontend origin(s) | Exact approved university frontend origin(s) |
 | App Check | Debug token only when needed | Enforced after validation | Enforced and monitored |
-| Retention sweeper | Disabled | Explicitly approved test schedule | Enabled only with privacy/legal approval |
+| Retention sweeper | Disabled | Explicitly approved test schedule | Explicitly enabled and privacy-approved; startup requires enforcement |
 | Device firmware | `esp32dev` for bench work | Signed fleet build after acceptance | Signed, protected device-specific artifact only |
 | Deployment | `npm run dev` | CI verified build and controlled deploy | Approval-gated deployment plus backend/runtime rollout |
 
@@ -167,10 +203,3 @@ After changing configuration:
 5. For device changes, build the intended PlatformIO environment, verify the
    device-specific artifact in the controlled process, and perform the physical
    acceptance checks in [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md).
-
-
-`HTTPS_INGRESS_DEVICES_PER_IP` defaults to 100 and must be a positive integer at most 100000.
-Set it to the largest fleet sharing a public IP, allowing for uneven replica traffic.
-Telemetry gets 15 requests per configured device per 10 seconds; diagnostics and
-firmware each get an independent 2 requests/device/10 seconds. All three IP pools
-are divided by `RATE_LIMIT_SHARD_FACTOR`. Verified device quotas are unchanged.

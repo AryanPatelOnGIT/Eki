@@ -1,5 +1,9 @@
 # Testing issue and PR cross-check — 3 October 2026
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Scope: every issue numbered 191 or higher except 204; merge review for actual
 PRs numbered 210–226. Issue numbers and PR numbers share a GitHub sequence:
 the five actual PRs in that interval are 210, 215, 222, 223 and 226. All five

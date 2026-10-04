@@ -1,6 +1,6 @@
 # My live bus demo runbook
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This is the checklist for the student operating the professor demonstration.
 Complete every blocking item before inviting passengers onto the bus.
@@ -27,14 +27,14 @@ Record the final non-secret values:
 | Firebase project | |
 | Bus ID | |
 | Route ID | |
-| Driver email | |
+| Driver record ID (keep account details private) | |
 | Device ID | |
 | HTTPS backend URL | |
 
 ## 2. Prepare the laptop backend
 
-- [ ] Install dependencies with `npm install`.
-- [ ] Fill `backend/.env` and `frontend/.env.local`; do not commit either file.
+- [ ] Install dependencies with `npm ci`.
+- [ ] Fill the ignored environment files using [local setup](../GETTING_STARTED.md#local-development); set backend development mode/port and configure App Check before sign-in.
 - [ ] Keep `AUTH_REVOCATION_CACHE_MS=15000` for the demo; `0` is a
   troubleshooting option that adds a Firebase Auth network round trip to every
   protected backend action.
@@ -76,8 +76,7 @@ ngrok http 4000 --url https://<assigned-domain>
 
 Prefer the deployed Firebase Hosting frontend for professor phones. If the
 laptop frontend must be exposed, provision a **second eligible stable HTTPS
-domain** to `http://localhost:3000`; the free ngrok account's single assigned
-development domain should remain dedicated to the backend:
+domain** to `http://localhost:3000`; reserve the account's assigned backend domain for telemetry:
 
 - [ ] Put the backend HTTPS URL in `NEXT_PUBLIC_BACKEND_URL` before starting
   the frontend.

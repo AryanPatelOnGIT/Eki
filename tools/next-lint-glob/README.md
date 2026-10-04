@@ -1,5 +1,7 @@
 # Next lint directory matching
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Issue #234: Next's lint plugin imports `fast-glob` only for
 `globSync(rootDir, { onlyDirectories: true })`. That dependency introduced the
 unpatched `braces` recursion advisory through `micromatch`.

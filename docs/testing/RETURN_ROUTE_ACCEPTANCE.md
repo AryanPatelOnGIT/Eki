@@ -1,5 +1,9 @@
 # Return journeys, long routes, and live reroutes
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Implemented on 2026-09-12 in the working tree based on `d8d69fd`.
 
 The missing tracking improvements from audited snapshot `965d376` were restored before correcting the remaining defects. This includes nullable direction handling, pending-match marker retention, smooth marker movement, adaptive GNSS filtering, and ambiguity handling.
@@ -54,7 +58,6 @@ This work does not establish a real-drive latency percentile or GPS accuracy gua
 
 Before fleet release, drive the full configured route and its return, stop briefly at the terminal, and check that direction, stop order, geometry, and ETA switch together. Include close stops, a wrong turn, parallel roads, two buses on different paths, lost connectivity, recovery, and starting a new shift at each endpoint. Capture sample/send/server/database/listener/render timing with the existing trace tooling, then report p50/p95/p99 and error rates. Singapore staging remains a separately measured infrastructure change.
 
-
 ## Follow-up network review
 
 Stopped and moving telemetry both use a 1-second heartbeat. TLS handshake now has
@@ -82,7 +85,6 @@ checks remain open. No deployment, tunnel replacement or device flashing was
 performed; those operational checks cannot be inferred from passing unit tests.
 
 Follow-up verification: 434 backend tests passed (7 skipped), 23 native firmware tests passed; backend build/lint and ESP32 development image build passed.
-
 
 ## Freeze-path follow-up
 
@@ -115,7 +117,6 @@ trace are required to measure actual freeze duration and validate TLS/worker mem
 | Reroute blocks matching or overwrites next trip | Independent queue and version/session guards; integration tests |
 | Real drive / real GNSS replay / Singapore percentiles | Open: live environment and physical trace unavailable |
 | Zero freezes under network failure | Not established; outage cannot deliver live positions |
-
 
 ## Superseding live verification (2026-09-13)
 

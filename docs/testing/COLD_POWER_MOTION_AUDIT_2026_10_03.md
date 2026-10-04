@@ -1,5 +1,9 @@
 # Cold power and moving-marker follow-up — 2026-10-03
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Later acceptance: [physical power cuts, installed journal firmware, merged CI,
 phone-width Google Maps and remaining gates](TESTING_ACCEPTANCE_2026_10_03.md).
 The measurements and pending statements below describe this earlier capture.

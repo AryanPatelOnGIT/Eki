@@ -1,11 +1,14 @@
 # HTTP contract and compatibility checks
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
 human-oriented guide. The contract includes #197 compatibility, #193
-ride-session resources and #194 operation resources: 39 original method/path handlers, six compatible v2 aliases, eight ride-session resources and six operation resources, for
-59 operations. It does not claim those aliases are already deployed. Reconcile
-against the target branch after #197 merges. Endpoint renaming alone does not
+ride-session resources, #194 operation resources and the admin feedback list.
+Use `npm run verify:openapi` for the actual operation count and registered-route
+coverage. These routes are implemented on `testing`; verify deployment before
+migrating an independently deployed client. Endpoint renaming alone does not
 improve latency; measure only changes in response shape, caching, or transport.
 
 Run from the repository root:
@@ -86,7 +89,11 @@ and App Check configuration for SDK reads apply independently of HTTP auth.
 | Firestore `settings/global` | Service configuration and announcements | SDK listener snapshot/reconnect |
 | Firestore `routes` | Route configuration allowed by security rules | SDK listener snapshot/reconnect |
 | Firestore `ride_sessions/{id}/messages` | Authorized session chat | SDK listener reconnect; writes use idempotent HTTP message creation |
-| Firestore ride history and feedback queries | User/admin views constrained by query shape and rules | SDK listener reconnect; writes remain backend-authoritative |
+| Firestore ride history queries | User/admin views constrained by query shape and rules | SDK listener reconnect; writes remain backend-authoritative |
+
+Admin feedback review uses bounded `GET /api/v2/feedback` HTTP reads, rather
+than a browser Firestore feedback listener. Both feedback views share the same
+panel; old-session reads/writes are aborted or ignored on auth changes.
 
 No application-owned SSE/WebSocket/GraphQL/webhook interface is introduced.
 Transport decisions and measurements remain #195. Ride-session compatibility
@@ -103,7 +110,7 @@ is specified by #193; operation contracts extend #172 under #194.
 | `PATCH /api/feedback/{feedbackId}/status` | `PATCH /api/v2/feedback/{feedbackId}` | Same status-only object and server audit |
 | `POST /api/privacy/deletion-request` | `POST /api/v2/privacy-deletion-requests` | Token-derived queue entry; v2 accepts absent body or `{}` only |
 
-1. Review/merge #197, deploy the compatible backend first, and smoke-test both
+1. Deploy the compatible backend first, and smoke-test both
    legacy and v2 paths with their actual role/credential classes.
 2. Only after compatible deployment, move browser callers in the #192 follow-up.
    Keep legacy paths throughout the documented compatibility window and rollback.
