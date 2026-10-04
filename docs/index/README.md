@@ -1,71 +1,85 @@
-# Eki documentation map
+# Eki documentation index
 
-Repository-wide documentation refresh: 2026-09-14. Technical contracts below
-are maintained against the current source, rules, workflows, and configuration
-templates. Historical decision records remain immutable except for links to
-the current source of truth.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
-Start with [Getting started and operating guide](../GETTING_STARTED.md) if you
-are new to the project. It explains the roles, local setup, ride lifecycle,
-common workflows, verification commands, troubleshooting, and the public-safe
-documentation boundary.
+## New to the project
 
-Read these technical references in order when onboarding:
+1. Read [getting started](../GETTING_STARTED.md) for setup, roles and workflows.
+2. Fill environment files using [configuration](../CONFIGURATION.md).
+3. Read the [architecture summary](../design/ARCHITECTURE.md).
+4. Open the frontend/backend/hardware guide for the component you are changing.
+5. Use [test strategy](../testing/TEST_STRATEGY.md) and [contributing](../../CONTRIBUTING.md)
+   before opening a PR against the intended branch.
 
-1. [High-level design](../design/HIGH_LEVEL_DESIGN.md) — system boundaries, decisions, trust and end-to-end flows.
-2. [Environment and configuration](../CONFIGURATION.md) — all supported variables, environment separation, and secret handling.
-3. [Low-level design](../design/LOW_LEVEL_DESIGN.md) — backend/frontend/firmware internals and module catalog.
-4. [Firebase data model](../data/FIREBASE_DATA_MODEL.md) — every Firestore collection, RTDB path, field and relationship.
-5. [Hardware telemetry](../hardware/HARDWARE_TELEMETRY.md) — wiring, firmware state machine, timing, latency and failure handling.
-6. [Backend overview](../backend/README.md) — local setup, configuration, verification and device provisioning.
-7. [Backend API](../backend/API.md) — endpoints, authentication, bodies, responses and status codes.
-8. [Test strategy](../testing/TEST_STRATEGY.md) — automated suites, simulations and physical acceptance matrix.
-9. [Reroute latency simulation](../testing/REROUTE_SIMULATION_RESULTS.md) — deterministic adaptive-confirmation and bounded-latency evidence.
-10. [Production readiness audit](../operations/PRODUCTION_READINESS_AUDIT.md) — verified outcome, fixes and residual risks.
-11. [Architecture risk register](../operations/ARCHITECTURE_RISK_REGISTER.md) — active source, firmware and deployment risks with closure criteria.
-12. [Telemetry state partition decision](../design/TELEMETRY_STATE_PARTITION_DECISION.md) — contention measurement gate and compatibility contract for any future split.
-13. [RTDB region latency decision](../design/RTDB_REGION_LATENCY_DECISION.md) — Singapore candidate evaluation, latency measurements, and staged migration gate.
+The maintained guides reflect `testing` at `abd45a6` (4 October 2026), including
+App Check/auth readiness, admin feedback HTTP access, sign-out protections,
+passenger in-app selectors, cold-power checkpoints and retention recovery.
+Deployment availability must be checked separately.
 
-Operational documents:
+## Current technical references
 
-- [DNS, custom domains, and SSL/TLS](../operations/DNS_AND_DOMAINS.md)
-- [Live demo runbook](../operations/LIVE_DEMO_RUNBOOK.md)
-- [Telemetry ingestion load test](../operations/TELEMETRY_INGESTION_LOAD_TEST.md)
-- [University deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
-- [Telemetry latency baseline](../operations/TELEMETRY_LATENCY_BASELINE.md)
-- [Realtime transport decision](../design/REALTIME_TRANSPORT_DECISION.md)
-- [Realtime transport measurements](../operations/REALTIME_TRANSPORT_MEASUREMENTS.md)
-- [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md)
-- [Storage architecture summary](../data/STORAGE_ARCHITECTURE.md)
-- [Security policy](../repository/SECURITY.md)
+| Document | Covers |
+|---|---|
+| [HTTP contract and compatibility checks](../api/HTTP_CONTRACT.md) | OpenAPI validation and compatibility |
+| [Operation resources (#194)](../api/OPERATION_RESOURCES.md) | Durable admin operation states and retries |
+| [Ride-session migration (#193)](../api/RIDE_SESSION_CONTRACT.md) | Versioned ride-session lifecycle and idempotency |
+| [Firebase Firestore and RTDB data model](../data/FIREBASE_DATA_MODEL.md) | Firestore/RTDB fields, access and relationships |
+| [Storage architecture summary](../data/STORAGE_ARCHITECTURE.md) | Storage responsibilities and retention overview |
+| [Architecture and lifecycle summary](../design/ARCHITECTURE.md) | Architecture and ride lifecycle summary |
+| [High-level design (HLD)](../design/HIGH_LEVEL_DESIGN.md) | System boundaries and design decisions |
+| [Low-level design (LLD)](../design/LOW_LEVEL_DESIGN.md) | Source modules and runtime behavior |
+| [Realtime transport decision (#195)](../design/REALTIME_TRANSPORT_DECISION.md) | Firebase transport decision and measurement gates |
+| [RTDB region latency decision](../design/RTDB_REGION_LATENCY_DECISION.md) | Recorded region comparison and cutover gate |
+| [Telemetry state partition decision](../design/TELEMETRY_STATE_PARTITION_DECISION.md) | State partition decision and measurement gate |
+| [Cold power-loss recovery](../hardware/COLD_POWER_RECOVERY.md) | Flash checkpoint limits and legacy-board procedure |
+| [Hardware telemetry, latency and failure design](../hardware/HARDWARE_TELEMETRY.md) | Capture, queue, timing and failure handling |
+| [Telemetry HTTPS response reuse](../hardware/HTTPS_RESPONSE_REUSE.md) | Safe telemetry connection reuse |
 
-Testing and recovery reports:
+## Operations
 
-- [Audit status summary](../testing/AUDIT_STATUS_SUMMARY.md)
-- [Stationary readiness report](../testing/STATIONARY_READINESS_REPORT.md)
-- [Non-moving recovery report](../testing/NON_MOVING_RECOVERY_REPORT.md)
-- [Live ESP32 latency result](../testing/LIVE_ESP32_LATENCY_RESULT.md)
-- [Realtime transport evidence audit](../testing/REALTIME_TRANSPORT_EVIDENCE_AUDIT.md)
-- [Postfix stationary trace](../testing/POSTFIX_STATIONARY_TRACE.md)
-- [Return route acceptance](../testing/RETURN_ROUTE_ACCEPTANCE.md)
+| Document | Covers |
+|---|---|
+| [Architecture risk register](../operations/ARCHITECTURE_RISK_REGISTER.md) | Risk status and closure evidence |
+| [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md) | CI checks, branch deployment gates and rollback |
+| [Eki Web App DNS & Domain Setup Guide](../operations/DNS_AND_DOMAINS.md) | Hosting/Auth domains, DNS and certificates |
+| [ESP32 fleet security and provisioning](../operations/HARDWARE_SECURITY_PROVISIONING.md) | Witnessed signing, first boot and fleet security |
+| [My live bus demo runbook](../operations/LIVE_DEMO_RUNBOOK.md) | Demo preparation and recovery checklist |
+| [Local web, phone and ESP32 testing](../operations/LOCAL_TESTING.md) | Laptop, phone and ESP32 test handoff/cleanup |
+| [Stable ngrok tunnel for ESP32 bench testing](../operations/NGROK_TUNNEL.md) | Stable backend tunnel and TLS trust |
+| [Production readiness audit](../operations/PRODUCTION_READINESS_AUDIT.md) | Historical audit; current gates are linked at the top |
+| [Realtime transport measurement runbook](../operations/REALTIME_TRANSPORT_MEASUREMENTS.md) | Watch, payload, reconnect and chat measurement |
+| [RTDB legacy and geometry retention](../operations/RTDB_RETENTION.md) | Dry-run inventory, legacy retirement and geometry cleanup |
+| [Telemetry ingestion load test](../operations/TELEMETRY_INGESTION_LOAD_TEST.md) | Staging load and limiter contention procedure |
+| [Telemetry latency baseline](../operations/TELEMETRY_LATENCY_BASELINE.md) | GNSS-to-marker measurement procedure |
+| [University handover checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md) | Release ownership and production acceptance |
 
-Mirrored package and repository documents:
+## Testing and evidence
 
-- Repository: [overview](../repository/README.md), [contributing](../repository/CONTRIBUTING.md), [code of conduct](../repository/CODE_OF_CONDUCT.md), [security](../repository/SECURITY.md)
-- Backend: [overview](../backend/README.md), [API](../backend/API.md)
-- Frontend: [overview](../frontend/README.md)
-- Hardware: [overview](../hardware/README.md), [include guidance](../hardware/include/README), [library guidance](../hardware/lib/README), [test guidance](../hardware/test/README)
-- GitHub workflow templates: [pull request](../github/PULL_REQUEST_TEMPLATE.md), [bug report](../github/ISSUE_TEMPLATE/bug_report.md), [feature request](../github/ISSUE_TEMPLATE/feature_request.md)
+Start with [the testing index](../testing/README.md). It catalogs every dated
+report, distinguishes stationary/synthetic/physical evidence, and points to
+the remaining acceptance gates. [Test strategy](../testing/TEST_STRATEGY.md)
+owns current commands; historical test counts apply only to their recorded run.
 
-Historical implementation records (kept for decision traceability):
+## Package and repository entry points
 
-- [Ride-history clarity change](../history/admin-ride-history-clarity.md)
-- [In-app ride-history confirmation change](../history/admin-ride-history-in-app-confirmation.md)
+| Area | Documents |
+|---|---|
+| Repository | [Overview](../../README.md), [contributing](../../CONTRIBUTING.md), [security](../../SECURITY.md), [code of conduct](../../CODE_OF_CONDUCT.md) |
+| Backend | [Setup](../../backend/README.md), [API](../../backend/API.md), [resource migration](../../backend/API_RESOURCE_MIGRATION.md), [OpenAPI JSON](../../backend/openapi.json) |
+| Frontend | [Setup and runtime behavior](../../frontend/README.md) |
+| Hardware | [Setup](../../hardware/README.md), [headers](../../hardware/include/README), [native tests](../../hardware/test/README), [key custody](../../hardware/keys/README.md) |
+| Browser fixtures | [Admin access](../../e2e/admin-access/README.md), [passenger/responsive](../../e2e/fixtures/README.md), [motion](../../e2e/motion/README.md) |
+| Lint adapter | [Purpose and upgrade checks](../../tools/next-lint-glob/README.md) |
+| GitHub templates | [PR](../../.github/PULL_REQUEST_TEMPLATE.md), [bug report](../../.github/ISSUE_TEMPLATE/bug_report.md), [feature request](../../.github/ISSUE_TEMPLATE/feature_request.md) |
 
-`design/ARCHITECTURE.md` is the short operational architecture reference; the HLD and LLD are authoritative when more detail is needed.
+## Which copy to edit
 
-Every project-owned Markdown/README document outside `docs/` has a matching copy in the appropriate subfolder here. `backend/src/docsMirror.test.ts` discovers tracked documentation repository-wide and fails if a mirror is missing or stale; expected relative links are adjusted for the mirrored location.
-
-Documents under `docs/` are maintained directly. Before publishing a new
-document, review it for credentials, private infrastructure details, personal
-data, and unredacted operational logs.
+- Documents authored inside `docs/` are maintained there.
+- Every tracked Markdown/README outside `docs/` has a required mirror inside
+  `docs/`. Edit the original, then run `npm run docs:sync`; the mirror test
+  checks content and adjusted relative links.
+- Completed UI implementation plans/debug notes have been consolidated into
+  onboarding, frontend, API and local-testing guides. Distinct dated evidence
+  and architectural decisions remain available.
+- Update the top date/time when editing. Keep original evidence timestamps,
+  commit references and measurements intact. See [contributing](../../CONTRIBUTING.md).

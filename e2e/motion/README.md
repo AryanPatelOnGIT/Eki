@@ -1,5 +1,7 @@
 # Isolated moving-marker simulation
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Run `node node_modules/vite/bin/vite.js --config e2e/motion/vite.config.mts`, then
 open `http://127.0.0.1:3150/?telemetryTrace=1` and click **Run all 12 scenarios**.
 Keep the tab visible; background-tab animation throttling changes results.

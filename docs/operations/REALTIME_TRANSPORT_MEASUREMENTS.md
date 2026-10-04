@@ -1,5 +1,7 @@
 # Realtime transport measurement runbook
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Use with the [transport ADR](../design/REALTIME_TRANSPORT_DECISION.md) for #195.
 Reuse the [telemetry latency baseline](TELEMETRY_LATENCY_BASELINE.md) for serial
 capture, backend health, clock correlation, and sample-to-marker analysis.

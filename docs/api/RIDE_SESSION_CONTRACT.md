@@ -1,8 +1,10 @@
 # Ride-session migration (#193)
 
-Lifecycle decisions recorded before implementation against `b4fa46b`.
-The issue's baseline predates manual interruption: this branch's legacy stop
-command interrupts an early ride; it does not mark a ride completed.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+Current implemented lifecycle contract on `testing`; the original design
+baseline was `b4fa46b`. The legacy stop command interrupts an early ride; it
+does not mark a ride completed. All v2 paths below are under `/api/v2/`.
 
 | Trigger / legacy endpoint | v2 endpoint | Allowed state and transition |
 | --- | --- | --- |

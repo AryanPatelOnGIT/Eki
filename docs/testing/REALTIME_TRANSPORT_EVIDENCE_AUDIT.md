@@ -1,5 +1,9 @@
 # Realtime transport evidence audit (#195)
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Audited on 2026-10-01 against `testing` at `6be2a75`. This report verifies
 existing captures; it does not record a new field experiment or complete #195.
 The transport decision remains to retain Firebase SDK listeners.

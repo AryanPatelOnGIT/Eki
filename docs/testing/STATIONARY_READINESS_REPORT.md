@@ -1,5 +1,9 @@
 # Stationary readiness checks — 2026-09-13
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Baseline: `7614ad5`; latest implementation is above `30a606a` on `testing`.
 
 ## Post-fix RTDB-gap follow-up

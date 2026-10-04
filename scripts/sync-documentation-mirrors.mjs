@@ -37,6 +37,8 @@ function expectedMirror(source) {
     content = content
       .replaceAll("](docs/", "](../")
       .replaceAll("](backend/", "](../backend/")
+      .replaceAll("](frontend/", "](../frontend/")
+      .replaceAll("](LICENSE)", "](../../LICENSE)")
       .replaceAll("](hardware/", "](../hardware/");
   } else if (!source.includes("/")) {
     content = content.replaceAll("](docs/", "](../");

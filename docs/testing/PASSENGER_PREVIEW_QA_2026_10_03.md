@@ -1,5 +1,9 @@
 # Passenger preview and operator controls audit — 2026-10-03
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 This follows the full feature, RTDB field-contract and cold-power audits already included in PR #226. It changes the earlier availability-only card behavior: an online vehicle is inspectable before service starts, even when stationary. It does not create a ride, choose a travel direction, enable boarding/chat or invent an ETA. No live records were deleted, service started, firmware flashed or settings saved during this follow-up.
 
 ## Confirmed findings and fixes
@@ -54,4 +58,3 @@ Run the fixture as described in `e2e/fixtures/README.md`. Choose Device for stat
 Map framing follows [Google Maps fitBounds and padding](https://developers.google.com/maps/documentation/javascript/reference/map#Map.fitBounds).
 
 Research references informing the interaction review: [user-visible browser assertions](https://playwright.dev/docs/best-practices), [WAI tab keyboard pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), [Next development indicators](https://nextjs.org/docs/pages/api-reference/config/next-config-js/devIndicators), and [ngrok local inspection](https://github.com/ngrok/ngrok-docs/blob/main/share-localhost/inspection.mdx).
-

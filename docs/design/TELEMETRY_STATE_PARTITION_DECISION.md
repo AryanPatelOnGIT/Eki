@@ -1,5 +1,7 @@
 # Telemetry state partition decision
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Date: 2026-09-10
 Issues: #165, #166, #174
 

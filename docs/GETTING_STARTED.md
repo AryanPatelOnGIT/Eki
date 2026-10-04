@@ -1,6 +1,6 @@
 # Eki getting started and operating guide
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This is the plain-language entry point for the Eki campus bus-tracking system.
 It explains what the system does, who uses it, how to run it locally, and
@@ -59,7 +59,7 @@ guides.
 
 ### Prerequisites
 
-- Node.js 20 or newer and npm 10 or newer.
+- Node.js 24 (matching CI), npm and Git.
 - Java when running Firebase emulator rule tests.
 - PlatformIO for firmware compilation and hardware tests.
 - A Firebase project and backend Firebase Admin credentials for live backend
@@ -71,12 +71,26 @@ guides.
 Run these commands from the repository root:
 
 ```powershell
-npm install
+npm ci
 Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/env.production.example frontend/.env.local
 ```
 
-Fill the two ignored environment files using [CONFIGURATION.md](CONFIGURATION.md).
+Fill the two ignored environment files using [CONFIGURATION.md](CONFIGURATION.md):
+
+1. In `backend/.env`, change the copied template to `NODE_ENV=development`,
+   `PORT=4000` and `CORS_ORIGIN=http://localhost:3000`. Set the development RTDB
+   URL and Firebase Admin credentials. Keep `RETENTION_SWEEPER_ENABLED=false`.
+   The template's production mode requires retention enforcement and will
+   refuse startup with its safe disabled-retention default.
+2. In `frontend/.env.local`, set matching Firebase/Maps values and
+   `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`.
+3. Configure a valid App Check provider or registered local debug token before
+   signing in. An unenforced development project may opt out explicitly; see
+   [local App Check setup](CONFIGURATION.md#local-app-check-and-auth-setup).
+4. Restart services after environment changes. For phones/hardware use
+   [local testing](operations/LOCAL_TESTING.md), which explains reachable HTTPS
+   origins, CORS and reflash requirements.
 Use separate development Firebase data from production. Do not copy service
 account JSON, device secrets, signing keys, or App Check debug tokens into the
 repository.
@@ -144,15 +158,20 @@ The durable state machine is:
 
 `armed / pre_departure → active / in_service → completed`
 
-- A driver can arm only an assigned bus/route with a fresh device fix.
-- If the bus is already at the route origin, the session can enter service
-  immediately; otherwise it waits for the first configured stop.
+- Initial arming requires an assigned bus/route and a fresh stopped hardware
+  fix near exactly one route endpoint. Moving, stale, mid-route or ambiguous
+  evidence cannot select a direction. The backend infers forward/reverse.
+- Arming at the inferred origin can enter service immediately. An existing
+  session resumes with its stored direction and progress.
 - Only the next ordered stop advances progress. Visiting a later stop cannot
   skip the expected stop.
 - Network loss, GNSS loss, browser refresh, device power loss, and backend
   restart do not by themselves complete or delete a durable ride.
-- The final ordered stop completes the ride and releases its bus lock. Manual
-  stop is not a substitute for reaching the final stop.
+- The final ordered stop completes the ride and releases its bus lock. Ending
+  early records `interrupted`; it never creates a completed ride.
+- Fresh stopped telemetry at the destination can arm a new opposite-direction
+  session after `AUTOMATIC_TURNAROUND_DWELL_MS` (default zero). An interrupted
+  ride is not eligible for this automatic turnaround.
 
 See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 [the API reference](../backend/API.md) for command contracts.
@@ -162,10 +181,16 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 ### Passenger
 
 1. Sign in through the frontend.
-2. Select a route and plan a trip between stops.
+2. Select a route, bus and destination station. Destination selection is
+   available with live device presence before a service session exists. It
+   follows ride-direction stop order, updates the map/timeline target and falls
+   back to the terminal stop when no valid selection exists. Bus/station
+   dropdowns remain inside the app and support keyboard selection.
 3. When a driver provides a boarding code for an active session, join with the
    boarding and destination stations. The destination is stored in the ride
-   manifest for administrators.
+   manifest for administrators. Your preselected destination carries into
+   the boarding form as `alightingStopId`; changing the boarding stop does not
+   change the map destination.
 4. Follow the live bus position and session status. The browser may show a
    reconnecting or stale state when live data is unavailable; it must not invent
    an authoritative position.
@@ -195,8 +220,14 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
    active ride or bus lock exists.
 4. Monitor `/health`, telemetry rejection counts, latency percentiles, worker
    lease health, Firebase usage and Maps usage.
-5. Review feedback and requests, and delete ride history only according to the
-   approved retention/privacy process.
+5. Review feedback from the Admin Feedback tab or `/feedback`. Both use the
+   same admin-authenticated HTTP panel, which loads the latest 200 records and
+   updates status only after an acknowledged PATCH.
+6. Review history using readable bus/route/driver names, labeled timestamps,
+   arrival-stop names and recorded destination evidence. Interrupted rides
+   show as ended early. Terminal history deletion requires a separate in-app
+   confirmation; cancelling sends no request. Active rides cannot be deleted.
+7. Handle requests and retention/privacy according to the approved process.
 
 ## Verification commands
 
@@ -204,6 +235,8 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 |---|---|
 | `npm run lint` | Lint frontend and backend |
 | `npm test` | Run script, backend, frontend and documentation tests |
+| `npm run docs:sync` | Regenerate required root/package documentation mirrors |
+| `npm run test:e2e:admin` | Mobile/desktop admin, auth and feedback browser regressions with synthetic Firebase data |
 | `npm run test:rules` | Run Firebase rules emulator integration tests; requires Java |
 | `npm run build` | Build backend/frontend, generate the service worker, and regenerate CSP hashes |
 | `npm run build:production` | Run the strict production environment gate and build |
@@ -227,6 +260,9 @@ complete production rollout.
 | Backend will not start in production | `CORS_ORIGIN`, `FIREBASE_DATABASE_URL`, credentials, Maps configuration, and replica shard factor | [Backend README](backend/README.md), [configuration](CONFIGURATION.md) |
 | `/health` returns 503 | Firebase Admin credentials, Firestore/RTDB reachability, and the cached probe timestamp | [API health](../backend/API.md#health) |
 | Browser shows no live bus | Auth/App Check, RTDB URL, rules, device health, and whether the fix is fresh | [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md) |
+| Security verification fails or fleet permissions fail after sign-in | Check App Check provider/debug token and enforcement first; protected listeners wait for App Check and role verification. Timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-app-check-and-auth-setup) |
+| Feedback cannot load | Check backend reachability and verified admin claims for `GET /api/v2/feedback`; retry from the panel. Do not relax Firestore rules | [Feedback API](../backend/API.md#feedback-profile-and-settings-endpoints) |
+| Sign-out fails | Protected content stays hidden; reload and retry sign-out. Previous verification/results must not reopen access | [Frontend guide](../frontend/README.md) |
 | Device receives 400 | Validate the deployed schema (nine-field current; eight-field sequenced and six-field legacy compatibility), JSON size, ranges, sequence, and capture/send timestamps | [API device endpoints](../backend/API.md#device-endpoints) |
 | Device receives 401 | Device ID, registry status, secret, assignment and certificate/clock; correct by re-provisioning and reflashing | [Security provisioning](operations/HARDWARE_SECURITY_PROVISIONING.md) |
 | Device receives 413 | Telemetry body exceeds the 512-byte limit or diagnostics exceed 1 KiB | [API device endpoints](../backend/API.md#device-endpoints) |

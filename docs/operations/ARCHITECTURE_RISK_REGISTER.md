@@ -1,6 +1,9 @@
 # Architecture risk register
 
-Last source verification: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+Source reviewed: `testing` at `abd45a6` (4 October 2026). Earlier closure evidence
+retains its original commits and dates; physical/deployment gates remain separate.
 
 This register tracks material risks that remain after the verified fixes in the
 [production readiness audit](PRODUCTION_READINESS_AUDIT.md). It is intentionally
@@ -19,7 +22,7 @@ not a substitute for the physical and institutional acceptance work in the
 - **Closed**: the remediation and its acceptance evidence are present on the
   default branch.
 
-## Active risks
+## Risk register
 
 ### SEC-01: passengers can self-enrol in an unrelated ride session
 
@@ -88,12 +91,15 @@ not a substitute for the physical and institutional acceptance work in the
   credential-fault LED code. Wi-Fi, device identity/secret, backend origin, and
   CA are compiled into a device-specific image and validated before networking;
   no local configuration service or NVS/Preferences-backed configuration and
-  recovery store exists. The RTC no-init telemetry queue remains the bounded
-  store-and-forward mechanism. The authenticated diagnostics channel reports
+  recovery store exists. The RTC queue handles warm resets; a compatible encrypted flash journal
+  additionally restores one latest committed checkpoint after cold power loss.
+  Checkpoints are scheduled every ten seconds, and newer uncommitted fixes can
+  be lost. Older-board app-only journal acceptance and short/long cuts are
+  recorded in [testing acceptance](../testing/TESTING_ACCEPTANCE_2026_10_03.md). The authenticated diagnostics channel reports
   bounded health and hardware-security state every five minutes. Both
   development and signed fleet targets compile within their regular RAM, RTC,
   and flash limits.
-- **Remaining closure evidence:** complete a physical dead-zone/backend-outage
+- **Remaining closure evidence:** extend the recorded stationary/short moving acceptance with a physical dead-zone/backend-outage
   and recovery run on the target board, confirming zero UART/FIFO overflow and
   acceptable queue high-water/reset recovery under real GNSS and TLS load.
   Also prove GNSS-established TLS with NTP blocked, NTP cross-check behavior,

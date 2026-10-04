@@ -1,6 +1,8 @@
 # Operation resources (#194)
 
-Contract decisions before implementation, based on `9a7f109`.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+Current implemented contract on `testing`. The original design baseline was `9a7f109`; deployed availability must still be checked per environment.
 
 All endpoints below require an admin Firebase token and return `no-store`.
 Existing HTTP clients remain supported. No second streaming transport is added.
@@ -54,7 +56,6 @@ count (0), per-call duration and p50/p95/p99 end-to-end duration in staging;
 correlate trace IDs with Google Routes request/usage data. Real traces and
 Google usage are required for production acceptance and cannot be replaced by
 mocked tests. No live staging or billed Google requests are issued by tests.
-
 
 The `http.operation.execute` span covers preview/fleet execution through outcome
 persistence. `eki.http.operation.duration` records execution latency and

@@ -1,12 +1,12 @@
 # Low-level design (LLD)
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
 ## Backend composition
 
-`server.ts` loads environment first, configures Helmet/CORS/body/rate limits, mounts routes, maintains a cached 30-second Firestore/RTDB health probe, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. Telemetry bypasses the broad global limit but has its own IP and device limits. Body parsing is 512 bytes on telemetry and 16 KiB elsewhere.
+`bootstrap.ts` loads environment and optional instrumentation before `server.ts`; the server configures Helmet/CORS/body/rate limits, mounts routes, maintains a cached 30-second Firestore/RTDB health probe, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. Telemetry bypasses the broad global limit but has its own IP and device limits. Body parsing is 512 bytes on telemetry and 16 KiB elsewhere.
 
 ### Backend module catalog
 
@@ -20,7 +20,9 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `middleware/requireAuth.ts` | Bearer extraction, revocation-aware token verification, request claims |
 | `middleware/requireAdmin.ts` | Admin custom-claim enforcement |
 | `routes/devices.ts` | Device telemetry/diagnostics, ride-gated signed-release metadata, and admin registry update/disable |
-| `routes/shifts.ts` | Driver authorization, delay, start/resume, completion acknowledgement, message/history deletion |
+| `routes/shifts.ts` | Driver authorization, delay, start/resume, early interruption, message/history deletion |
+| `routes/feedback.ts` | Admin feedback list/status and server-authoritative passenger submission |
+| `routes/rideSessions.ts` | Versioned session resources and idempotent creation/member commands |
 | `routes/fleet.ts` | Admin buses/drivers, Auth claims, RTDB assignment mirrors, reconciliation |
 | `routes/polyline.ts` | Admin route geometry create/update/delete with active-use guards |
 | `routes/plan.ts` | Authenticated route segment from stored polyline; no Maps call |
@@ -45,6 +47,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `services/abandonedRideReconciliationLogic.ts` | Pure timestamp/session decision logic |
 | `services/privacyDeletionWorker.ts` | Paged deletion of a queued passenger's personal documents/auth account |
 | `services/retentionSweeper.ts` | Production-required, paged time-based terminal-data removal |
+| `services/rtdbRetention.ts`, `firebaseRtdbRetention.ts`, `rtdbRetentionCli.ts` | Dry-run/apply RTDB inventory, age/fingerprint guards, legacy opt-in and current-geometry protection |
 | `services/rideHistoryDeletion.ts` | Terminal-only recursive session/completed-trip deletion |
 | `seed.ts` | Writes predefined routes only after Maps geometry succeeds |
 | `provisionDevice.ts` | Transactional registry/assignment conflict checks and one-time secret generation |
@@ -59,7 +62,7 @@ Credential cache entries hold `{assignment, secretDigest, expiresAt}`; positive 
 
 The RTDB transaction compares `sample.timestamp` plus sequence to existing telemetry. Older/equal samples abort and return duplicate success. New data merges the accepted sample without overwriting an existing active lifecycle, preserves the authenticated fix in `rawLocation`, adds server timing, and derives `deviceState`/`signalState`. A missing active session schedules one coalesced Firestore recovery read per node with a 30-second negative cache.
 
-Accepted fixes schedule (but never await) per-node route processing. Stored forward and reverse polylines are independently computed; legacy documents are repaired and cached. Projection scores distance, heading, backwards progress and segment jumps. Each completed pass stamps its sample identity. Confident current-sample matches populate `matchedLocation`; while an on-route sample is still pending, clients retain the previous confident match for at most two seconds before showing the accepted raw coordinate. Low-confidence, off-route, route-context-change and reconnect states use raw GNSS immediately and are marked uncertain. Three reliable moving deviations transition `ON_ROUTE → POSSIBLE_OFF_ROUTE → OFF_ROUTE → REROUTING`. The Routes request includes the next required stops, and activation requires the same request ID, route version, direction and session before incrementing the version and publishing `ON_NEW_ROUTE`.
+Accepted fixes schedule (but never await) per-node route processing. Stored forward and reverse polylines are independently computed; legacy documents are repaired and cached. Projection scores distance, heading, backwards progress and segment jumps. Each completed pass stamps its sample identity. Confident current-sample matches populate `matchedLocation`; while an on-route sample is still pending, clients retain the previous confident match for at most two seconds before showing the accepted raw coordinate. Low-confidence, off-route, route-context-change and reconnect states use raw GNSS immediately and are marked uncertain. Two ordinary reliable moving deviations, or one measured reliable deviation at least 120 m from the route, transition `ON_ROUTE → POSSIBLE_OFF_ROUTE → OFF_ROUTE → REROUTING`. The Routes request includes the next required stops, and activation requires the same request ID, route version, direction and session before incrementing the version and publishing `ON_NEW_ROUTE`.
 
 Metrics retain only the latest 512 in-memory samples. Restart resets counters; metrics are diagnostic rather than billing/history.
 
@@ -95,23 +98,24 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `components/admin/*Panel.tsx` | Operations, dashboard, routes, fleet/personnel, history and settings |
 | `components/passenger/*` | Boarding, route timeline/carousel/sheet and account |
 | `components/shared/RoleGuard.tsx` | Presentation guard and auth/access states; not the security boundary |
-| `components/shared/MessagingPanel.tsx` | Session-scoped Firestore messaging/rate-record transaction |
-| `components/shared/FeedbackModal.tsx` | Feedback transaction and cooldown |
-| `components/ui/*` | Accessible native select and focus-contained alert/confirm dialogs |
-| `hooks/useAuth.ts` | Firebase auth observer, profile/claim normalization and cache clearing |
+| `components/shared/MessagingPanel.tsx` | Firestore message reads and idempotent server-authorized message submission |
+| `components/shared/FeedbackModal.tsx`, `components/admin/FeedbackPanel.tsx` | Server-authoritative feedback submission/cooldown; shared admin HTTP list/status review with auth-generation guards |
+| `components/ui/*` | Keyboard-accessible in-app listboxes and focus-contained alert/confirm dialogs |
+| `hooks/useAuth.ts` | App Check/role verification before user/readiness publication; account/sign-out generation guards and cache disposal |
 | `hooks/useCollection.ts` | Auth-ready singleton/bounded collection listener pattern |
 | `hooks/useBuses.ts`, `useDrivers.ts`, `useRoutes.ts`, `useSettings.ts` | Typed shared Firestore subscriptions |
 | `hooks/useRTDBResume.ts`, `rtdbResumeState.ts` | Online/visibility recovery state machine |
 | `hooks/useSmoothPosition.ts` | Bounded rAF interpolation; bypassed for reduced motion |
 | `hooks/useDialogFocus.ts` | Top-dialog focus trap, Escape, scroll lock and focus restoration |
 | `lib/firebaseCore/Auth/Database/Firestore/AppCheck.ts` | Split client SDK initialization to limit route dependencies |
-| `lib/firebaseAuthDomain.ts` | Resolves same-origin auth helper domain on web.app / custom domains to protect storage-partitioned browsers |
-| `lib/authState.ts` | Resolves first auth event before protected listeners attach |
-| `lib/liveBusStore.ts` | One RTDB `onValue` listener and freshness pruning for all consumers |
+| `lib/firebaseAuthDomain.ts` | Normalizes primary project Hosting domains; custom/secondary domains require explicit auth-helper configuration |
+| `lib/authState.ts` | Tracks verified auth readiness and generations before protected listeners attach |
+| `lib/liveBusStore.ts` | Shared initial RTDB snapshot followed by child deltas, route-scoped subscriptions and freshness pruning |
 | `lib/liveBusFreshness.ts`, `liveBusSnapshot.ts` | Coordinate/timestamp/signal validity and expiry |
 | `lib/polyline.ts`, `polylineDistance.ts`, `snapToPolyline.ts`, `mapUtils.ts` | Pure map math, distance index, snapping/interpolation |
-| `lib/stableMarkerPosition.ts`, `markerHeading.ts` | Client-side jump hold/reacquisition and wrap-safe marker heading presentation |
+| `lib/liveBusMarkerPosition.ts`, `markerHeading.ts` | Client-side jump hold/reacquisition and wrap-safe marker heading presentation |
 | `lib/rideHistory.ts`, `rideFeedbackEligibility.ts` | Pure historical normalization/eligibility |
+| `lib/feedback.ts` | Validated admin list/status response parsing |
 | `lib/predefinedRoutes.ts` | Seed source geometry/stops |
 | `config/maps.ts`, `config/passenger.ts`, `etaConstants.ts` | Central public/runtime tuning |
 | `sw.js` | Precache static export; cache public maps/fonts/images; network-only Firebase/auth/backend/unknown |
@@ -120,9 +124,30 @@ Tests beside pure frontend libraries exercise freshness, RTDB sharing, route dis
 
 ## Firmware detail
 
-`hardware/src/main.cpp` is a single deterministic loop because it has one UART and one network output. It drains UART on every pass, feeds the watchdog, reconnects Wi-Fi, synchronizes NTP, drops nearly stale buffered fixes, retries the latest buffered fix, evaluates GNSS each second, and warns if no NMEA arrives. `hardware/include/telemetry_policy.h` contains the shared, host-testable distance, heading, motion-hysteresis, retry and publish decisions; the native Unity suite executes those exact production helpers.
+`hardware/src/main.cpp` separates continuous UART/GNSS capture on the Arduino
+loop (core 1) from the network publisher (core 0). A bounded 100-sample RTC
+ring survives warm resets. Publishing selects the newest eligible fix, retains
+retryable work, compacts acknowledged older samples, and discards captures
+outside the 55-second freshness margin. Diagnostics and maintenance run
+separately without evicting queued telemetry.
 
-`TelemetryFix` is the only queued object; replacement intentionally keeps latest data rather than building an unbounded history. HTTPS 200/202 updates comparison state. Transport errors, 408/425/429 and 5xx retain the latest sample only while it can remain inside the 55-second freshness margin; stale samples are dropped, and bounded `Retry-After` is honored. Permanent HTTP rejection drops that sample and delays the next fresh attempt. GNSS loss sends one `uncertain` sample at the last verified point; it never invents movement. Invalid compile-time configuration halts before networking, and a 401/403 disables the station radio until the applicable configuration or backend registry repair is followed by a restart.
+The shared telemetry policy evaluates each second, uses three-reading motion
+hysteresis, one-second moving/stopped heartbeats, a one-second HTTP connect
+timeout, 1.5-second request timeout and separate ten-second TLS handshake bound.
+These are separate budgets; none promises universal end-to-end latency.
+
+Cold power loss can restore one compatible encrypted flash checkpoint, with
+its original sequence. Warm RTC state wins; checkpoints are scheduled every
+ten seconds and uncommitted newer fixes can be lost. The journal verifies
+storage layout/collision safety. `esp32dev-journal` is the legacy-board app-only
+acceptance profile; normal development uses `partitions_development.csv`.
+See [cold-power recovery](../hardware/COLD_POWER_RECOVERY.md).
+
+GNSS loss queues one uncertain fix at the last verified point. Invalid compile-
+time configuration halts before networking; HTTP 401/403 latches publishing
+off and disables the radio until credential repair/restart. Header policies
+and checkpoint/response tests run on the native host. Physical GNSS, power,
+radio, TLS, Secure Boot and OTA acceptance require the hardware runbooks.
 
 `platformio.ini` pins Espressif32 7.0.1, TinyGPSPlus 1.1.0 and ArduinoJson 7.4.3 and defines native, development, and signed fleet environments. `firmware_config.h` validates the ignored compile-time `secrets.h` contract. `sdkconfig.defaults` enables Secure Boot V2, release-mode flash encryption, ROM-download lockdown, and RAM-only Wi-Fi state for the hybrid Arduino/ESP-IDF fleet build. The ignored RSA-3072 signing key is mandatory for signed fleet artifacts; native tests and regular `esp32dev` builds do not use it. Fleet runtime halts unless both hardware protections are active and the backend origin is HTTPS.
 
@@ -133,7 +158,7 @@ Tests beside pure frontend libraries exercise freshness, RTDB sharing, route dis
 - `scripts/verify-web-backend-contract.mjs` verifies the backend origin and Firebase Auth same-origin frame helper (`frame-src 'self'`) in CSP.
 - `scripts/rtdb-instance-config.mjs` verifies matching RTDB instances and expected region configuration (`verify:rtdb-instance`).
 - `firebase.json`, `.firebaserc`, rules and indexes define Hosting/Firebase deployment. Generated CSP changes after builds are intentional and must be committed with the output-producing code.
-- GitHub workflows install, test/build, run emulators where configured, and scan dependencies/code. Dependabot owns scheduled update proposals.
+- GitHub workflows install, test/build, run emulators where configured, and audit runtime and development dependencies. CI also runs the synthetic admin browser suite and legacy journal firmware build.
 
 ## Consistency model
 

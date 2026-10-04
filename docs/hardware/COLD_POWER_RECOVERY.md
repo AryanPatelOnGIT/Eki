@@ -1,5 +1,7 @@
 # Cold power-loss recovery
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 ## Guarantee and limits
 
 The RTC telemetry queue survives supported warm resets. On complete power loss,

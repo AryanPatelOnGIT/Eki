@@ -1,6 +1,6 @@
 # Security Policy
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This document outlines the security models, vulnerability reporting procedures,
 and database rules governing the Eki ecosystem. For the public-safe
@@ -19,12 +19,23 @@ detailed summary of the vulnerability, including steps to reproduce.
 
 Eki enforces strict RBAC across presentation, API, and database perimeters:
 
-1. **Immutable Firebase Custom Claims (`auth.token.role`)**:
-   Role authorization is issued exclusively server-side via the admin sync utility (`npm run sync-role-claims`) or backend endpoints. Clients cannot self-assign or mirror roles in Realtime Database trees (`/users/$uid` has `.write: false`).
+1. **Server-issued Firebase Custom Claims (`auth.token.role`)**:
+   Role authorization is issued server-side via `npm run sync-role-claims --workspace=backend` or backend endpoints. Clients cannot self-assign roles; RTDB legacy user trees are default-deny.
 2. **Frontend Presentation Guard (`RoleGuard`)**:
    Controls route rendering based on authenticated claims (`admin`, `driver`, `passenger`).
 3. **Backend API Authorization**:
    Express endpoints validate Bearer tokens. Admin endpoints enforce `requireAdmin` middleware checking `auth.token.admin === true`.
+
+Protected browser reads wait for a valid App Check token and role verification.
+Timeouts and provider/role failures do not grant readiness. Account changes and
+sign-out invalidate pending verification and old-session requests; failed
+sign-out leaves protected content hidden. See [local App Check setup](../CONFIGURATION.md#local-app-check-and-auth-setup).
+
+App Check enforcement belongs to the deployed Firebase services. The local
+opt-out requires explicit development mode and an unenforced project; it does
+not override Firebase enforcement and is ignored in other modes. Admin feedback
+review uses a no-store authenticated backend list/status API, with trusted
+admin-claim checks and client session guards.
 
 ### Hardware Authentication & Isolation
 
@@ -52,7 +63,8 @@ ESP32 GNSS units post a closed nine-field payload to
   denied. Lifecycle and coordinates are backend-authoritative.
 - **`/driverRouteAssignments` and `/messages`**: Client reads and writes are
   denied; chat is stored under Firestore ride sessions with scoped rules.
-- **`/users`**: Read-restricted to owner (`auth.uid == $uid`). Writes disabled (`.write: false`).
+- **`/users`**: Legacy tree with all client reads/writes denied by the root rules.
+- **`/activeRouteGeometry`**: Authenticated reads; all client writes denied.
 
 ### Ride Chat Safety
 
@@ -88,12 +100,13 @@ stale authenticated responses crossing accounts on shared browsers.
   transactions before changing RTDB or deleting `active_rides`/locks. Delayed
   work from an old session cannot overwrite a newer ride.
 - Retention is fail-safe: production refuses to start unless
-  `RETENTION_SWEEPER_ENABLED=true` exactly; development and tests remain
+  an explicit normalized `RETENTION_SWEEPER_ENABLED=true`; development and tests remain
   non-destructive when it is omitted.
 
 ## In-Transit Encryption
 
-- All HTTP traffic enforces HTTPS.
+- Deployed frontend/backend/device origins require HTTPS. Local development
+  may use loopback HTTP; production build and fleet firmware guards reject it.
 - Hardware telemetry uses `WiFiClientSecure` with a configured CA certificate
   when communicating with the backend API.
 

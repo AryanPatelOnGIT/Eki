@@ -1,6 +1,6 @@
 # My live bus demo runbook
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 16:07 IST (UTC+05:30).
 
 This is the checklist for the student operating the professor demonstration.
 Complete every blocking item before inviting passengers onto the bus.
@@ -27,14 +27,14 @@ Record the final non-secret values:
 | Firebase project | |
 | Bus ID | |
 | Route ID | |
-| Driver email | |
+| Driver record ID (keep account details private) | |
 | Device ID | |
 | HTTPS backend URL | |
 
 ## 2. Prepare the laptop backend
 
-- [ ] Install dependencies with `npm install`.
-- [ ] Fill `backend/.env` and `frontend/.env.local`; do not commit either file.
+- [ ] Install dependencies with `npm ci`.
+- [ ] Fill the ignored environment files using [local setup](../GETTING_STARTED.md#local-development); set backend development mode/port and configure App Check before sign-in.
 - [ ] Keep `AUTH_REVOCATION_CACHE_MS=15000` for the demo; `0` is a
   troubleshooting option that adds a Firebase Auth network round trip to every
   protected backend action.
@@ -76,14 +76,23 @@ ngrok http 4000 --url https://<assigned-domain>
 
 Prefer the deployed Firebase Hosting frontend for professor phones. If the
 laptop frontend must be exposed, provision a **second eligible stable HTTPS
-domain** to `http://localhost:3000`; the free ngrok account's single assigned
-development domain should remain dedicated to the backend:
+domain** to `http://localhost:3000`; reserve the account's assigned backend domain for telemetry:
 
 - [ ] Put the backend HTTPS URL in `NEXT_PUBLIC_BACKEND_URL` before starting
   the frontend.
 - [ ] Put the frontend HTTPS origin in backend `CORS_ORIGIN`.
 - [ ] Add the frontend tunnel hostname to Firebase Authentication authorized
   domains.
+- [ ] Choose a working Firebase Auth helper. A plain Next.js development tunnel
+  does not serve Firebase's `/__/auth/` routes: keep
+  `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` set to the project's hosted Firebase helper.
+  If the frontend hostname serves or proxies those helper routes, set the Auth
+  domain to that hostname and register
+  `https://<frontend-host>/__/auth/handler` in the Google OAuth client's
+  authorized redirect URIs before testing sign-in. See [Auth configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+- [ ] Test sign-in on each intended phone/browser. If storage restrictions break
+  a cross-origin helper, use the approved Firebase Hosting frontend or a
+  correctly configured same-origin helper before continuing the demo.
 - [ ] If App Check enforcement is enabled, register a temporary debug token and
   set `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` only for this local demo.
 - [ ] Restart both dev servers after environment changes, then open the frontend

@@ -1,5 +1,7 @@
 # Admin access browser regression checks
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Run `npx playwright test --config playwright.admin-access.config.ts` from the repository root. Install the matching Chromium with `npx playwright install chromium` if necessary.
 
 These checks render the actual AuthProvider, App Check wrapper, RoleGuard, feedback panel, API client and application CSS at mobile and desktop widths. The Firebase SDK, fleet metadata and HTTP responses are synthetic adapters; no real credentials, console settings or Firebase data are used. They cover delayed verification, visible provider failure/reload recovery, standalone and embedded API loading, denied-read retry, rejected and acknowledged status writes, account switching, and fresh verification of the same account.

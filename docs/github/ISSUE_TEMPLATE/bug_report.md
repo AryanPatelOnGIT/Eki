@@ -6,6 +6,8 @@ labels: bug
 assignees: ''
 ---
 
+<!-- Last updated: 2026-10-04 14:20 IST (UTC+05:30). -->
+
 **Describe the bug**
 A clear and concise description of what the bug is.
 
