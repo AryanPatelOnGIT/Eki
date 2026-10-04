@@ -265,6 +265,15 @@ certificate time. NTP candidates are guarded before IDF sets time. Peer NTP
 references expire after ten minutes, and clock faults retry NTP after one minute.
 These checks establish consistency, not cryptographic GNSS/NTP authenticity.
 
+For new latency captures, firmware trace version 2 adds a correlated
+`device_capture` record with receiver UTC, RMC first-byte/checksum arrival and
+evaluation/enqueue monotonic times. `device_http` retains the response-header
+timing used for clock estimation; `device_http_complete` records send, headers
+and completed body drain per attempt. Recovery without receiver evidence stays
+unavailable in the analyzer. The one-second evaluation cadence is unchanged:
+its phase delay is now measured, including time spent before enqueue.
+`configuredHandshakeTimeoutMs` is a configured limit, not a measured handshake.
+
 Live ESP32 verification and TLS compatibility details are recorded in
 `docs/testing/LIVE_ESP32_LATENCY_RESULT.md`. Telemetry retains its HTTPClient
 between samples so its destructor cannot defeat keep-alive. The pinned mbedTLS

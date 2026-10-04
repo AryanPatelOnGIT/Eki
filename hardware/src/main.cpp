@@ -155,7 +155,7 @@ public:
     const int result = resolved ? WiFiClientSecure::connect(
       address, port, host, _CA_cert, _cert, _private_key) : 0;
     releaseTelemetryTlsKey();
-    Serial.printf("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld handshakeMs=%lu result=%d channel=%s preparationMs=%lu\n",
+    Serial.printf("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld configuredHandshakeTimeoutMs=%lu result=%d channel=%s preparationMs=%lu\n",
       static_cast<unsigned long>(resolvedAt - started),
       static_cast<unsigned long>(millis() - resolvedAt), static_cast<long>(timeout),
       static_cast<unsigned long>(sslclient->handshake_timeout), result, channel,
@@ -167,7 +167,7 @@ TimedSecureClient tlsClient;
 ReuseSafePlainClient plainClient;
 WiFiClientSecure maintenanceTlsClient;
 // Diagnostic transport belongs exclusively to its worker. Manifest checks
-// retain maintenanceTlsClient on the publisher; no TLS object crosses tasks.
+// retain maintenanceTlsClient on the maintenance worker; no TLS object crosses tasks.
 struct DiagnosticJob { char payload[1024]; size_t length; };
 struct DiagnosticResult { int status; uint32_t durationMs; };
 QueueHandle_t diagnosticJobs = nullptr;
@@ -280,6 +280,9 @@ MotionState lastCapturedMotionState = MotionState::Uncertain;
 eki::telemetry::MotionTracker motionTracker;
 uint32_t lastCaptureAt = 0;
 uint32_t lastEvaluationAt = 0;
+uint32_t latestRmcAt = 0;
+uint32_t latestRmcStartedAt = 0;
+int64_t latestRmcReceiverUtcMs = 0;
 uint32_t lastNtpCrossCheckAt = 0;
 uint32_t lastHttpsFailureAt = 0;
 uint32_t httpsRetryDelayMs = 0;
@@ -461,12 +464,18 @@ void notifyPublisher() {
   if (publisherTaskHandle != nullptr) xTaskNotifyGive(publisherTaskHandle);
 }
 
-void enqueueFix(TelemetryFix fix) {
+void enqueueFix(TelemetryFix fix, bool receiverBacked = true) {
   portENTER_CRITICAL(&telemetryQueueMux);
   fix.sequence = telemetryQueue.push(fix);
   portEXIT_CRITICAL(&telemetryQueueMux);
+  const uint32_t enqueuedAt = millis();
   // Release the network publisher before doing checkpoint encryption/I/O.
   notifyPublisher();
+  Serial.printf("[TelemetryTrace] {\"version\":2,\"event\":\"device_capture\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"receiverBacked\":%s,\"receiverUtcMs\":%lld,\"receiverStartedAtMonotonicMs\":%lu,\"receiverAtMonotonicMs\":%lu,\"evaluationAtMonotonicMs\":%lu,\"enqueuedAtMonotonicMs\":%lu}\n",
+    static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
+    receiverBacked ? "true" : "false", static_cast<long long>(latestRmcReceiverUtcMs),
+    static_cast<unsigned long>(latestRmcStartedAt), static_cast<unsigned long>(latestRmcAt),
+    static_cast<unsigned long>(lastEvaluationAt), static_cast<unsigned long>(enqueuedAt));
   // Sole capture-task writer. Flash is outside the queue's critical section;
   // the GNSS RX buffer continues collecting during a bounded sector erase.
   if (checkpointReady && WiFi.getMode() != WIFI_MODE_NULL && (!checkpointWrittenThisBoot || elapsed(lastCheckpointAt) >= CHECKPOINT_INTERVAL_MS)) {
@@ -1409,6 +1418,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
     payloadLength
   );
   const uint32_t httpDurationMs = elapsed(startedAt);
+  const uint32_t headersReceivedAt = millis();
   const int64_t deviceReceivedAt = epochMilliseconds();
   int64_t serverReceivedAt = 0;
   int64_t serverRespondedAt = 0;
@@ -1506,6 +1516,11 @@ PublishResult publishFix(const TelemetryFix &fix) {
   const bool responseComplete =
     action == eki::telemetry::HttpResponseAction::Accept &&
     eki::http::consumeAcceptedResponse<HttpClock>(http, responseCode);
+  const uint32_t drainCompletedAt = millis();
+  Serial.printf("[TelemetryTrace] {\"version\":2,\"event\":\"device_http_complete\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"sendAtMonotonicMs\":%lu,\"headersAtMonotonicMs\":%lu,\"drainCompletedAtMonotonicMs\":%lu,\"attempt\":%u,\"responseComplete\":%s}\n",
+    static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
+    static_cast<unsigned long>(startedAt), static_cast<unsigned long>(headersReceivedAt),
+    static_cast<unsigned long>(drainCompletedAt), attempt, responseComplete ? "true" : "false");
   if (!responseComplete) networkClient.stop();
   http.end();
   if (action != eki::telemetry::HttpResponseAction::Accept) {
@@ -1728,7 +1743,6 @@ TelemetryFix buildFixFromRmc() {
 }
 
 TelemetryFix latestRmcFix{};
-uint32_t latestRmcAt = 0;
 
 TelemetryFix currentFix() {
   TelemetryFix fix = latestRmcFix;
@@ -1772,11 +1786,13 @@ void processGpsByte(char byte) {
   }
   static char sentence[128]{};
   static size_t length = 0;
-  if (byte == '$') length = 0;
+  static uint32_t sentenceStartedAt = 0;
+  if (byte == '$') { length = 0; sentenceStartedAt = millis(); }
   if (length + 1 < sizeof(sentence)) sentence[length++] = byte;
   sentence[length] = '\0';
   const bool committed = gps.encode(byte);
   if (!committed || length < 7 || strncmp(sentence + 3, "RMC", 3) != 0) return;
+  const uint32_t receiverArrivedAt = millis();
   // TinyGPS++ commits all RMC fields only after a valid checksum. Snapshot
   // immediately, before a later GGA changes time/location independently.
   const char *timeEnd = strchr(sentence + 7, ',');
@@ -1784,9 +1800,14 @@ void processGpsByte(char byte) {
     latestRmcFix.valid = false;
     return;
   }
+  eki::clock::UtcDateTime receiverUtc{gps.date.year(), gps.date.month(), gps.date.day(),
+    gps.time.hour(), gps.time.minute(), gps.time.second(), gps.time.centisecond()};
+  latestRmcReceiverUtcMs = 0;
+  eki::clock::utcToEpochMilliseconds(receiverUtc, latestRmcReceiverUtcMs);
+  latestRmcAt = receiverArrivedAt;
+  latestRmcStartedAt = sentenceStartedAt;
   disciplineClockFromGnss();
   latestRmcFix = buildFixFromRmc();
-  latestRmcAt = millis();
   Serial.printf("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
     static_cast<long long>(latestGnssEpochMs),
     static_cast<long long>(systemEpochMilliseconds()),
@@ -1885,7 +1906,7 @@ void evaluateTelemetry() {
       uncertain.motionState = MotionState::Uncertain;
       uncertain.timestamp = epochMilliseconds();
       uncertain.valid = true;
-      enqueueFix(uncertain);
+      enqueueFix(uncertain, false);
       lossMessageQueued = true;
     }
     return;
