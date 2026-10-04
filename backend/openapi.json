@@ -59,6 +59,85 @@
     }
   ],
   "paths": {
+    "/live": {
+      "get": {
+        "operationId": "getLiveness",
+        "tags": [
+          "Health"
+        ],
+        "summary": "Read process liveness",
+        "description": "Independent process liveness. Returns HTTP 200 while the HTTP server can answer, even when dependency readiness is degraded.",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Liveness"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid identifiers, payload, query, or JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failure; details are redacted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "public",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Public GET/HEAD cached process probe: exempt from browser ingress and UID quotas.",
+        "x-cache-policy": "Cache-Control: no-store; no dependency work.",
+        "x-timeout-policy": "Immediate process response; no Firebase dependencies. HTTP request receipt bounds still apply.",
+        "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
+        "x-idempotency": "Safe process probe without side effects."
+      }
+    },
     "/health": {
       "get": {
         "operationId": "getReadiness",
@@ -142,7 +221,7 @@
         "x-auth-class": "public",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Public GET/HEAD cached probe: exempt from browser ingress and UID quotas.",
-        "x-cache-policy": "Readiness comes from a shared 30-second dependency probe; no explicit response cache header.",
+        "x-cache-policy": "Cache-Control: no-store. Cached per-store probes run every 30 seconds with a 5-second response deadline, one unsettled call per store and 65-second monotonic freshness. RTDB requires snapshot.val() === true.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Safe cached probe; does not query Firebase per request."
@@ -262,7 +341,7 @@
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified admin required; exempt from UID read quota. Divided by RATE_LIMIT_SHARD_FACTOR.",
-        "x-cache-policy": "Cached 30-second readiness probe; process-local counters. No explicit response Cache-Control.",
+        "x-cache-policy": "Cache-Control: no-store. Cached 30-second readiness probe; process-local counters. No explicit response Cache-Control. Cached readiness expires after 65 monotonic seconds; 5-second bounded single-flight probes run every 30 seconds.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Safe snapshot/read; no mutation replay key."
@@ -8738,6 +8817,21 @@
       }
     },
     "schemas": {
+      "Liveness": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "alive"
+            ]
+          }
+        }
+      },
       "Id": {
         "type": "string",
         "pattern": "^[A-Za-z0-9_-]{1,128}$"

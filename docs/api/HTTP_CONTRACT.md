@@ -1,6 +1,6 @@
 # HTTP contract and compatibility checks
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
@@ -61,6 +61,18 @@ Responses omit credentials and stacks. Typical errors have `error`; route and
 Places errors may additionally carry `code`, `phase`, version/outcome details.
 Parser and authentication failures can precede handler-specific headers/errors.
 On detailed health, 503 can be a readiness snapshot or authentication-busy error.
+
+Public `GET /live` returns `200 {"status":"alive"}` without querying dependencies.
+Docker/container restart probes use it. Load-balancer readiness uses `/health`:
+RTDB must return `snapshot.val() === true` and Firestore must succeed. Cached
+per-store probes run every 30s, have a 5s response deadline and 65s monotonic
+freshness. An unsettled call keeps its single-flight slot after a response
+timeout, preventing repeated probes from accumulating. Late completion cannot
+publish success. All three health endpoints return `Cache-Control: no-store`.
+Admission and route/admin middleware reuse a verified token only within the
+same HTTP request. This avoids duplicate privileged Auth checks; every new
+request still follows the revocation-aware policy. An injected `req.user` or a
+different token cannot establish that request-scoped verification.
 
 The server applies strict JSON parsers: 16 KiB generally, telemetry 512 bytes,
 diagnostics 1 KiB. CORS/preflight precedes the 1,000/normalized-IP/minute browser ingress guard.

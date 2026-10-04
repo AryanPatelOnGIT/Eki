@@ -45,7 +45,7 @@ function routeLabel(req: Request): string {
 
 export function createHttpMetricsMiddleware(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (req.path === "/health") {
+    if (req.path === "/health" || req.path === "/live") {
       next();
       return;
     }

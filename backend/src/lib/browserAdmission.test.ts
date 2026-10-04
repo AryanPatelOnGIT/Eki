@@ -90,5 +90,6 @@ describe("production browser admission", () => {
     expect((await request("forged", "GET", "/api/health")).status).toBe(401);
     expect((await request("bob", "GET", "/api/health")).status).toBe(403);
     expect((await request()).status).toBe(200);
+    expect(verification.calls).toHaveLength(8);
   });
 });

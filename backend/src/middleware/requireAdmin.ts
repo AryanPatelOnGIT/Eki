@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import {
   AuthVerificationCapacityError,
-  verifyRevocationAwareIdToken,
 } from "../services/authTokenVerifier";
+import { verifyRequestToken } from "./verifiedRequest";
 import { recordAuthAttempt } from "../lib/metrics";
 
 const EXPECTED_AUTH_ERROR_CODES = new Set([
@@ -48,7 +48,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   const idToken = authHeader.split("Bearer ")[1];
 
   try {
-    const decoded = await verifyRevocationAwareIdToken(idToken);
+    const decoded = await verifyRequestToken(req, idToken);
 
     // Check for admin custom claim
     if (!decoded.admin) {

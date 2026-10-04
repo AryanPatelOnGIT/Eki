@@ -1,12 +1,12 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
 ## Backend composition
 
-`bootstrap.ts` loads environment and optional instrumentation before `server.ts`; the server configures Helmet/CORS/body/rate limits, mounts routes, maintains a cached 30-second Firestore/RTDB health probe, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. CORS/preflight precedes the generous browser IP ingress guard. Browser authentication then selects separate verified-UID read (200/minute) and mutation (30/minute) quotas; GET/HEAD never consumes writes. Route computation, planning and Places limits also use the verified UID. These process budgets are replica-sharded; edge protection supplies the fleet-wide cap. Exact device ingress paths retain separate IP/device authentication and budgets, including firmware installation reservations. Public probes are exempt, while detailed health retains admin authorization. Body parsing is 512 bytes on telemetry, 1 KiB on diagnostics and 16 KiB elsewhere.
+`bootstrap.ts` loads environment and optional instrumentation before `server.ts`; the server configures Helmet/CORS/body/rate limits, mounts routes, maintains bounded single-flight Firestore/RTDB probes every 30 seconds (5-second response budget, 65-second monotonic freshness, true RTDB connected value) and separate process liveness, starts the HTTP listener and worker coordinator, and drains HTTP/worker/Firebase resources on SIGTERM/SIGINT. CORS/preflight precedes the generous browser IP ingress guard. Browser authentication then selects separate verified-UID read (200/minute) and mutation (30/minute) quotas; GET/HEAD never consumes writes. Route computation, planning and Places limits also use the verified UID. These process budgets are replica-sharded; edge protection supplies the fleet-wide cap. Exact device ingress paths retain separate IP/device authentication and budgets, including firmware installation reservations. Public probes are exempt, while detailed health retains admin authorization. Body parsing is 512 bytes on telemetry, 1 KiB on diagnostics and 16 KiB elsewhere.
 
 ### Backend module catalog
 

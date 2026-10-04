@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build backend container image
         run: docker build -f backend/Dockerfile -t eki-backend:ci .
-      - name: Smoke-boot the container and probe /health
+      - name: Smoke-boot the container and verify liveness plus degraded readiness
         run: |
           docker run -d --name eki-backend-smoke \
             -e NODE_ENV=production \
@@ -137,6 +137,10 @@ jobs:
           http_code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://127.0.0.1:8080/health)"
           test "$http_code" = "503"
           grep -q '"status":"degraded"' /tmp/health.json
+          live_code="$(curl -s -o /tmp/live.json -w '%{http_code}' http://127.0.0.1:8080/live)"
+          test "$live_code" = "200"
+          grep -q '"status":"alive"' /tmp/live.json
+          test "$(docker inspect --format '{{.Config.Healthcheck.Test}}' eki-backend-smoke)" = '[CMD-SHELL wget -qO- http://127.0.0.1:8080/live || exit 1]'
           docker logs eki-backend-smoke
 
   firmware:

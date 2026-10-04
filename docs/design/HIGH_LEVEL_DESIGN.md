@@ -1,6 +1,6 @@
 # High-level design (HLD)
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 ## Scope and goals
 
@@ -123,7 +123,7 @@ The software does not promise an absolute end-to-end SLA without real deployment
 | Browser live stream | One shared RTDB listener per browser runtime |
 | UI freshness clocks | 15–60 second local-only timers; no API polling |
 
-Admin-only `GET /api/health` returns rolling p50/p95/p99 processing, device-to-server, RTDB-write, and authenticated rate-limit decision latency plus credential cache efficiency and shared limiter transaction/retry counters. Public `GET /health` exposes readiness only. A device clock anomaly over 24 hours is excluded from the device-to-server window.
+Admin-only `GET /api/health` returns rolling p50/p95/p99 processing, device-to-server, RTDB-write, and authenticated rate-limit decision latency plus credential cache efficiency and shared limiter transaction/retry counters. Public `GET /health` exposes fresh cached readiness only; `GET /live` exposes process liveness independently of Firebase. Per-store probes run every 30s, expire after 65 monotonic seconds, and have a 5s response budget while retaining unsettled single-flight slots. RTDB readiness requires a true connected snapshot. Docker restart checks use `/live`; traffic readiness checks use `/health`. A device clock anomaly over 24 hours is excluded from the device-to-server window.
 
 Rate-limit `storeTransactions` counts SDK transaction invocations for token
 reservations. `storeTransactionRetries` counts additional transaction callback

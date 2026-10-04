@@ -1,6 +1,6 @@
 # Eki backend
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 The TypeScript/Express backend is the authority for hardware ingestion, fleet/route/device commands and ordered ride lifecycle. It uses Firebase Admin with service-account JSON or Application Default Credentials, writes current data to RTDB and durable state to Firestore, and elects one background worker with a Firestore lease.
 
@@ -29,7 +29,12 @@ npm run build --workspace=backend
 
 Check `http://localhost:4000/health`: `200`/`status: ok` means Firestore and
 RTDB probes are ready; `503`/`status: degraded` means dependency readiness is
-failing. The admin-only `/api/health` contains detailed diagnostics.
+failing. RTDB requires a true `.info/connected` snapshot. Probes run every 30s
+with a 5s response deadline, at most one unsettled call per store, and 65s
+monotonic freshness. Late results cannot restore readiness. `/live` returns
+`200`/`status: alive` independently of Firebase. Docker/container restart probes
+use `/live`; load-balancer traffic readiness uses `/health`. All health responses
+are no-store. The admin-only `/api/health` contains detailed diagnostics.
 
 ## API and jobs
 
@@ -53,7 +58,7 @@ The backend enables vendor-neutral traces, metrics, and structured logs when
 It captures inbound Express requests, supported outbound clients, failed
 request exceptions, correlated application logs, Node.js runtime metrics,
 dependency readiness, authentication outcomes, device-ingestion health, and
-background-worker failures. `/health` is excluded from request telemetry to
+background-worker failures. `/health` and `/live` are excluded from request telemetry to
 keep probe traffic from obscuring real failures.
 
 Start the local Collector and Jaeger UI, then run the backend with the endpoint
