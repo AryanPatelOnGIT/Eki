@@ -1,10 +1,12 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
 has no Firebase credential and cannot choose its bus or route.
+Publisher/diagnostic HTTPS uses a one-second bounded DNS caller wait before
+hostname-validated TLS; see [cold-connect ownership and limits](../docs/hardware/DNS_COLD_CONNECT.md).
 An authenticated encrypted flash checkpoint can restore one committed fix after
 complete power loss. This does not preserve every fix; see the
 [recovery limits and stationary acceptance procedure](../docs/hardware/COLD_POWER_RECOVERY.md).

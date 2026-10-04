@@ -138,6 +138,12 @@ The shared telemetry policy evaluates each second, uses three-reading motion
 hysteresis, one-second moving/stopped heartbeats, a one-second HTTP connect
 timeout, 1.5-second request timeout and separate ten-second TLS handshake bound.
 These are separate budgets; none promises universal end-to-end latency.
+Publisher/diagnostic HTTPS resolution uses `bounded_dns_resolver.h`: one retained
+lwIP callback slot and a one-second monotonic caller wait. A timeout cannot free
+the underlying slot or amplify retries, and network epochs fence old results.
+The SDK DNS TTL cache and original hostname passed to owner-task TLS remain;
+healthy persistent sockets bypass connection setup. See
+[cold-connect scheduling and limits](../hardware/DNS_COLD_CONNECT.md).
 
 Cold power loss can restore one compatible encrypted flash checkpoint, with
 its original sequence. Warm RTC state wins; checkpoints are scheduled every
