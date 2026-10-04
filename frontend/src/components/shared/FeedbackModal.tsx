@@ -5,6 +5,7 @@ import { Star, HeartHandshake, X, Send, Check } from "lucide-react";
 import { auth } from "@/lib/firebaseAuth";
 import { FEEDBACK_WORD_LIMIT } from "@/config/passenger";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { apiRequest } from "@/lib/apiClient";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -133,25 +134,16 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
         ? pendingFeedbackRef.current
         : { fingerprint, requestId: crypto.randomUUID() };
       pendingFeedbackRef.current = pending;
-      const response = await fetch(`${backendUrl}/api/feedback`, {
+      const result = await apiRequest<{ submitted?: boolean }>("/api/feedback", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ ...payload, requestId: pending.requestId }),
-        signal: AbortSignal.timeout(10_000),
+        fallbackError: "Unable to submit feedback.",
       });
-      const result = await response.json().catch(() => ({})) as {
-        error?: string;
-        retryAfterMs?: number;
-      };
-      if (!response.ok) {
-        const error = new Error(result.error || "Unable to submit feedback.") as Error & { status?: number; retryAfterMs?: number };
-        error.status = response.status;
-        error.retryAfterMs = result.retryAfterMs;
-        throw error;
-      }
+      if (result?.submitted !== true) throw new Error("Feedback acknowledgement is missing.");
       pendingFeedbackRef.current = null;
 
       try {

@@ -1,0 +1,48 @@
+import { expect, test } from "@playwright/test";
+const entry = { id: "feedback", userId: "passenger", userName: "Browser Passenger", type: "general", busId: null,
+  driverId: null, sessionId: null, rating: null, comment: "Browser verification", timestamp: null, status: "new" };
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/v2/feedback**", async route => {
+    if (route.request().method() === "PATCH") await route.fulfill({ json: { updated: true, status: "reviewed" } });
+    else await route.fulfill({ json: { feedbacks: [entry] } });
+  });
+});
+test("protected data waits for verification and status updates after acknowledgement", async ({ page }) => {
+  const requests: string[] = []; page.on("request", request => { if (request.url().includes("/api/v2/feedback")) requests.push(request.url()); });
+  await page.goto("/"); await expect(page.getByText("Signing you in…")).toBeVisible(); expect(requests).toEqual([]);
+  await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
+  await page.getByRole("button", { expanded: false }).click(); await page.getByRole("button", { name: "reviewed", exact: true }).click();
+  await expect(page.getByRole("button", { name: "reviewed", exact: true })).toBeDisabled();
+  expect(requests).toHaveLength(2);
+});
+test("App Check errors show recovery controls without mounting feedback", async ({ page }) => {
+  await page.goto("/"); await expect(page.getByText("Signing you in…")).toBeVisible();
+  await page.getByRole("button", { name: "Reject verification" }).click();
+  await expect(page.getByRole("alert")).toContainText("Security verification is unavailable");
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible(); await expect(page.getByText("Browser Passenger")).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again" }).click(); await expect(page.getByText("Signing you in…")).toBeVisible();
+  await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
+});
+test("embedded feedback retries GET denial and rejects a failed PATCH", async ({ page }) => {
+  let calls = 0;
+  await page.route("**/api/v2/feedback**", async route => {
+    if (route.request().method() === "PATCH") return route.fulfill({ status: 403, json: { error: "Admin write rejected" } });
+    if (++calls === 1) return route.fulfill({ status: 403, json: { error: "Admin read rejected" } });
+    return route.fulfill({ json: { feedbacks: [entry] } });
+  });
+  await page.goto("/?embedded"); await expect(page.getByText("Signing you in…")).toBeVisible();
+  await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Admin read rejected")).toBeVisible();
+  await page.getByRole("button", { name: /retry/i }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
+  await page.getByRole("button", { expanded: false }).click(); await page.getByRole("button", { name: "reviewed", exact: true }).click();
+  await expect(page.getByText("Admin write rejected")).toBeVisible(); await expect(page.getByRole("button", { name: "new", exact: true })).toBeDisabled();
+});
+test("account switches hide previous data and wait for fresh verification", async ({ page }) => {
+  const tokens: string[] = []; await page.route("**/api/v2/feedback", async route => {
+    tokens.push(route.request().headers().authorization); await route.fulfill({ json: { feedbacks: [entry] } });
+  });
+  await page.goto("/"); await expect(page.getByText("Signing you in…")).toBeVisible();
+  await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
+  await page.getByRole("button", { name: "Switch account" }).click(); await expect(page.getByText("Browser Passenger")).toHaveCount(0);
+  await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
+  expect(tokens).toEqual(["Bearer token-qa-admin", "Bearer token-qa-second"]);
+});

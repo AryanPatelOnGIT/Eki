@@ -239,21 +239,30 @@ router.post("/", requireAuth, async (req: AuthenticatedRequest, res: Response) =
 
 /** GET /api/v2/feedback — admin-only feedback review list. */
 feedbackV2Router.get("/", requireAdmin, async (_req, res) => {
+  res.set("Cache-Control", "no-store");
   try {
     const snapshot = await db
       .collection("feedbacks")
       .orderBy("timestamp", "desc")
       .limit(200)
       .get();
-    res.set("Cache-Control", "no-store");
     res.json({
       feedbacks: snapshot.docs.map((document) => {
         const data = document.data();
         const timestamp = data.timestamp;
         return {
           id: document.id,
-          ...data,
-          timestamp: timestamp && typeof timestamp.toMillis === "function"
+          userId: typeof data.userId === "string" ? data.userId : "",
+          userName: typeof data.userName === "string" ? data.userName : "Passenger",
+          type: data.type === "ride" ? "ride" : "general",
+          busId: typeof data.busId === "string" ? data.busId : null,
+          driverId: typeof data.driverId === "string" ? data.driverId : null,
+          sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
+          rating: typeof data.rating === "number" && Number.isFinite(data.rating) ? data.rating : null,
+          comment: typeof data.comment === "string" ? data.comment : "",
+          status: data.status === "reviewed" || data.status === "resolved" ? data.status : "new",
+          timestamp: timestamp && Number.isSafeInteger(timestamp.seconds) &&
+            Number.isInteger(timestamp.nanoseconds) && timestamp.nanoseconds >= 0 && timestamp.nanoseconds < 1e9
             ? { seconds: timestamp.seconds, nanoseconds: timestamp.nanoseconds }
             : null,
         };

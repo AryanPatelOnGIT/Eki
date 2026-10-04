@@ -79,6 +79,13 @@ describe("telemetry motion plausibility", () => {
     expect(adaptiveGnssErrorMeters(null, 0, 0, 60_000)).toBe(50);
   });
 
+  it.each([null, undefined, Number.NaN, Infinity, -1])(
+    "falls back to HDOP when explicit accuracy is unavailable: %s",
+    accuracy => {
+      expect(adaptiveGnssErrorMeters(4, 30, 30, 0, accuracy)).toBe(43);
+    },
+  );
+
   it("rejects stationary multipath that exceeds the adaptive budget", () => {
     expect(
       isPlausibleTelemetryTransition(

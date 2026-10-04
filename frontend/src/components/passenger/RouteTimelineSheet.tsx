@@ -11,6 +11,7 @@ interface RouteTimelineSheetProps {
   headerContent?: React.ReactNode;
   bottomControls?: React.ReactNode;
   walkMinutesToTarget?: number;
+  preview?: boolean;
   currentStopIndex?: number; // Authoritative index from driver/ESP32 via RTDB
 }
 
@@ -21,6 +22,7 @@ export default function RouteTimelineSheet({
   bottomControls,
   walkMinutesToTarget,
   currentStopIndex,
+  preview = false,
 }: RouteTimelineSheetProps) {
   const [isOpen, setIsOpen] = useState(false);
   if (!route || !route.stops || route.stops.length === 0) return null;
@@ -32,7 +34,7 @@ export default function RouteTimelineSheet({
       isOpen={isOpen}
       onToggle={() => setIsOpen(!isOpen)}
       headerIcon={<RouteIcon className="w-4 h-4" />}
-      headerTitle="Route Timeline"
+      headerTitle={preview ? "Configured route" : "Route Timeline"}
       bottomControls={bottomControls}
     >
       {/* Route name */}
@@ -49,11 +51,11 @@ export default function RouteTimelineSheet({
 
           // A stop is "passed" if the bus has moved beyond it.
           // If driver hasn't pushed any index yet, fall back to ETA inference.
-          const hasEtaData = Object.keys(stopETAs).length > 0;
-          const etaMinutes = stopETAs[stop.id];
+          const hasEtaData = !preview && Object.keys(stopETAs).length > 0;
+          const etaMinutes = preview ? undefined : stopETAs[stop.id];
 
           let isPast: boolean;
-          if (currentStopIndex !== undefined) {
+          if (!preview && currentStopIndex !== undefined) {
             // Driver/ESP32 is source of truth
             isPast = index < currentStopIndex;
           } else {
@@ -65,7 +67,7 @@ export default function RouteTimelineSheet({
           const isDimmed = isPast;
 
           // The stop the bus is currently heading towards
-          const isNextStop = currentStopIndex !== undefined
+          const isNextStop = !preview && currentStopIndex !== undefined
             ? index === currentStopIndex
             : false;
 
@@ -136,19 +138,19 @@ export default function RouteTimelineSheet({
                   {isTarget && (
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
                       style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}>
-                      {isFirst ? "Boarding Stop" : isLast ? "Destination" : "Selected Stop"}
+                      {preview ? "Selected stop" : isFirst ? "Boarding Stop" : isLast ? "Destination" : "Selected Stop"}
                     </span>
                   )}
                   {isFirst && !isTarget && (
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
                       style={{ background: "var(--surface-3)", color: "var(--text-ghost)" }}>
-                      Start
+                      {preview ? "Route endpoint" : "Start"}
                     </span>
                   )}
                   {isLast && !isTarget && (
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
                       style={{ background: "var(--surface-3)", color: "var(--text-ghost)" }}>
-                      Terminus
+                      {preview ? "Route endpoint" : "Terminus"}
                     </span>
                   )}
                   {isTarget && typeof walkMinutesToTarget === "number" && (

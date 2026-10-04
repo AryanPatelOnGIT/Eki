@@ -1,4 +1,5 @@
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
+import { geometryPublicationIsFresh } from "./rtdbRetention";
 import { randomBytes } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -695,6 +696,7 @@ async function activateReroute(
 ): Promise<void> {
   // A new session must never reuse a cached geometry version from an earlier ride.
   const nextVersion = Math.max(expectedVersion + 1, Date.now());
+  const publicationCreatedAt = Date.now();
   const path = decodePolyline(geometry.encodedPolyline);
   const match = matchRoutePosition(
     { lat: sample.lat, lng: sample.lng },
@@ -712,10 +714,11 @@ async function activateReroute(
     direction,
     source: "dynamic-reroute",
     routeVersion: nextVersion,
+    createdAt: { ".sv": "timestamp" },
   });
   await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
     const live = current as Record<string, unknown> | null;
-    if (!rerouteContextIsCurrent(live, {
+    if (!geometryPublicationIsFresh(publicationCreatedAt) || !rerouteContextIsCurrent(live, {
       requestId,
       routeVersion: expectedVersion,
       sessionId: expectedSessionId,

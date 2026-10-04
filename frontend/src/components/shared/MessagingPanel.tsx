@@ -15,6 +15,7 @@ import { auth } from "@/lib/firebaseAuth";
 import { waitForAuth } from "@/lib/authState";
 import { beginMessageWriteTrace, recordMessageWriteTrace, recordMessageListenerTrace, recordRealtimePayload, recordRealtimeWatch, telemetryTraceEnabled } from "@/lib/telemetryTrace";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { apiRequest } from "@/lib/apiClient";
 
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_MESSAGES_PER_MINUTE = 10;
@@ -195,30 +196,28 @@ export default function MessagingPanel({
         : { text, requestId: crypto.randomUUID() };
       pendingMessageRef.current = pending;
       const traceStartedAt = beginMessageWriteTrace(sessionId);
-      const response = await fetch(`${backendUrl}/api/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          text,
-          requestId: pending.requestId,
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const result = await response.json().catch(() => ({})) as {
-        id?: string;
-        error?: string;
-        retryAfterMs?: number;
-        moderated?: boolean;
-      };
-      recordMessageWriteTrace(sessionId, result.id, traceStartedAt, response.status);
-      if (!response.ok) {
-        const error = new Error(result.error || "Unable to send message.") as Error & { status?: number };
-        error.status = response.status;
-        throw error;
+      let responseStatus: number | undefined;
+      let result: { id?: string; moderated?: boolean } | undefined;
+      try {
+        result = await apiRequest<{ id?: string; moderated?: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            text,
+            requestId: pending.requestId,
+          }),
+          fallbackError: "Unable to send message.",
+          onResponseStatus: (status) => { responseStatus = status; },
+        });
+      } finally {
+        if (responseStatus !== undefined) {
+          recordMessageWriteTrace(sessionId, result?.id, traceStartedAt, responseStatus);
+        }
       }
+      if (!result?.id) throw new Error("Message acknowledgement is missing.");
       pendingMessageRef.current = null;
       setMessagesSentCounts([...recentMessages, { timestamp: now }]);
       setNewMessage("");

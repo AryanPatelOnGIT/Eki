@@ -1,10 +1,13 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-03.
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
 has no Firebase credential and cannot choose its bus or route.
+An authenticated encrypted flash checkpoint can restore one committed fix after
+complete power loss. This does not preserve every fix; see the
+[recovery limits and stationary acceptance procedure](COLD_POWER_RECOVERY.md).
 
 ## Before you start
 
@@ -218,6 +221,10 @@ done safely while retaining the current Wi-Fi stack.
   backend's 60-second freshness gate. A 100-sample RTC ring survives resets, evicts oldest on overflow,
   sends newest first after outages, compacts acknowledged older fixes, and
   discards samples outside the backend's 55-second safety margin.
+- On cold boot, one compatible flash checkpoint can restore its original retry
+  sequence. Warm RTC state wins. Checkpoints use a ten-second scheduling interval;
+  newer uncommitted fixes can be lost. Serial `[PowerCheckpoint]` logs expose
+  readiness, recovery, storage slots, interval, commit outcome and write time.
 - Wi-Fi retries indefinitely with bounded 5-60 second exponential backoff,
   strongest-AP fast scan, auto-reconnect, and modem sleep disabled.
 - HTTP 200/202 succeeds. Transport errors, 408/425/429, and 5xx retain the

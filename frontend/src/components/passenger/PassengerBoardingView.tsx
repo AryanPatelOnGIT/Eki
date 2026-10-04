@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RouteData } from "@/hooks/useRoutes";
-import CustomSelect from "@/components/ui/CustomSelect";
+import InAppSelect from "@/components/ui/InAppSelect";
 import { errorMessage } from "@/lib/errors";
 import { auth } from "@/lib/firebaseAuth";
+import { apiRequest } from "@/lib/apiClient";
 
 interface Props {
   sessionId: string;
@@ -111,7 +112,7 @@ export default function PassengerBoardingView({
         currentUser.getIdToken(),
         updatingExistingPassenger ? Promise.resolve(null) : getCurrentPosition(),
       ]);
-      const response = await fetch(`${backendUrl}/api/sessions/${sessionId}/join`, {
+      const result = await apiRequest<{ joined?: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}/join`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -124,13 +125,10 @@ export default function PassengerBoardingView({
           alightingStopId: alightingStopId || null,
         }),
         signal: controller.signal,
+        fallbackError: "Unable to board.",
       });
-      const result = await response.json().catch(() => ({})) as {
-        joined?: boolean;
-        error?: string;
-      };
-      if (!response.ok || result.joined !== true) {
-        throw new Error(result.error || "Unable to board.");
+      if (!result || result.joined !== true) {
+        throw new Error("Unable to board.");
       }
       if (!mountedRef.current || controller.signal.aborted) return;
       setHasJoined(true);
@@ -167,7 +165,7 @@ export default function PassengerBoardingView({
       >
         {tripState === "in_service" ? "Ride in service" : "Ride armed · awaiting stop 1"}
       </p>
-      <CustomSelect
+      <InAppSelect
         name="boarding-stop"
         ariaLabel="Boarding stop"
         placeholder="Boarding..."
@@ -180,7 +178,7 @@ export default function PassengerBoardingView({
         options={[{ value: "", label: "Boarding..." }, ...stopOptions]}
         style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
       />
-      <CustomSelect
+      <InAppSelect
         name="destination-station"
         ariaLabel="Destination station"
         placeholder="Choose destination station..."

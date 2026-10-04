@@ -4,6 +4,7 @@ import {
   type ActiveBusEntry,
 } from "./activeBusEntries";
 import { hasValidBusCoordinates } from "./liveBusFreshness";
+import { normalizePassengerBusAvailability } from "./passengerBusAvailability";
 
 export interface PassengerLiveBus extends ActiveBusEntry {
   busId: string;
@@ -123,7 +124,28 @@ export function passengerTripStates(
   return states;
 }
 
-export function passengerLiveBusSelectionKey(bus: PassengerLiveBus): string {
+export type PassengerMapBus = Omit<PassengerLiveBus, "tripState"> & {
+  tripState?: PassengerLiveBus["tripState"];
+};
+
+/** Viewing an online device does not create or authorize a passenger ride. */
+export function normalizePassengerMapBus(
+  key: string, value: unknown, now = Date.now(),
+): PassengerMapBus | null {
+  const service = normalizePassengerLiveBus(key, value, now);
+  if (service) return service;
+  const device = normalizePassengerBusAvailability(key, value, now);
+  if (!device || !hasValidBusCoordinates(device.lat, device.lng)) return null;
+  return {
+    ...device,
+    lat: device.lat as number, lng: device.lng as number,
+    heading: device.heading ?? 0, speed: device.speed ?? 0,
+    timestamp: device.timestamp ?? 0, deviceState: "online",
+    motionState: device.motionState ?? "uncertain",
+  };
+}
+
+export function passengerLiveBusSelectionKey(bus: Pick<ActiveBusEntry, "busId" | "routeId" | "sessionId">): string {
   return typeof bus.sessionId === "string" && bus.sessionId.length > 0
     ? `session:${bus.sessionId}`
     : `bus:${bus.routeId}:${bus.busId}`;

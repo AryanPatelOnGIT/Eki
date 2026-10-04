@@ -1,6 +1,7 @@
-import type {
-  DocumentReference,
-  Firestore,
+import {
+  Timestamp,
+  type DocumentReference,
+  type Firestore,
 } from "firebase-admin/firestore";
 
 const TERMINAL_RIDE_STATUSES = new Set(["completed", "interrupted", "failed"]);
@@ -67,10 +68,14 @@ export async function deleteTerminalRideHistory(
     ...matchingSessionSnapshot.docs.map((document) => document.ref),
   ]);
 
-  if (sessionSnapshot.exists) {
-    await firestore.recursiveDelete(sessionRef);
-  }
+  const jobRef = firestore.collection("_ride_history_deletion_jobs").doc(sessionId);
+  await jobRef.set({ requestedAt: Timestamp.now() }, { merge: true });
+  // A previous failure may have removed the parent while leaving descendants.
+  // Recurse even without a parent; retain the independent job until projections
+  // are removed too, so the leader can finish an interrupted manual request.
+  await firestore.recursiveDelete(sessionRef);
   await deleteReferences(firestore, projectionReferences);
+  await jobRef.delete();
 
   return {
     sessionDeleted: sessionSnapshot.exists,

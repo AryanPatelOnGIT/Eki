@@ -34,7 +34,7 @@ export function adaptiveGnssErrorMeters(
   const hdopError = Number.isFinite(hdop) && hdop >= 0 && hdop <= 99
     ? GNSS_ERROR_MIN_M + hdop * 7
     : GNSS_ERROR_MAX_M;
-  const reportedAccuracy = Number(accuracyMeters);
+  const reportedAccuracy = typeof accuracyMeters === "number" ? accuracyMeters : Number.NaN;
   const qualityError = Number.isFinite(reportedAccuracy) && reportedAccuracy >= 0
     ? reportedAccuracy
     : hdopError;
@@ -66,6 +66,10 @@ export function isPlausibleTelemetryTransition(
     TELEMETRY_MAX_TRANSITION_GAP_MS,
     transitionGapMs,
   );
+  return withinTravelEnvelope(previous, next, elapsedMs);
+}
+
+function withinTravelEnvelope(previous: TelemetryMotionSample, next: TelemetryMotionSample, elapsedMs: number): boolean {
   const maximumSpeedKmh = Math.max(previous.speed, next.speed, 0);
   const errorBudget = Math.max(
     adaptiveGnssErrorMeters(
@@ -85,4 +89,57 @@ export function isPlausibleTelemetryTransition(
     errorBudget + (maximumSpeedKmh / 3.6) * (elapsedMs / 1000);
 
   return haversineMeters(previous, next) <= reachableMeters;
+}
+
+export interface OutageReacquisitionEvidence {
+  count: 1 | 2;
+  startedAt: number;
+}
+
+type QualifiedMotionSample = TelemetryMotionSample & { motionState: string };
+function usableReacquisitionFix(sample: QualifiedMotionSample): boolean {
+  return Number.isFinite(sample.lat) && Math.abs(sample.lat) <= 90 &&
+    Number.isFinite(sample.lng) && Math.abs(sample.lng) <= 180 &&
+    Number.isFinite(sample.speed) && sample.speed >= 0 && sample.speed <= 200 &&
+    Number.isSafeInteger(sample.timestamp) &&
+    typeof sample.gpsHdop === "number" && Number.isFinite(sample.gpsHdop) &&
+    sample.gpsHdop >= 0 && sample.gpsHdop <= GNSS_HDOP_MAX &&
+    (sample.motionState === "moving" || sample.motionState === "stopped");
+}
+
+/** A longer travel allowance requires three coherent fixes, never one outlier.
+ * Evidence shares the transaction with rawLocation and does not advance the
+ * accepted anchor until corroborated. This is a bounded policy, not GNSS proof. */
+export function evaluateOutageReacquisition(
+  previous: TelemetryMotionSample | null,
+  next: QualifiedMotionSample,
+  priorRaw: unknown,
+  evidence: unknown,
+): { accepted: boolean; pending?: OutageReacquisitionEvidence } {
+  if (!previous || !usableReacquisitionFix(next)) return { accepted: false };
+  const gap = next.timestamp - previous.timestamp;
+  if (gap <= TELEMETRY_MAX_TRANSITION_GAP_MS || gap > TELEMETRY_REACQUIRE_AFTER_MS ||
+      !withinTravelEnvelope(previous, next, gap)) return { accepted: false };
+
+  const first = { accepted: false, pending: { count: 1 as const, startedAt: next.timestamp } };
+  if (!priorRaw || typeof priorRaw !== "object" || !evidence || typeof evidence !== "object") return first;
+  const raw = priorRaw as Record<string, unknown>;
+  const pending = evidence as Record<string, unknown>;
+  // Do not coerce missing/null/string fields into an apparently valid fix.
+  if (typeof raw.lat !== "number" || typeof raw.lng !== "number" || typeof raw.speed !== "number" ||
+      typeof raw.sampledAt !== "number" || typeof raw.motionState !== "string" ||
+      typeof raw.gpsHdop !== "number") return first;
+  const previousCandidate = { lat: raw.lat, lng: raw.lng, speed: raw.speed,
+    timestamp: raw.sampledAt, motionState: raw.motionState, gpsHdop: raw.gpsHdop };
+  const candidateGap = next.timestamp - previousCandidate.timestamp;
+  if (!usableReacquisitionFix(previousCandidate) || candidateGap < 500 || candidateGap > 5_000 ||
+      !isPlausibleTelemetryTransition(previousCandidate, next) ||
+      (pending.count !== 1 && pending.count !== 2) ||
+      typeof pending.startedAt !== "number" || !Number.isSafeInteger(pending.startedAt) ||
+      pending.startedAt <= previous.timestamp || pending.startedAt > previousCandidate.timestamp ||
+      (pending.count === 1 && pending.startedAt !== previousCandidate.timestamp) ||
+      (pending.count === 2 && (previousCandidate.timestamp - pending.startedAt < 500 ||
+        previousCandidate.timestamp - pending.startedAt > 5_000))) return first;
+  if (pending.count === 2) return { accepted: true };
+  return { accepted: false, pending: { count: 2, startedAt: pending.startedAt } };
 }

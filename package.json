@@ -16,6 +16,7 @@
     "lint": "npm run lint --workspace=frontend && npm run lint --workspace=backend",
     "test": "node --test scripts/*.test.mjs && npm run verify:openapi && npm run verify:ui-contracts && npm run test --workspace=backend && npm run test --workspace=frontend",
     "test:e2e": "playwright test",
+    "test:e2e:admin": "playwright test --config playwright.admin-access.config.ts",
     "test:rules": "node scripts/run-rules-emulator.mjs",
     "verify:rtdb-instance": "node scripts/rtdb-instance-config.mjs",
     "verify:web-backend-contract": "node scripts/verify-web-backend-contract.mjs",
@@ -27,6 +28,10 @@
     "verify:openapi": "node scripts/verify-openapi.mjs"
   },
   "overrides": {
+    "@next/eslint-plugin-next": {
+      "fast-glob": "$fast-glob"
+    },
+    "@fastify/busboy": "^3.2.2",
     "@grpc/grpc-js": "1.14.5",
     "postcss": "^8.5.23",
     "nanoid": "^3.3.17",
@@ -39,6 +44,7 @@
     }
   },
   "devDependencies": {
+    "fast-glob": "file:tools/next-lint-glob",
     "@playwright/test": "^1.63.0",
     "concurrently": "^8.2.2"
   }

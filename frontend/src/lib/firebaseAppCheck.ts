@@ -11,6 +11,13 @@ import { withTimeout } from "./promiseTimeout";
 let appCheck: AppCheck | null = null;
 const APP_CHECK_TOKEN_TIMEOUT_MS = 10_000;
 
+export class AppCheckVerificationError extends Error {
+  constructor() {
+    super("Security verification is unavailable. Check App Check configuration and try again.");
+    this.name = "AppCheckVerificationError";
+  }
+}
+
 function debugOnlyProvider(): CustomProvider {
   return new CustomProvider({
     // Firebase uses the debug token exchange before calling the provider. This
@@ -36,11 +43,10 @@ function initializeFirebaseAppCheck(): AppCheck | null {
   }
   const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY;
   if (!siteKey && !isDebug) {
-    // App Check is required for production, but local development may run
-    // against a Firebase project where enforcement is disabled. In that case
-    // leave App Check uninitialised instead of preventing authenticated users
-    // from entering the app just because no local site key was configured.
-    if (process.env.NODE_ENV !== "production") return null;
+    // Console enforcement cannot be inferred from NODE_ENV. Local opt-out
+    // requires an explicit setting and is never accepted in production.
+    if (process.env.NODE_ENV !== "production" &&
+      process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED === "true") return null;
     throw new Error("[AppCheck] reCAPTCHA Enterprise site key is not configured.");
   }
   const provider = siteKey ? new ReCaptchaEnterpriseProvider(siteKey) : debugOnlyProvider();
@@ -56,24 +62,24 @@ function initializeFirebaseAppCheck(): AppCheck | null {
  * evaluation time. Calling it multiple times is safe — the inner guard ensures
  * AppCheck is only initialized once.
  *
- * Returns a Promise<void> that resolves only after a valid first App Check
- * token has been obtained. Callers can await it before accessing protected
- * Firebase resources.
+ * Browser production resolves only after a valid first App Check token.
+ * Server calls and explicitly unenforced local development are no-ops.
  */
 export async function ensureAppCheck(): Promise<void> {
-  const instance = initializeFirebaseAppCheck();
-  if (!instance) {
-    // This is either server-side invocation (which should be a no-op) or a
-    // development build without App Check configured.
-    return;
-  }
-  const tokenResult = await withTimeout(
-    getToken(instance),
-    APP_CHECK_TOKEN_TIMEOUT_MS,
-    "App Check token acquisition timed out.",
-  );
-  const result = tokenResult as typeof tokenResult & { error?: unknown };
-  if (!result.token || result.error) {
-    throw new Error("[AppCheck] Token acquisition failed.");
+  if (typeof window === "undefined") return;
+  try {
+    const instance = initializeFirebaseAppCheck();
+    if (!instance) return;
+    const tokenResult = await withTimeout(
+      getToken(instance),
+      APP_CHECK_TOKEN_TIMEOUT_MS,
+      "App Check token acquisition timed out.",
+    );
+    const result = tokenResult as typeof tokenResult & { error?: unknown };
+    if (!result.token || result.error) throw new Error("[AppCheck] Token acquisition failed.");
+  } catch {
+    // Normalize provider, configuration and deadline failures without leaking
+    // provider response/debug credential details into UI messages.
+    throw new AppCheckVerificationError();
   }
 }

@@ -250,6 +250,12 @@ function expiredSelection(
   };
 }
 
+/** A held/older target must never acknowledge the current sample's position. */
+export function markerTargetIsCurrent(input: LiveBusPositionInput, target: LiveBusMarkerSelection): boolean {
+  return target.decision !== "match_pending" && target.reason !== "older_snapshot" &&
+    target.contextKey === routeContextKey(input) && sameSample(target.latestSample, sampleIdentity(input));
+}
+
 /**
  * Select one display target while carrying only the small amount of state
  * needed to bridge an asynchronous route match. The raw position is the

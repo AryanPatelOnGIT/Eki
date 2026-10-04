@@ -62,6 +62,12 @@ describe("presence and passenger service state", () => {
 describe("isActiveBusEntry", () => {
   const now = 2_000_000_000_000;
 
+  it("ignores the retired commit alias while still validating canonical receipt time", () => {
+    const live = { busId: "bus_1", timestamp: now - 1_000, receivedAt: now - 900, rtdbCommittedAt: "legacy-invalid" };
+    expect(isActiveBusEntry(live, now)).toBe(true);
+    expect(isActiveBusEntry({ ...live, receivedAt: "invalid" }, now)).toBe(false);
+  });
+
   it("rejects non-objects and missing identities", () => {
     expect(isActiveBusEntry(null, now)).toBe(false);
     expect(isActiveBusEntry("bus_1", now)).toBe(false);

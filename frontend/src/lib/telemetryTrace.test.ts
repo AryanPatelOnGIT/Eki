@@ -6,6 +6,19 @@ describe("browser telemetry trace activation", () => {
     vi.resetModules();
   });
 
+  it.each([
+    [{ receivedAt: 2_000 }, 2_000],
+    [{ rtdbCommittedAt: 1_000 }, 1_000],
+    [{ receivedAt: 2_000, rtdbCommittedAt: 1_000 }, 2_000],
+    [{ receivedAt: 2_000, rtdbCommittedAt: "retired-invalid-alias" }, 2_000],
+  ])("exports commit timing compatibly for %j", async (timing, expected) => {
+    const browserWindow = { location: { search: "?telemetryTrace=1" } } as unknown as Window & typeof globalThis;
+    vi.stubGlobal("window", browserWindow);
+    const trace = await import("./telemetryTrace");
+    trace.recordTelemetryListenerDelivery("bus_1_route_1", { busId: "bus_1", ...timing });
+    expect(browserWindow.__ekiTelemetryTrace!.snapshot().records[0].rtdbCommittedAtMs).toBe(expected);
+  });
+
   it("enables after an auth redirect adds the trace query parameter", async () => {
     const browserWindow = {
       location: { search: "?next=%2Fadmin" },

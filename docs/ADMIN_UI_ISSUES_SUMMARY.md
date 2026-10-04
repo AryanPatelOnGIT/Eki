@@ -20,7 +20,7 @@ The error originated from `frontend/src/lib/firebaseAppCheck.ts` during authenti
 
 **Fix applied**
 
-- Development builds without a site key now skip App Check initialization when App Check enforcement is disabled in Firebase.
+- Development without a site key skips initialization only with the explicit `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED=true` opt-out for a project whose enforcement is disabled. The browser cannot infer console enforcement. Enforced local projects require a registered debug token or valid provider key.
 - Production still fails closed when the required key is missing.
 - `ensureAppCheck()` safely handles non-browser/development no-op behavior.
 
@@ -59,7 +59,7 @@ The authenticated user was published to React state before the first App Check t
 
 **Fix applied**
 
-- Authentication now waits for the first App Check check/token before publishing the signed-in user.
+- Authentication waits for App Check and role verification before publishing the signed-in user and opening protected readiness; readiness resets on account changes. Timeouts never grant readiness.
 - Firestore listeners therefore start only after authentication and App Check are ready.
 - If App Check fails, the app does not publish a partially verified user and show a misleading Firestore permission error.
 
@@ -96,7 +96,7 @@ The feedback screen read the sensitive Firestore `feedbacks` collection directly
 - Added an admin-protected `GET /api/v2/feedback` endpoint.
 - The backend reads and serializes the latest 200 feedback records with the Admin SDK.
 - The Admin UI now loads feedback through that endpoint using the Firebase ID token.
-- Status changes update the local list immediately after the existing admin-protected PATCH succeeds.
+- Standalone and embedded feedback views use the shared panel, validate list responses, abort stale reads, and hide previous-account data. Status changes update the local list only after a valid acknowledgement from the admin-protected PATCH.
 - Firestore rules remain restricted to `allow read: if isAdmin();`; no public access was added.
 
 ## 4. Settings save shows `Failed to fetch`
@@ -131,12 +131,7 @@ This starts the frontend on `http://localhost:3000` and backend on `http://local
 
 ## Verification
 
-The frontend currently passes:
-
-- 35 test files
-- 221 tests
-- TypeScript validation
-- ESLint
+The original 35-file/221-test statement described the old branch. Current regression coverage includes App Check configuration/debug/production/token/deadline behavior; auth readiness, restoration timeout and account switches; collection/settings listener disposal; visible null-user security recovery; actual admin middleware and feedback HTTP contracts; and standalone/embedded feedback API loading, retry and acknowledged status changes. Final run counts and exact-head CI evidence are recorded in PR #205.
 
 ## Follow-up checklist
 

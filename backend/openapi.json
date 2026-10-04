@@ -5293,6 +5293,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication verification capacity is exhausted; retry shortly."
           }
         },
         "x-auth-class": "admin",
@@ -9411,7 +9421,7 @@
           "timestamp",
           "status"
         ],
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "FeedbackList": {
         "type": "object",
@@ -9420,7 +9430,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Feedback"
-            }
+            },
+            "maxItems": 200
           }
         },
         "required": [

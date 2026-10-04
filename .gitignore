@@ -78,6 +78,8 @@ temp/
 
 # Firmware project directory (PlatformIO build files)
 hardware/.pio/
+hardware/sdkconfig.esp32dev-journal
+hardware/sdkconfig.esp32dev-journal.old
 
 # Dev utility & one-off scripts (no secrets, but should not be public)
 simulator.js
@@ -86,6 +88,8 @@ frontend/fetch_route.js
 frontend/google_maps_recovery_instructions.md
 
 # Build artifacts
+test-results/
+.playwright-admin-access-results/
 frontend/tsconfig.tsbuildinfo
 __pycache__/
 

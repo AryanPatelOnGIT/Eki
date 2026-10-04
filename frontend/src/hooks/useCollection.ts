@@ -8,7 +8,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseFirestore";
-import { waitForAuth } from "@/lib/authState";
+import { getAuthVerificationGeneration, waitForAuth } from "@/lib/authState";
 import { useAuth } from "./useAuth";
 import {
   buildCollectionCacheKey,
@@ -30,6 +30,7 @@ interface CacheEntry {
 }
 
 const queryCache = new Map<string, CacheEntry>();
+let cacheGeneration = 0;
 
 /**
  * Drop all cached collection snapshots and detach the shared listeners.
@@ -37,7 +38,9 @@ const queryCache = new Map<string, CacheEntry>();
  * account can never leak into the next session.
  */
 export function clearCollectionCache(): void {
+  const callbacks = new Set<() => void>();
   for (const entry of queryCache.values()) {
+    entry.callbacks.forEach(callback => callbacks.add(callback));
     if (entry.timeoutId) clearTimeout(entry.timeoutId);
     entry.unsubscribe?.();
     entry.unsubscribe = null;
@@ -46,6 +49,8 @@ export function clearCollectionCache(): void {
     entry.error = null;
   }
   queryCache.clear();
+  cacheGeneration++;
+  callbacks.forEach(callback => callback());
 }
 
 /**
@@ -63,7 +68,9 @@ export function useCollection<T>(
   collectionName: string,
   options: CollectionOptions = {},
 ) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+  const canSubscribe = Boolean(user?.role) && !authLoading;
+  const authGeneration = getAuthVerificationGeneration();
   const [, forceRender] = useState(0);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const maxResults = options.maxResults ?? 250;
@@ -77,10 +84,13 @@ export function useCollection<T>(
   const cacheKey = JSON.stringify([
     "principal-query-v1",
     principalScope,
+    authGeneration,
+    cacheGeneration,
     queryKey,
   ]);
 
   useEffect(() => {
+    if (!canSubscribe) return;
     let entry = queryCache.get(cacheKey);
     if (!entry) {
       entry = {
@@ -105,6 +115,7 @@ export function useCollection<T>(
 
     if (!currentEntry.unsubscribe) {
       const reportListenerError = (error: unknown) => {
+        if (queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
         // Keep the last snapshot only in `staleData`; live `data` is hidden
         // until a new listener produces an authoritative snapshot.
         const normalizedError = normalizeCollectionError(collectionName, error);
@@ -121,7 +132,7 @@ export function useCollection<T>(
 
       waitForAuth().then(() => {
         // Double check if we still need it after auth resolves
-        if (currentEntry.listenerCount > 0 && !currentEntry.unsubscribe) {
+        if (getAuthVerificationGeneration() === authGeneration && queryCache.get(cacheKey) === currentEntry && currentEntry.listenerCount > 0 && !currentEntry.unsubscribe) {
           try {
             const constraints = [
               ...whereConstraints.map((constraint) =>
@@ -136,6 +147,7 @@ export function useCollection<T>(
             const unsubscribe = onSnapshot(
               query(collection(db, collectionName), ...constraints),
               (snapshot) => {
+                if (queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
                 currentEntry.data = snapshot.docs.map((doc) => ({
                   id: doc.id,
                   ...doc.data(),
@@ -154,7 +166,7 @@ export function useCollection<T>(
             reportListenerError(error);
           }
         }
-      });
+      }).catch(reportListenerError);
     }
 
     const trigger = () => forceRender(n => n + 1);
@@ -168,25 +180,18 @@ export function useCollection<T>(
       currentEntry.listenerCount--;
 
       if (currentEntry.listenerCount === 0) {
-        // Debounce unsubscribe to survive StrictMode and rapid navigation
-        currentEntry.timeoutId = setTimeout(() => {
-          if (currentEntry.listenerCount === 0 && currentEntry.unsubscribe) {
-            currentEntry.unsubscribe();
-            currentEntry.unsubscribe = null;
-            // Preserve the last snapshot only as explicitly stale data. Once
-            // detached, it must be revalidated before `data` is live again.
-            currentEntry.loading = true;
-          }
-        }, 3000);
+        currentEntry.unsubscribe?.();
+        currentEntry.unsubscribe = null;
+        currentEntry.loading = true;
       }
     };
     // The cache key encodes every query dimension, so it is the only safe
     // dependency: array options (whereConstraints) would otherwise re-subscribe
     // on every render when a caller passes a new inline array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey, retryGeneration]);
+  }, [cacheKey, canSubscribe, retryGeneration]);
 
-  const entry = queryCache.get(cacheKey);
+  const entry = canSubscribe ? queryCache.get(cacheKey) : undefined;
   const retry = useCallback(() => {
     const currentEntry = queryCache.get(cacheKey);
     if (currentEntry) {

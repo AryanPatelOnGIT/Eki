@@ -10,6 +10,8 @@ const LIVE_ROUTE_CONTEXT_FIELDS = [
   "routeMatchHistory",
   "offRouteSampleCount",
   "mapMatchUpdatedAt",
+  "mapMatchSeq",
+  "mapMatchSampledAt",
   "matchConfidence",
   "distanceToActiveRoute",
   "matchedLocation",

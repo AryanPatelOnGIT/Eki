@@ -17,6 +17,7 @@ export default function HomePage() {
   const {
     user,
     loading,
+    roleError,
     loginReady,
     loginError,
     loginLoading,
@@ -26,7 +27,7 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && !roleError) {
       const savedPath = window.localStorage.getItem("eki:last-workspace");
       const fallbackPath = user.role === "admin" ? "/admin" : "/passenger";
       router.replace(
@@ -35,7 +36,17 @@ export default function HomePage() {
           : fallbackPath,
       );
     }
-  }, [user, loading, router]);
+  }, [user, loading, roleError, router]);
+
+  if (!loading && roleError) {
+    return (
+      <main className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center bg-black text-white" role="alert">
+        <h1 className="text-xl font-semibold">Access could not be verified</h1>
+        <p>{roleError}</p>
+        <button type="button" className="btn-primary px-5 py-2.5" onClick={() => window.location.reload()}>Try again</button>
+      </main>
+    );
+  }
 
   // Only replace the page with a redirect spinner once we KNOW there's a
   // signed-in user. Do NOT block on `loading` — that hides the hero and

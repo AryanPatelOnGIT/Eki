@@ -10,8 +10,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { notifyAuthReady } from "@/lib/authState";
+import { beginAuthVerification, notifyAuthReady } from "@/lib/authState";
 import { withTimeout } from "@/lib/promiseTimeout";
+import { apiRequest } from "@/lib/apiClient";
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 10_000;
 
@@ -93,7 +94,7 @@ function useAuthState(): AuthContextValue {
     const authTimeout = window.setTimeout(() => {
       if (!disposed) {
         console.warn("Firebase auth restoration timed out.");
-        notifyAuthReady();
+        setRoleError("Sign-in restoration timed out. Reload the page to try again.");
         setLoading(false);
       }
     }, 8000);
@@ -128,7 +129,8 @@ function useAuthState(): AuthContextValue {
         unsubscribe = authModule.onAuthStateChanged(auth, async (firebaseUser) => {
           clearTimeout(authTimeout);
           const currentGen = ++generation;
-          notifyAuthReady();
+          beginAuthVerification();
+          setUser(null);
 
           if (firebaseUser) {
             setLoading(true);
@@ -140,8 +142,6 @@ function useAuthState(): AuthContextValue {
             // wait for the first App Check token before publishing the user;
             // Firestore listeners use that state to avoid permission-denied
             // requests made before App Check is ready.
-            const appCheckReady = import("@/lib/firebaseAppCheck")
-              .then(({ ensureAppCheck }) => ensureAppCheck());
             const isCurrentAuth = () =>
               !disposed &&
               currentGen === generation &&
@@ -149,7 +149,9 @@ function useAuthState(): AuthContextValue {
             setRoleError(null);
 
             try {
-              await appCheckReady;
+              const { ensureAppCheck } = await import("@/lib/firebaseAppCheck");
+              await ensureAppCheck();
+              if (!isCurrentAuth()) return;
               // Role claims are already present in a persisted Firebase session, so
               // this returns without a Firestore round trip for normal app starts.
               // They are issued by the trusted admin sync job, unlike client data.
@@ -175,6 +177,7 @@ function useAuthState(): AuthContextValue {
                   role: claimedRole,
                   isAnonymous: firebaseUser.isAnonymous,
                 });
+                notifyAuthReady();
                 return;
               }
 
@@ -187,6 +190,7 @@ function useAuthState(): AuthContextValue {
                   import("@/lib/firebaseCore"),
                 ]).then(([firestore, core]) => [firestore, core] as const);
               const db = getFirestore(firebaseApp);
+              if (!isCurrentAuth()) return;
               const userDocRef = doc(db, "users", firebaseUser.uid);
               const userSnap = await withTimeout(
                 getDoc(userDocRef),
@@ -208,21 +212,13 @@ function useAuthState(): AuthContextValue {
                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
                 const idToken = await firebaseUser.getIdToken();
                 if (backendUrl) {
-                  const response = await fetch(`${backendUrl}/api/users/bootstrap`, {
+                  const result = await apiRequest<{ role?: string; claimsUpdated?: boolean }>("/api/users/bootstrap", {
                     method: "POST",
                     headers: {
                       Authorization: `Bearer ${idToken}`,
                     },
-                    signal: AbortSignal.timeout(10_000),
+                    fallbackError: "Unable to bootstrap user profile.",
                   });
-                  const result = await response.json().catch(() => ({})) as {
-                    role?: string;
-                    claimsUpdated?: boolean;
-                    error?: string;
-                  };
-                  if (!response.ok) {
-                    throw new Error(result.error || "Unable to bootstrap user profile.");
-                  }
                   if (
                     result.role === "passenger" ||
                     result.role === "driver" ||
@@ -250,8 +246,9 @@ function useAuthState(): AuthContextValue {
                 role,
                 isAnonymous: firebaseUser.isAnonymous,
               });
+              notifyAuthReady();
             } catch (err) {
-              if (err instanceof Error && err.message.startsWith("[AppCheck]")) {
+              if (err instanceof Error && err.name === "AppCheckVerificationError") {
                 // Do not publish an authenticated user when App Check failed;
                 // otherwise every protected Firestore listener immediately
                 // retries and surfaces a misleading permission-denied error.
@@ -272,14 +269,7 @@ function useAuthState(): AuthContextValue {
                   ? "Your account is not permitted to verify this workspace."
                   : "We could not verify your access. Check your connection and try again.",
               );
-              setUser({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName,
-                photoURL: firebaseUser.photoURL,
-                role: null,
-                isAnonymous: firebaseUser.isAnonymous,
-              });
+              setUser(null);
             } finally {
               if (isCurrentAuth()) setLoading(false);
             }
@@ -288,6 +278,7 @@ function useAuthState(): AuthContextValue {
             setUser(null);
             setRoleError(null);
             setLoading(false);
+            notifyAuthReady();
           }
         });
         setLoginReady(true);
@@ -310,7 +301,6 @@ function useAuthState(): AuthContextValue {
         const code = authErrorCode(error);
         console.error("[Auth] Firebase auth initialization failed.", code);
         clearTimeout(authTimeout);
-        notifyAuthReady();
         if (!disposed) {
           loginDependencies.current = null;
           setLoginReady(false);
@@ -394,6 +384,8 @@ function useAuthState(): AuthContextValue {
         import("@/lib/firebaseAuth"),
       ]);
       const signedOutUid = auth.currentUser?.uid;
+      beginAuthVerification();
+      setUser(null);
       await signOut(auth);
       if (signedOutUid) {
         window.localStorage.removeItem(`eki:role:${signedOutUid}`);

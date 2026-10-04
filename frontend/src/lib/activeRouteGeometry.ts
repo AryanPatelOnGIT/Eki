@@ -20,6 +20,8 @@ export function activeBusNodeKey(busId: string, routeId: string): string {
 const cache = new Map<string, ActiveRouteGeometry | null>();
 const inflight = new Map<string, Promise<ActiveRouteGeometry | null>>();
 const CACHE_MAX = 100;
+// Match the server's geometry limit before decoding untrusted stored data.
+const MAX_ENCODED_POLYLINE_LENGTH = 500_000;
 
 function cacheKey(nodeKey: string, version: number): string {
   return `${nodeKey}:${version}`;
@@ -73,9 +75,18 @@ async function loadGeometry(
   }
   let geometry: ActiveRouteGeometry | null = null;
   const value = snapshot?.val() as { polyline?: unknown } | null;
-  if (typeof value?.polyline === "string" && value.polyline.length > 0) {
-    const path = decodePolyline(value.polyline);
-    if (path.length >= 2) geometry = { polyline: value.polyline, path };
+  if (
+    typeof value?.polyline === "string" &&
+    value.polyline.length > 0 &&
+    value.polyline.length <= MAX_ENCODED_POLYLINE_LENGTH
+  ) {
+    try {
+      const path = decodePolyline(value.polyline);
+      if (path.length >= 2) geometry = { polyline: value.polyline, path };
+    } catch {
+      // Stored corruption must fall back to configured geometry, just as it
+      // does on the server, without rejecting the hook's pending fetch batch.
+    }
   }
   if (cache.size >= CACHE_MAX) {
     const oldest = cache.keys().next().value;

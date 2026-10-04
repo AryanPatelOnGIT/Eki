@@ -108,6 +108,8 @@ describe("trip-state engine lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    mocks.transactionSet.mockReset();
+    mocks.transactionDelete.mockReset();
     mocks.routeListeners.length = 0;
     mocks.rtdbHandlers.clear();
     mocks.routeDocumentGet.mockResolvedValue({ exists: false, data: () => undefined });
@@ -841,6 +843,106 @@ describe("trip-state engine lifecycle", () => {
       timestamp: 1,
     }),
     ref: store.ref,
+  });
+
+  it("commits all crossed-stop history before publishing the advanced live index", async () => {
+    allowCompletion("session-1");
+    mocks.reduceTripState.mockReturnValue({ tripState: "in_service", currentStopIndex: 3, hasDepartedOrigin: true });
+    const stop = startTripStateEngine();
+    mocks.routeListeners[0].next({ docChanges: () => [{ type: "added", doc: {
+      id: "route_2", data: () => ({ stops: Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, name: `Stop ${i}`, lat: 23 + i * 0.0005, lng: 72 })) }),
+    } }] });
+    const store = makeNodeRef({ sessionId: "session-1", direction: "forward", status: "active", deviceState: "online", tripState: "in_service", currentStopIndex: 1 });
+    let historyCommittedBeforePublication = false;
+    const beforePublish = store.ref.transaction.mockImplementation(async update => {
+      historyCommittedBeforePublication = mocks.transactionSet.mock.calls.some(([ref, data]) =>
+        ref.collectionName === "ride_sessions" && data.stopsReached?.[1]?.stopId === "s1" && data.stopsReached?.[2]?.stopId === "s2");
+      const value = update(store.nodeValue());
+      return { committed: value !== undefined, snapshot: { val: () => value } };
+    });
+    mocks.rtdbHandlers.get("child_changed")!({ ...queuedSnapshot(store, "bus_multi_route_2"), val: () => ({ ...queuedSnapshot(store).val(), tripState: "in_service", currentStopIndex: 1 }) });
+    await flushMicrotasks(50);
+    expect(beforePublish).toHaveBeenCalledOnce();
+    expect(historyCommittedBeforePublication).toBe(true);
+    await stop();
+  });
+
+  it("repairs an older live index from the same session's durable checkpoint", async () => {
+    allowCompletion("session-1");
+    const get = mocks.transactionGet.getMockImplementation()!;
+    mocks.transactionGet.mockImplementation(async ref => ref.collectionName === "active_rides"
+      ? { exists: true, data: () => ({ sessionId: "session-1", tripState: "in_service", currentStopIndex: 3, hasDepartedOrigin: true }) }
+      : get(ref));
+    mocks.reduceTripState.mockReturnValue({ tripState: "in_service", currentStopIndex: 1, hasDepartedOrigin: true });
+    const stop = startTripStateEngine();
+    mocks.routeListeners[0].next({ docChanges: () => [{ type: "added", doc: {
+      id: "route_2", data: () => ({ stops: Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, name: `Stop ${i}`, lat: 23 + i * 0.0005, lng: 72 })) }),
+    } }] });
+    const store = makeNodeRef({ sessionId: "session-1", direction: "forward", status: "active", deviceState: "online", tripState: "in_service", currentStopIndex: 1 });
+    mocks.rtdbHandlers.get("child_changed")!({ ...queuedSnapshot(store, "bus_checkpoint_route_2"), val: () => ({ ...queuedSnapshot(store).val(), tripState: "in_service", currentStopIndex: 1 }) });
+    await flushMicrotasks(50);
+    expect(store.nodeValue().currentStopIndex).toBe(3);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ collectionName: "active_rides" }), expect.objectContaining({ currentStopIndex: 3 }), { merge: true });
+    await stop();
+  });
+
+  it("retries the same telemetry sample when its durable checkpoint fails", async () => {
+    allowCompletion("session-1");
+    mocks.reduceTripState.mockReturnValue({ tripState: "in_service", currentStopIndex: 1, hasDepartedOrigin: true });
+    const stop = startTripStateEngine();
+    armRoute();
+    const store = makeNodeRef({ sessionId: "session-1", direction: "forward", status: "active", deviceState: "online", tripState: "pre_departure", currentStopIndex: 0 });
+    const snapshot = queuedSnapshot(store, "bus_retry_route_2");
+    mocks.db.runTransaction.mockRejectedValueOnce(new Error("checkpoint unavailable"));
+    mocks.rtdbHandlers.get("child_changed")!(snapshot);
+    await flushMicrotasks(50);
+    expect(store.nodeValue().tripState).toBe("pre_departure");
+    expect(store.ref.transaction).not.toHaveBeenCalled();
+    mocks.rtdbHandlers.get("child_changed")!(snapshot);
+    await flushMicrotasks(50);
+    expect(mocks.reduceTripState).toHaveBeenCalledTimes(2);
+    expect(store.nodeValue().tripState).toBe("in_service");
+    await stop();
+  });
+
+  it.each([false, true])("recovers committed completion after RTDB failure; replacement lock=%s", async replacement => {
+    let session: Record<string, unknown> = { status: "active" };
+    let completed: Record<string, unknown> | undefined;
+    let ownsLock = true;
+    mocks.transactionGet.mockImplementation(async ref => {
+      if (ref.collectionName === "ride_sessions") return { exists: true, data: () => session };
+      if (ref.collectionName === "completed_trips") return { exists: Boolean(completed), data: () => completed };
+      if (ref.collectionName === "_active_bus_locks") return { exists: ownsLock || replacement, data: () => ({ sessionId: ownsLock ? "session-1" : "replacement" }) };
+      return { exists: false, data: () => undefined };
+    });
+    mocks.transactionSet.mockImplementation((ref, data) => {
+      if (ref.collectionName === "ride_sessions") session = { ...session, ...data };
+      if (ref.collectionName === "completed_trips") completed = { ...data };
+    });
+    mocks.transactionDelete.mockImplementation(ref => { if (ref.collectionName === "_active_bus_locks") ownsLock = false; });
+    const stop = startTripStateEngine();
+    armRoute();
+    const store = makeNodeRef({ sessionId: "session-1", direction: "forward", status: "active", deviceState: "online", tripState: "in_service", currentStopIndex: 1 });
+    store.ref.transaction.mockRejectedValueOnce(new Error("lost RTDB commit"));
+    const snapshot = { ...queuedSnapshot(store, `bus_completion_${replacement}_route_2`), val: () => ({ ...queuedSnapshot(store).val(), tripState: "in_service", currentStopIndex: 1 }) };
+    mocks.rtdbHandlers.get("child_changed")!(snapshot);
+    await flushMicrotasks(50);
+    expect(session.status).toBe("completed");
+    expect(store.nodeValue().tripState).toBe("in_service");
+    const originalCompletedAt = completed!.completedAt;
+    const originalEndTime = session.endTime;
+    mocks.transactionSet.mockClear();
+    mocks.transactionDelete.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    mocks.rtdbHandlers.get("child_changed")!(snapshot);
+    await flushMicrotasks(50);
+    expect(store.nodeValue().tripState).toBe(replacement ? "in_service" : "completed");
+    expect(completed!.completedAt).toBe(originalCompletedAt);
+    expect(session.endTime).toBe(originalEndTime);
+    if (!replacement) expect(store.nodeValue().completedAt).toBe(Date.parse(String(originalCompletedAt)));
+    expect(mocks.transactionSet).not.toHaveBeenCalledWith(expect.objectContaining({ collectionName: "completed_trips" }), expect.anything(), expect.anything());
+    expect(mocks.transactionDelete).not.toHaveBeenCalled();
+    await stop();
   });
 
   it("does not resurrect a node removed by the stale sweep", async () => {
