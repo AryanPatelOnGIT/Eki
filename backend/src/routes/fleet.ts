@@ -1,3 +1,4 @@
+import { assertWorkerLeadership, workerTransaction } from "../lib/workerFence";
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAdmin } from "../middleware/requireAdmin";
@@ -80,6 +81,7 @@ async function applyDriverAuthorization(
       existing.assignedBusId !== undefined;
     if (!claimsChanged && mirror === null) return false;
 
+    assertWorkerLeadership();
     const updates: Promise<unknown>[] = [];
     if (claimsChanged) {
       updates.push(
@@ -119,6 +121,7 @@ async function applyDriverAuthorization(
     stableJson(mirror) !== stableJson(expectedMirror);
   if (!claimsChanged && !mirrorChanged) return false;
 
+  assertWorkerLeadership();
   const updates: Promise<unknown>[] = [];
   if (claimsChanged) {
     updates.push(auth.setCustomUserClaims(authUid, {
@@ -150,7 +153,7 @@ export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_0
 }> {
   const lockRef = db.collection("_fleet_reconciliation_locks").doc("singleton");
   const owner = randomUUID();
-  await db.runTransaction(async transaction => {
+  await workerTransaction(db, async transaction => {
     const lock = await transaction.get(lockRef);
     if (lock.exists) throw new FleetReconciliationBusy("Fleet reconciliation is already running or awaiting recovery.");
     transaction.create(lockRef, { owner, operationId,
@@ -184,6 +187,7 @@ export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_0
         }
         break;
       }
+      assertWorkerLeadership();
       const chunk = drivers.docs.slice(index, index + 10);
       await Promise.all(chunk.map(async (driver) => {
         const data = driver.data();

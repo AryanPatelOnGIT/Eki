@@ -1,3 +1,4 @@
+import { bindWorkerCallback, bindWorkerContext, workerTransaction, workerRtdbTransaction } from "../lib/workerFence";
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -183,7 +184,7 @@ async function maybeArmAutomaticTurnaround(
   const origin = stops[0];
   const destination = stops.at(-1)!;
   const sessionRef = db.collection("ride_sessions").doc();
-  const claim = await nodeRef.transaction((current) => {
+  const claim = await workerRtdbTransaction(nodeRef, (current) => {
     const live = current as Record<string, unknown> | null;
     const claimedAt = Number(live?.turnaroundClaimedAt);
     const claimIsFresh =
@@ -222,7 +223,7 @@ async function maybeArmAutomaticTurnaround(
   const busRef = db.collection("buses").doc(busId);
   let durableCreated = false;
   try {
-    durableCreated = await db.runTransaction(async (transaction) => {
+    durableCreated = await workerTransaction(db, async (transaction) => {
       const [lock, completedSession, driver, bus] = await Promise.all([
         transaction.get(lockRef),
         transaction.get(completedSessionRef),
@@ -306,7 +307,7 @@ async function maybeArmAutomaticTurnaround(
     });
     if (!durableCreated) return false;
 
-    const activated = await nodeRef.transaction((current) => {
+    const activated = await workerRtdbTransaction(nodeRef, (current) => {
       const live = current as Record<string, unknown> | null;
       if (
         !live ||
@@ -349,7 +350,7 @@ async function maybeArmAutomaticTurnaround(
     return activated.committed;
   } finally {
     if (!durableCreated) {
-      await nodeRef.transaction((current) => {
+      await workerRtdbTransaction(nodeRef, (current) => {
         const live = current as Record<string, unknown> | null;
         if (!live || live.turnaroundClaimId !== sessionRef.id) return;
         return {
@@ -410,7 +411,7 @@ function persistFleetState(
     const lockRef = db.collection("_active_bus_locks").doc(busId);
     const locationRef = db.collection("bus_locations").doc(busId);
     try {
-      const persisted = await db.runTransaction(async (transaction) => {
+      const persisted = await workerTransaction(db, async (transaction) => {
         const lock = await transaction.get(lockRef);
         if (!lock.exists || normalizeIdentifier(lock.data()?.sessionId) !== sessionId) {
           return false;
@@ -451,7 +452,7 @@ async function persistOfflineFleetState(
   const locationRef = db.collection("bus_locations").doc(busId);
   try {
     const persisted = await fleetWrites.enqueue(busId, fingerprint, () =>
-      db.runTransaction(async (transaction) => {
+      workerTransaction(db, async (transaction) => {
         const lock = await transaction.get(lockRef);
         const lockSessionId = normalizeIdentifier(lock.data()?.sessionId);
         if (
@@ -589,7 +590,7 @@ function persistActiveRideLifecycle(
     const lockRef = db.collection("_active_bus_locks").doc(busId);
     const sessionRef = db.collection("ride_sessions").doc(sessionId);
     try {
-      const persisted = await db.runTransaction(async (transaction) => {
+      const persisted = await workerTransaction(db, async (transaction) => {
         const [activeRide, lock, session] = await Promise.all([
           transaction.get(activeRideRef),
           transaction.get(lockRef),
@@ -802,7 +803,7 @@ export function startTripStateEngine(): () => Promise<void> {
         // newer session that reused this key (issue #66). The transaction
         // aborts when the node is gone, belongs to another session, or has
         // reached a terminal/offline state.
-        await snapshot.ref.transaction((current) => {
+        await workerRtdbTransaction(snapshot.ref, (current) => {
           const live = current as Record<string, unknown> | null;
           if (!live) return;
           if (
@@ -850,7 +851,7 @@ export function startTripStateEngine(): () => Promise<void> {
       const activeRideId = activeRideDocumentId(data);
       const completedRef = db.collection("completed_trips").doc(completionId);
       try {
-        const persistedCompletion = await db.runTransaction(async (transaction) => {
+        const persistedCompletion = await workerTransaction(db, async (transaction) => {
           const activeRideRef = activeRideId
             ? db.collection("active_rides").doc(activeRideId)
             : null;
@@ -948,7 +949,7 @@ export function startTripStateEngine(): () => Promise<void> {
         if (activeRideId) {
           activeRideWrites.invalidate(activeRideId);
         }
-        await snapshot.ref.transaction((current) => {
+        await workerRtdbTransaction(snapshot.ref, (current) => {
           const live = current as Record<string, unknown> | null;
           if (!live || live.sessionId !== data.sessionId) return;
           return {
@@ -975,7 +976,7 @@ export function startTripStateEngine(): () => Promise<void> {
 
       let cleanupPromise: Promise<void> | null = null;
       /** Retires this completed session once and persists its final fleet state. */
-      const runCleanup = (): Promise<void> => {
+      const runCleanup = bindWorkerContext((): Promise<void> => {
         if (cleanupPromise) return cleanupPromise;
         if (completedTimeouts.get(nodeKey)?.run === runCleanup) {
           completedTimeouts.delete(nodeKey);
@@ -983,7 +984,7 @@ export function startTripStateEngine(): () => Promise<void> {
         cleanupPromise = trackBackgroundTask((async () => {
           // Do not recreate a node removed by the stale sweep, and do not mark a
           // newer shift offline if the same bus/route key was reused meanwhile.
-          const retirement = await snapshot.ref.transaction((current) => {
+          const retirement = await workerRtdbTransaction(snapshot.ref, (current) => {
             const live = current as Record<string, unknown> | null;
             if (
               !live ||
@@ -1010,7 +1011,7 @@ export function startTripStateEngine(): () => Promise<void> {
           }
         })(), `[TripState] Failed to retire completed session ${data.sessionId}:`);
         return cleanupPromise;
-      };
+      });
       if (stopping) {
         void runCleanup();
       } else {
@@ -1028,7 +1029,7 @@ export function startTripStateEngine(): () => Promise<void> {
   };
 
   /** Queues live snapshots per RTDB node to preserve telemetry ordering. */
-  const liveSnapshotHandler = (
+  const liveSnapshotHandler = bindWorkerCallback((
     snapshot: import("firebase-admin/database").DataSnapshot,
   ) => {
     if (stopping) return;
@@ -1041,10 +1042,10 @@ export function startTripStateEngine(): () => Promise<void> {
         console.error(`[TripState] Failed to process telemetry for ${nodeKey}:`, error);
       }
     });
-  };
+  });
 
   /** Persists the terminal offline state for a removed live-presence node. */
-  const childRemovedHandler = (snapshot: import("firebase-admin/database").DataSnapshot) => {
+  const childRemovedHandler = bindWorkerCallback((snapshot: import("firebase-admin/database").DataSnapshot) => {
     if (stopping) return;
     const data = normalizeLiveBusData(snapshot.val(), snapshot.key);
     if (!data) return;
@@ -1067,7 +1068,7 @@ export function startTripStateEngine(): () => Promise<void> {
       clearTimeout(completedTimeouts.get(nodeKey)!.timeoutId);
       completedTimeouts.delete(nodeKey);
     }
-  };
+  });
 
   busesRef.on("child_added", liveSnapshotHandler);
   busesRef.on("child_changed", liveSnapshotHandler);
@@ -1097,14 +1098,17 @@ export function startTripStateEngine(): () => Promise<void> {
               data.tripState === "in_service");
           if (rideIsActive) {
             if (data.deviceState !== "offline") {
-              removals.push(child.ref.update({
-                deviceState: "offline",
-                signalState: "lost",
-                lifecycleUpdatedAt: { ".sv": "timestamp" },
+              removals.push(workerRtdbTransaction(child.ref, current => {
+                if (!current || current.timestamp !== data.timestamp) return;
+                return { ...current, deviceState: "offline", signalState: "lost",
+                  lifecycleUpdatedAt: { ".sv": "timestamp" } };
               }));
             }
           } else {
-            removals.push(child.ref.remove());
+            removals.push(workerRtdbTransaction(child.ref, current => {
+              if (!current || current.timestamp !== data.timestamp) return;
+              return null;
+            }));
           }
         }
       });
@@ -1122,7 +1126,7 @@ export function startTripStateEngine(): () => Promise<void> {
   }, STALE_BUS_MS);
   staleSweepTimer.unref();
 
-  return () => {
+  return bindWorkerContext(() => {
     if (stopPromise) return stopPromise;
     stopPromise = (async () => {
       stopping = true;
@@ -1189,5 +1193,5 @@ export function startTripStateEngine(): () => Promise<void> {
       console.log("[TripState] Engine stopped.");
     })();
     return stopPromise;
-  };
+  });
 }

@@ -47,6 +47,8 @@ are no-store. The admin-only `/api/health` contains detailed diagnostics.
 - The lease-owned worker advances ordered ride progress and runs recovery,
   privacy and retention. Terminal deletion is resumable; active ownership and
   current geometry pointers are protected.
+  [Worker leadership](../operations/WORKER_LEADERSHIP.md) defines independent
+  monotonic expiry, destination fencing, clock tolerance and side-effect limits.
 - `npm run retention:rtdb --workspace=backend -- --dry-run` inventories RTDB
   retention without mutation. Follow [retention](../operations/RTDB_RETENTION.md)
   before applying cleanup or enabling legacy-tree retirement.

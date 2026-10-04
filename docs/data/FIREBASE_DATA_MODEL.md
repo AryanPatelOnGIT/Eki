@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -34,6 +34,7 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | Field | Type | Meaning/source |
 |---|---|---|
 | `busId` | string | Server registry assignment |
+| `_workerGeneration` | integer, optional | Internal generation on surviving worker projections; stale worker transactions cannot overwrite a newer value. Not a telemetry sequence or public service state. |
 | `routeId` | string | Server registry/shift assignment |
 | `lat`, `lng` | number | Latest accepted GNSS coordinate |
 | `rawLocation` | object | Original authenticated `{lat,lng,speed,heading,gpsHdop,motionState,seq,sampledAt}`; never overwritten by snapping |
@@ -236,7 +237,7 @@ Unique active-session constraint: `busId`, `routeId`, `driverId`, `sessionId`, `
 
 ### `_worker_leases/{leaseName}`
 
-Coordinator ownership/expiry fields include `ownerId` and lease timing. Transactions acquire/renew/release. Only the holder runs lifecycle and maintenance jobs.
+The coordinator uses `_worker_leases/trip-state-worker`: unique process `ownerId`, persistent integer `generation`, `renewedAt` and `expiresAt` Firestore timestamps. Acquisition increments the generation; renewal retains it; release sets `ownerId:null` and an expired timestamp without deleting the generation. Worker durable writes validate the lease within their transaction. Independent monotonic expiry also stops admission during hung renewal. See [worker leadership](../operations/WORKER_LEADERSHIP.md) for the 2-second skew allowance and limits of fencing RTDB/Auth/recursive deletion.
 
 ### `_privacy_deletion_requests/{uid}`
 

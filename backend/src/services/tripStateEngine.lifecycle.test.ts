@@ -89,6 +89,7 @@ vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => 
 
 import { lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
 import { restoreDurableRide } from "./durableRideRecovery";
+import { WorkerFence } from "../lib/workerFence";
 
 async function flushMicrotasks(turns = 20): Promise<void> {
   for (let index = 0; index < turns; index += 1) await Promise.resolve();
@@ -126,6 +127,36 @@ describe("trip-state engine lifecycle", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("does not admit a removed-node event through a revoked leader listener", async () => {
+    const leader = new WorkerFence("leader", 1, performance.now() + 40_000);
+    const stop = leader.run(() => startTripStateEngine());
+    leader.revoke();
+    // Deliberately emit outside the AsyncLocalStorage registration context.
+    mocks.rtdbHandlers.get("child_removed")!({ key: "bus_1_route_2", val: () => ({
+      busId: "bus_1", routeId: "route_2", driverId: "driver-1", sessionId: "session-1",
+      direction: "forward", status: "active", tripState: "in_service",
+    }) });
+    await flushMicrotasks();
+    expect(mocks.db.runTransaction).not.toHaveBeenCalled();
+    await stop();
+  });
+
+  it("rejects queued fleet persistence after the Firestore lease generation changes", async () => {
+    mocks.transactionGet.mockResolvedValue({ exists: true, data: () => ({
+      ownerId: "replacement", generation: 2, expiresAt: { toMillis: () => Date.now() + 45_000 },
+    }) });
+    const leader = new WorkerFence("leader", 1, performance.now() + 40_000);
+    const stop = leader.run(() => startTripStateEngine());
+    mocks.rtdbHandlers.get("child_removed")!({ key: "bus_1_route_2", val: () => ({
+      busId: "bus_1", routeId: "route_2", driverId: "driver-1", sessionId: "session-1",
+      direction: "forward", status: "active", tripState: "in_service",
+    }) });
+    await flushMicrotasks();
+    expect(mocks.db.runTransaction).toHaveBeenCalledOnce();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+    await stop();
   });
 
   it("reattaches a terminal route listener error and cancels retries on stop", async () => {

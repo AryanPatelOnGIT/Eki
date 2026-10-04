@@ -132,8 +132,10 @@ not a substitute for the physical and institutional acceptance work in the
 - **Severity/status:** High / External gate (repo-side enablers merged for
   issue #28 via [PR #125](https://github.com/notnamansinha/Eki/pull/125); live
   deployment evidence still required).
-- **Evidence:** the Firestore lease makes the background state worker safe for
-  any number of API replicas. Issue #28 added the horizontal-scale enablers:
+- **Evidence:** worker leadership now has independent monotonic expiry and
+  destination transaction checks, under a bounded clock-skew assumption. See
+  [worker leadership](WORKER_LEADERSHIP.md) for cross-store/dispatched-call limits;
+  staged replica failover remains acceptance work. Issue #28 added scale enablers:
   every in-memory rate limiter divides its budget by `RATE_LIMIT_SHARD_FACTOR`
   (default 1) so N replicas enforce the same aggregate budget as one instance
   instead of multiplying it by N; `GET /health` returns 200 only while both

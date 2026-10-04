@@ -36,6 +36,10 @@ The workflow performs:
 9. Chromium mobile/desktop admin-access and feedback regressions through
    `npm run test:e2e:admin`, using real UI modules with synthetic Firebase data.
 
+The Firebase emulator gate includes worker destination fencing alongside client
+authorization rules: valid/superseded Firestore writes, expiry during a dispatched
+read, and RTDB generation rejection. See [worker leadership](WORKER_LEADERSHIP.md).
+
 The workflow proves source/build consistency. It does not prove GNSS reception,
 vehicle power, radio coverage, TLS against the production certificate chain,
 secure eFuse provisioning, route geometry in the field, or safe driver

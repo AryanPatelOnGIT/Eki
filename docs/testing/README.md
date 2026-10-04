@@ -52,6 +52,11 @@ uses synthetic Firebase adapters; it cannot certify live provider enforcement.
 
 ## Evidence catalog
 
+R08's [worker leadership guide](../operations/WORKER_LEADERSHIP.md) defines
+independent expiry, the 2-second clock tolerance, destination checks and
+cross-store limits. The priority record and #246 track its actual verification;
+software/emulator checks do not close #245's live replica and route gates.
+
 | Record | Purpose |
 |---|---|
 | [Full-feature QA](FULL_FEATURE_QA_2026_10_03.md) | Feature coverage at the recorded software baseline |

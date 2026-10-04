@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -142,6 +142,11 @@ guide](../hardware/README.md) for the provisioning order, build commands,
 route-specific changes, and post-flash checks.
 
 ## Firebase and infrastructure configuration
+
+Worker clocks must stay within the fixed 2-second skew allowance. A configured
+instance label always receives a process UUID. The lease's generation survives
+release and must not be reset during failover. See [worker leadership](operations/WORKER_LEADERSHIP.md)
+for independent expiry, destination checks and dispatched Auth/deletion limits.
 
 The application expects these separately managed resources:
 
