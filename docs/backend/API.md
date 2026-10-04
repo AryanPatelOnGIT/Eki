@@ -74,7 +74,7 @@ guidance; the OpenAPI contract and schema-backed tests check HTTP conformance.
 - Hardware: `Authorization: Device <per-device secret>`. It is not a Firebase token and must never use `Bearer`.
 - Public: only `GET /health`.
 
-IDs accept 1–128 ASCII letters, digits, `_`, or `-`. Rate-limit counters always use normalized IP addresses (and verified Firebase UID when authenticated). Browser writes are broadly limited to 30 requests/minute and normal traffic to 200 requests/minute; route compute/plan endpoints use dedicated limiters (10/min and 30/min), `placeSearchLimiter` is an unsharded process-local 20/minute limiter, and device telemetry bypasses global and write limiters while enforcing separate pre-auth IP (15 requests per configured device per 10 seconds before replica sharding; `HTTPS_INGRESS_DEVICES_PER_IP` defaults to 100, with separate diagnostics and firmware pools of 2 requests per configured device per 10 seconds) and authenticated per-device limits. The safe default device mode reserves bounded token leases from a shared RTDB fixed-window budget, so replicas cannot exceed the fleet-wide limit without paying for one transaction per fix. Local device limiting requires explicit `HTTPS_DEVICE_RATE_LIMIT_MODE=local` and `RATE_LIMIT_SHARD_FACTOR=1`. Other sharded counters divide their budgets by `RATE_LIMIT_SHARD_FACTOR` (set it to the deployed replica count; invalid values fall back to 1). If the replica count exceeds the smallest in-process budget (currently 10/minute), startup fails; use a shared distributed limiter beyond that scale. An edge load balancer or WAF cap is an external deployment requirement for global rate protection.
+IDs accept 1–128 ASCII letters, digits, `_`, or `-`. Broad browser limiter keys use normalized IP addresses only; authentication does not change those keys. Shared-IP user isolation and charging mutation budgets only to writes remain R01 in issue #246. Many API mounts apply 30 requests/minute even to GETs, and the global browser budget is 200 requests/minute; route compute/plan endpoints use dedicated limiters (10/min and 30/min), `placeSearchLimiter` is an unsharded process-local 20/minute limiter, and device telemetry bypasses global and write limiters while enforcing separate pre-auth IP (15 requests per configured device per 10 seconds before replica sharding; `HTTPS_INGRESS_DEVICES_PER_IP` defaults to 100, with separate diagnostics and firmware pools of 2 requests per configured device per 10 seconds) and authenticated per-device limits. The safe default device mode reserves bounded token leases from a shared RTDB fixed-window budget, so replicas cannot exceed the fleet-wide limit without paying for one transaction per fix. Local device limiting requires explicit `HTTPS_DEVICE_RATE_LIMIT_MODE=local` and `RATE_LIMIT_SHARD_FACTOR=1`. Other sharded counters divide their budgets by `RATE_LIMIT_SHARD_FACTOR` (set it to the deployed replica count; invalid values fall back to 1). If the replica count exceeds the smallest in-process budget (currently 10/minute), startup fails; use a shared distributed limiter beyond that scale. An edge load balancer or WAF cap is an external deployment requirement for global rate protection.
 
 ## Health
 
@@ -154,8 +154,10 @@ Returns the cached Firestore/RTDB status, telemetry counters, latency/transactio
 Metrics are a 512-sample in-memory rolling window on one backend process and
 reset on restart. The rate-limit counters are also process-local and cumulative
 since restart. A lease hit avoids a shared-store operation;
-`storeTransactionRetries` counts extra Firebase transaction callback attempts
-caused by contention. `serverIngressGapMs` uses only that process's clock.
+`storeTransactions` counts SDK transaction invocations for reservations;
+`storeTransactionRetries` counts extra callback evaluations beyond the first,
+including SDK local-state/server reconciliation. It does not count HTTP retries
+or establish extra billed operations. `serverIngressGapMs` uses only that process's clock.
 `networkLatencyMs` and `deviceToServerLatencyMs` compare device and backend wall
 clocks, so use the correlated telemetry baseline trace when clock skew matters.
 Route-processing counters are also process-local and monotonic until restart. A

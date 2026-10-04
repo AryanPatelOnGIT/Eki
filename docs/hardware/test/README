@@ -10,6 +10,9 @@ py -m platformio test --project-dir hardware -e native
 
 The native Unity suites execute production header policies:
 
+The selected #246 changes have seven suites and 67 native cases. Use the
+actual runner output at the tested commit to confirm the count.
+
 | Suite | Coverage |
 |---|---|
 | `test_telemetry_policy` | GNSS clock/quality, motion hysteresis, jumps/reacquisition, one-second moving/stopped cadence, bounded queue/retry and configuration policy |
@@ -18,6 +21,7 @@ The native Unity suites execute production header policies:
 | `test_http_response` | Bounded response parsing and status/header validation |
 | `test_http_reuse_guard` | Safe persistent HTTPS reuse across response outcomes |
 | `test_reset_stats` | Reset-history normalization and counters |
+| `test_json_payload` | Actual ArduinoJson allocation exhaustion, schema completeness and output-capacity rejection |
 
 Use actual runner output for case counts. Host policy tests and firmware builds
 do not establish physical radio, UART, GNSS, power, TLS or fleet security

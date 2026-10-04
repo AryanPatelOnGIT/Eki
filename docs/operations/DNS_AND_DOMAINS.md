@@ -20,6 +20,13 @@ The Eki deployment consists of two primary endpoints:
 
 ### Default vs. Production Custom Domains
 
+Set `NEXT_PUBLIC_SITE_URL` to the canonical frontend HTTPS origin before the
+static build. Metadata, Open Graph URLs/images, robots and sitemap share it.
+Without it the explicit primary-domain fallback remains
+`https://bustrack-be165.web.app`. Set `NEXT_PUBLIC_SITE_INDEXING=false` on
+testing/preview builds; changing either value requires rebuilding the export.
+This does not configure Firebase Auth, App Check, CORS or DNS automatically.
+
 | Component | Default Firebase Origin | Example Custom Domain |
 |---|---|---|
 | **Frontend Web App** | `<firebase-project-id>.web.app`<br>`<firebase-project-id>.firebaseapp.com` | `eki.yourdomain.com` or `bus.university.edu` |

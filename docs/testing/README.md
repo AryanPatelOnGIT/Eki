@@ -20,6 +20,12 @@ short motion traces and a full observed route are different kinds of evidence.
 
 ## Latest source changes after the recorded acceptance
 
+The [4 October selected-part record](ISSUE_246_SELECTED_PARTS_2026_10_04.md)
+describes map/ETA, firmware maintenance, clock, timing, allocation and canonical
+configuration changes for [issue #246](https://github.com/notnamansinha/Eki/issues/246).
+Use that issue's merged PR checklist and exact-head CI for current implementation
+status. R34 and the physical/deployment gates in issue #245 remain open.
+
 `testing` at `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
 the development-only opt-out, admin feedback HTTP loading/status and pending
 verification/session guards during sign-out. PR #244 adds passenger in-app

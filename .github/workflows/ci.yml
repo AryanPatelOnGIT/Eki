@@ -80,7 +80,25 @@ jobs:
           NEXT_PUBLIC_GOOGLE_MAP_ID: ci-only-placeholder
           NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY: ci-only-placeholder
           NEXT_PUBLIC_BACKEND_URL: https://ci-only.example.invalid
+          NEXT_PUBLIC_SITE_URL: https://canonical-ci.example.invalid
+          NEXT_PUBLIC_SITE_INDEXING: "true"
         run: npm run build:production
+      - name: Verify exported canonical, social and crawler origins
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          const origin = 'https://canonical-ci.example.invalid';
+          const html = readFileSync('frontend/out/index.html', 'utf8');
+          const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)[1];
+          const ogUrl = html.match(/<meta property="og:url" content="([^"]+)"/)[1];
+          const ogImage = html.match(/<meta property="og:image" content="([^"]+)"/)[1];
+          assert.equal(new URL(canonical).href, `${origin}/`);
+          assert.equal(new URL(ogUrl).href, `${origin}/`);
+          assert.equal(new URL(ogImage).origin, origin);
+          assert(readFileSync('frontend/out/robots.txt', 'utf8').includes(`Sitemap: ${origin}/sitemap.xml`));
+          assert(readFileSync('frontend/out/sitemap.xml', 'utf8').includes(`<loc>${origin}/</loc>`));
+          JS
       # Slow-3G/Offline browser acceptance remains a manual deployment gate;
       # see docs/operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md.
       - run: npm audit --omit=dev --omit=optional
