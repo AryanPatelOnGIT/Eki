@@ -1,6 +1,6 @@
 # My live bus demo runbook
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-04 16:07 IST (UTC+05:30).
 
 This is the checklist for the student operating the professor demonstration.
 Complete every blocking item before inviting passengers onto the bus.
@@ -83,6 +83,16 @@ domain** to `http://localhost:3000`; reserve the account's assigned backend doma
 - [ ] Put the frontend HTTPS origin in backend `CORS_ORIGIN`.
 - [ ] Add the frontend tunnel hostname to Firebase Authentication authorized
   domains.
+- [ ] Choose a working Firebase Auth helper. A plain Next.js development tunnel
+  does not serve Firebase's `/__/auth/` routes: keep
+  `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` set to the project's hosted Firebase helper.
+  If the frontend hostname serves or proxies those helper routes, set the Auth
+  domain to that hostname and register
+  `https://<frontend-host>/__/auth/handler` in the Google OAuth client's
+  authorized redirect URIs before testing sign-in. See [Auth configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+- [ ] Test sign-in on each intended phone/browser. If storage restrictions break
+  a cross-origin helper, use the approved Firebase Hosting frontend or a
+  correctly configured same-origin helper before continuing the demo.
 - [ ] If App Check enforcement is enabled, register a temporary debug token and
   set `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` only for this local demo.
 - [ ] Restart both dev servers after environment changes, then open the frontend

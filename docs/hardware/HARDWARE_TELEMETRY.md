@@ -1,6 +1,6 @@
 # Hardware telemetry, latency and failure design
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-04 16:07 IST (UTC+05:30).
 
 Setup boundary: use [the hardware setup guide](README.md) before reading this
 design. It is the source for required `backend/.env`, frontend environment
@@ -119,7 +119,14 @@ The body fields and limits are defined in [Firebase data model](../data/FIREBASE
 
 ## Trace evidence and gap classification
 
-The configured baseline is a one-second evaluation and moving heartbeat, a one-second stopped heartbeat, three consecutive qualifying motion readings, and a one-second connect/TLS handshake limit and 1.5-second HTTP read timeout. These are separate phase limits, not a total request deadline. Validate the shorter budgets with route traces and staging latency measurements. The serial log records each accepted request duration, retry number/delay, stale-queue eviction, and a periodic `Telemetry Evidence` line containing capture, attempt and retry totals, capture/accept ages, queue depth, and remaining retry delay.
+The configured baseline is a one-second evaluation and moving/stopped heartbeat,
+three consecutive qualifying motion readings, a one-second HTTP connect limit,
+a 1.5-second HTTP request/read limit and a separate ten-second TLS handshake
+limit. These are separate phase limits, not a total request deadline. Validate
+the budgets with route traces and staging latency measurements. The serial log
+records each accepted request duration, retry number/delay, stale-queue eviction,
+and a periodic `Telemetry Evidence` line containing capture, attempt and retry
+totals, capture/accept ages, queue depth, and remaining retry delay.
 
 Treat a gap as intentional only when `captureSeen=1`, `captureAgeMs` is within the selected heartbeat for the confirmed motion state, and the queue/retry indicators are clear. If `captureAgeMs` exceeds that heartbeat, investigate GNSS capture or fix quality first. If capture remains current, a growing `acceptedAgeMs`, non-zero queue, retry delay, stale drop, transport error, or rejected count is a delivery problem. The extra evidence remains serial-only while backend capacity work decides which additional diagnostic fields can be stored without changing the closed authenticated diagnostics schema.
 
@@ -135,7 +142,7 @@ Treat a gap as intentional only when `captureSeen=1`, `captureAgeMs` is within t
 | HTTP 401/403 + three LED pulses | ID/secret disabled/mismatched or assignment invalid | Rotate/inspect registry, update `secrets.h`, build a protected artifact, and reflash |
 | HTTP 429 | IP/device limiter | Check publish loop/config and WAF limits |
 | HTTP 503/timeouts | Backend/Firebase/network outage | Inspect `/health`; backoff retains the bounded queue |
-| Repeated watchdog reset | HTTP/network stack longer than 25 s or task fault | Inspect reset reason/serial; verify 7 s connect/request timeouts |
+| Repeated watchdog reset | HTTP/network stack longer than 25 s or task fault | Inspect reset reason/serial; verify the separate 1 s connect, 1.5 s request/read and 10 s TLS handshake limits |
 | Non-zero overflow counters | GNSS task starvation, UART pressure or full telemetry queue | Inspect authenticated remote diagnostics; reproduce against network outage and load |
 | `uncertain` on map | One GNSS-loss notification at last trusted point | Fix antenna/sky view; no guessed motion is shown |
 
