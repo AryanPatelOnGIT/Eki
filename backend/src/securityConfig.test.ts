@@ -630,7 +630,8 @@ describe("production security configuration", () => {
     expect(firmware).toContain("settimeofday(&tv, nullptr)");
     expect(firmware).toContain("std::numeric_limits<time_t>::max()");
     expect(firmware).toContain("NTP_CROSS_CHECK_INTERVAL_MS");
-    expect(firmware).toContain("sntp_set_time_sync_notification_cb");
+    expect(firmware).toContain('extern "C" void sntp_sync_time');
+    expect(firmware).toContain("eki::clock::candidateSafe");
     expect(firmware).toContain("NTP/GNSS divergence=");
     expect(clockPolicy).toContain("utcToEpochMilliseconds");
     expect(clockPolicy).toContain("GNSS_CLOCK_CORRECTION_THRESHOLD_MS");

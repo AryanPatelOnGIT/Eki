@@ -593,6 +593,32 @@ void test_queue_purges_stale_samples_and_validates_rtc_identity() {
   TEST_ASSERT_EQUAL_UINT32(0, queue.size());
 }
 
+void test_clock_corroboration_rejects_duplicate_stalled_and_inconsistent_epochs() {
+  eki::clock::GnssCorroboration samples;
+  const int64_t base = 1704067200000LL;
+  TEST_ASSERT_FALSE(samples.observe(base, UINT32_MAX - 999));
+  TEST_ASSERT_FALSE(samples.observe(base + 1000, 0));
+  TEST_ASSERT_TRUE(samples.observe(base + 2000, 1000));
+  TEST_ASSERT_FALSE(samples.observe(base + 2000, 2000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3600000, 3000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3601000, 4000));
+  TEST_ASSERT_TRUE(samples.observe(base + 3602000, 5000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3607000, 10000));
+}
+
+void test_large_clock_corrections_require_fresh_agreeing_peer() {
+  using eki::clock::candidateSafe;
+  const int64_t base = 1704067200000LL;
+  TEST_ASSERT_TRUE(candidateSafe(0, base, false, 0)); // corroborated GNSS-only boot
+  TEST_ASSERT_TRUE(candidateSafe(base, base + 10000, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 10001, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base - 10001, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 3600000, true, base));
+  TEST_ASSERT_TRUE(candidateSafe(base, base + 3600000, true, base + 3600000));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 1501, true, base));
+  TEST_ASSERT_FALSE(candidateSafe(base, 0, false, 0));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_haversine_and_heading_wrap);
@@ -609,6 +635,8 @@ int main(int, char **) {
   RUN_TEST(test_firmware_configuration_validation_identifies_the_failing_field);
   RUN_TEST(test_example_configuration_compiles_but_cannot_boot_unchanged);
   RUN_TEST(test_gnss_utc_conversion_and_clock_discipline_are_strict);
+  RUN_TEST(test_clock_corroboration_rejects_duplicate_stalled_and_inconsistent_epochs);
+  RUN_TEST(test_large_clock_corrections_require_fresh_agreeing_peer);
   RUN_TEST(test_wifi_retry_and_led_code_are_deterministic);
   RUN_TEST(test_publish_policy_handles_floor_changes_and_heartbeats);
   RUN_TEST(test_location_transition_rejects_teleportation);
