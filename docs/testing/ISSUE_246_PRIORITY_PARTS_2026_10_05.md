@@ -12,8 +12,23 @@ each part's actual implementation and evidence; an entry does not certify deploy
 
 The previous six selected parts and their evidence remain in
 [the 4 October record](ISSUE_246_SELECTED_PARTS_2026_10_04.md).
+R01 is merged in [PR #254](https://github.com/notnamansinha/Eki/pull/254);
+R04 and its request-authentication correction are merged in
+[PR #255](https://github.com/notnamansinha/Eki/pull/255).
 API policy changes are reflected in `backend/API.md`, its generated mirror,
 `backend/openapi.json`, the HTTP contract and low-level design.
+
+R05: device/digest misses share one bounded registry/KDF fill. Sixteen unsettled
+fills and 64 waiting callers per digest cap retained work; a 5s monotonic
+response deadline keeps the underlying slot occupied until real settlement.
+Positive/negative TTLs remain at most 60s/5s from fill start. Invalidation fences
+in-flight work across all digests; listener failure clears cached authorization.
+Detailed admin health exposes only fill/waiter counts. Targeted verification:
+45 cases across the actual credential service and bounded-fill helper, including
+20 identical callers, wrong-secret isolation, rotation/reassignment during device
+and post-KDF registry reads, failed-fill recovery, positive/negative expiry,
+listener failure, overload and timed-out retry amplification. Full local checks:
+659 backend cases, all 59 script cases, OpenAPI 62 operations, lint and TypeScript.
 
 Stationary baseline: COM3 was read without flash, reboot or serial writes.
 Twenty GNSS/telemetry samples from the previously installed firmware received

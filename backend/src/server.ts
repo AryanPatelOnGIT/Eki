@@ -249,6 +249,7 @@ app.get("/api/health", requireAdmin, (_req, res) => {
       lastAcceptedAt: telemetry.lastAcceptedAt,
       lastRejectedAt: telemetry.lastRejectedAt,
       credentialCacheHitRate: telemetry.credentialCacheHitRate,
+      credentialFills: telemetry.credentialFills,
       processingLatencyMs: telemetry.processingLatencyMs,
       deviceQueueLatencyMs: telemetry.deviceQueueLatencyMs,
       networkLatencyMs: telemetry.networkLatencyMs,

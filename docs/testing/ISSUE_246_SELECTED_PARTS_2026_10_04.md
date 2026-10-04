@@ -7,6 +7,8 @@ connected board was not flashed or used to certify these changes.
 Use [issue #246](https://github.com/notnamansinha/Eki/issues/246) for current
 merge/checklist status and each PR's exact-head CI. Dated reports retain their
 original builds and measurements; this record does not rerun their field work.
+The subsequent R01–R11/R25 work is recorded in
+[the 5 October priority evidence](ISSUE_246_PRIORITY_PARTS_2026_10_05.md).
 
 | Part | Change and targeted evidence |
 |---|---|
@@ -15,7 +17,7 @@ original builds and measurements; this record does not rerun their field work.
 | R27, [#250](https://github.com/notnamansinha/Eki/pull/250) | Corroborated receiver epochs, bounded corrections, peer disagreement gate and a strong pre-application SNTP override verified in the ELF. Clock duplicate/jump/rollover regressions passed. |
 | R28, [#251](https://github.com/notnamansinha/Eki/pull/251) | Raw receiver/UART/evaluation/enqueue/send/header/body-drain timing; configured handshake timeout named accurately. 11 trace-analyzer cases passed, including rollover, retry and incomplete responses. |
 | R29, [#252](https://github.com/notnamansinha/Eki/pull/252) | Actual ArduinoJson allocation exhaustion/incomplete schemas fail before serialization/send; resource measurement and gated traces. 7 native suites / 67 cases passed. Same-configuration traced/quiet builds passed: quiet saves 2,332 flash bytes and 8 static RAM bytes. |
-| R33 | One validated build-time canonical origin drives metadata, robots and sitemap; preview indexing can be disabled. 13 configuration/robots/sitemap cases passed. Current API quota/cost/transaction-metric documentation and native suite counts are corrected. |
+| R33, [#253](https://github.com/notnamansinha/Eki/pull/253) | One validated build-time canonical origin drives metadata, robots and sitemap; preview indexing can be disabled. 13 configuration/robots/sitemap cases passed. Current API quota/cost/transaction-metric documentation and native suite counts are corrected. |
 
 CI verifies web contracts, lint, unit tests, Firebase authorization rules,
 synthetic admin browser scenarios, strict production export/CSP/service worker,

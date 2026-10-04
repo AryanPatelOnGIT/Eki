@@ -19,6 +19,8 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `lib/routeSegment.ts` | Direction-safe stored-polyline slicing, via constraint and travel-order stops |
 | `middleware/requireAuth.ts` | Bearer extraction, revocation-aware token verification, request claims |
 | `middleware/requireAdmin.ts` | Admin custom-claim enforcement |
+| `middleware/verifiedRequest.ts` | Private request/token-scoped verification reuse; later requests still follow revocation policy |
+| `lib/boundedSingleFlight.ts` | Credential-fill and waiting-caller ceilings, monotonic response budget, retained unsettled slots and invalidation fencing |
 | `routes/devices.ts` | Device telemetry/diagnostics, ride-gated signed-release metadata, and admin registry update/disable |
 | `routes/shifts.ts` | Driver authorization, delay, start/resume, early interruption, message/history deletion |
 | `routes/feedback.ts` | Admin feedback list/status and server-authoritative passenger submission |
@@ -35,7 +37,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `services/telemetryPayload.ts` | Closed schema, ranges and timestamp freshness |
 | `services/firmwareRelease.ts` | Fail-closed signed release descriptor parsing and sequence validation |
 | `services/deviceRateLimiter.ts` | Explicit single-instance local limiting or bounded leases from a shared per-device RTDB budget |
-| `services/deviceTelemetryService.ts` | scrypt credentials/cache, ordered live-node transaction, recovery and rolling metrics |
+| `services/deviceTelemetryService.ts` | Bounded device/digest credential fills, monotonic positive/negative cache TTL, invalidation fences, scrypt, ordered live-node transaction, recovery and rolling metrics |
 | `services/routeMatching.ts` | Pure projection, direction/heading/continuity scoring and off-route hysteresis |
 | `services/telemetryRouteService.ts` | Per-node bounded latest-pending matching, cross-replica route invalidation, directional-geometry repair, reroute orchestration and stale-result guards |
 | `services/authTokenVerifier.ts` | SHA-256 keyed bounded token verification coalescing/cache |

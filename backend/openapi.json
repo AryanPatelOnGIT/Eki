@@ -740,8 +740,8 @@
         "x-auth-class": "device",
         "x-body-limit-bytes": 512,
         "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
-        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Ordered timestamp/sequence duplicate suppression. Refresh deviceSentAt on each attempt without changing GNSS sample timestamp/seq. Do not blindly retry permanent 400/401/413 errors."
       }
@@ -863,8 +863,8 @@
         "x-auth-class": "device",
         "x-body-limit-bytes": 1024,
         "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
-        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Latest report overwrites the device diagnostics record; registry assignment and receivedAt are server-derived."
       },
@@ -1119,8 +1119,8 @@
         "x-auth-class": "device",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
-        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Safe snapshot/read; no mutation replay key."
       }
@@ -8772,8 +8772,8 @@
         "x-auth-class": "device",
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
-        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Safe snapshot/read; no mutation replay key.",
         "requestBody": {
@@ -8987,6 +8987,26 @@
                     "type": "null"
                   }
                 ]
+              },
+              "credentialFills": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "activeFills",
+                  "waitingCallers"
+                ],
+                "properties": {
+                  "activeFills": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16
+                  },
+                  "waitingCallers": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1024
+                  }
+                }
               },
               "credentialCacheHitRate": {
                 "type": [
