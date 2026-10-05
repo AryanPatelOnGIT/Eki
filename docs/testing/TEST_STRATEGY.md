@@ -235,3 +235,7 @@ Run `telemetryRouteCatalog.test.ts`, route service/live-routing cases and `telem
 ### Read-only passenger geometry (R13)
 
 Run route geometry reads, route compute limiter and polyline HTTP suites. Check legacy enumeration and administrator GET invoke no Google/write, sixty stored reads share one document read, authorized versioned saves refresh the cache, bounded raw/waiting computation survives stalled dependencies, and read quotas do not spend computation tokens. The catalog emulator suite additionally verifies actual watcher cache invalidation. Live provider/replica/road acceptance remains #245.
+
+## Bus edit metadata regression (R21)
+
+`routes/fleetOperations.test.ts` exercises HTTP bus edit/create, preserving existing timestamps/nested metadata, ignoring injected request fields, explicitly deleting legacy `assignedRouteId`, and retaining all fields when an active ride blocks removal. `reconciliation.integration.test.ts` repeats edit/create through real loopback Firestore merge/delete transforms with actual Timestamp fields. The integration case requires local emulators; synthetic HTTP tests alone do not certify deployed behavior. Browser acceptance should edit a disposable bus and verify the original server metadata and assignment mirrors, then verify active-ride/bound-device conflict outcomes.
