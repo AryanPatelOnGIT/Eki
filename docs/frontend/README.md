@@ -1,6 +1,6 @@
 # Eki frontend
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 17:46 IST (UTC+05:30).
 
 Next.js 16 App Router application with React 19, Firebase Auth and a static-export PWA. Passenger and administrator workspaces are protected; `/feedback` is an admin review view sharing the same panel as the Admin Feedback tab.
 
@@ -30,8 +30,8 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 
 | Module | Responsibility |
 |---|---|
-| `hooks/useAuth.ts`, `lib/authState.ts` | Wait for App Check and role verification before publishing a user or opening protected listeners; invalidate pending work during account changes/sign-out |
-| `lib/firebaseAppCheck.ts` | Valid first-token acquisition with a 10-second deadline; configuration, provider and token failures leave protected access closed |
+| `hooks/useAuth.ts`, `lib/authState.ts` | Wait for App Check and refreshed trusted role claims before publishing a user or opening protected listeners; share explicit access retries and invalidate pending work during account changes/sign-out |
+| `lib/firebaseAppCheck.ts` | Valid token acquisition with a 10-second response deadline; retain one raw acquisition until settlement, force explicit recovery refresh, and leave protected access closed on failure |
 | `lib/firebaseAuthDomain.ts` | Normalize the primary project's `web.app`/`firebaseapp.com` host to the current hostname; custom/secondary hosts use the explicitly configured auth domain |
 | `lib/liveBusStore.ts` | One shared initial live-fleet sync, followed by RTDB child deltas and route-scoped delivery; dispose at zero subscribers |
 | `hooks/useCollection.ts`, `hooks/useSettings.ts` | Shared auth-ready Firestore configuration/session listeners and cache disposal |
@@ -41,6 +41,13 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 | `src/sw.js` | Static/public caching; Firebase, authenticated API and unknown requests are network-only |
 
 `RoleGuard` handles presentation and routing. Backend middleware and Firebase rules enforce authorization. Sign-out closes readiness before awaiting Firebase, invalidates pending verification, and clears caches. Failed sign-out keeps protected content hidden and offers reload recovery.
+
+Fleet/routes/driver **Retry** on a permission failure and verification **Try again**
+refresh App Check and Auth together before reopening protected listeners. Admin
+UI requires both trusted `role: "admin"` and `admin: true` claims. A Firestore
+profile alone cannot grant access. If local enrollment is missing, repair the
+ignored development configuration and restart the frontend; retries cannot
+disable App Check enforcement. See the [recovery evidence](../testing/ADMIN_PERMISSION_RECOVERY.md).
 
 Service-worker updates wait for existing tabs to close. Maps and decorative motion respect reduced-motion preferences; protected routes are no-index. Dialogs and listboxes support keyboard interaction and focus restoration.
 

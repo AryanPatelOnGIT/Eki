@@ -38,6 +38,7 @@ interface AuthContextValue {
   loginWithGoogle: () => Promise<void>;
   loginWithGoogleRedirect: () => Promise<void>;
   logout: () => Promise<void>;
+  refreshAccess: () => Promise<void>;
 }
 
 type FirebaseLoginDependencies = {
@@ -86,6 +87,8 @@ function useAuthState(): AuthContextValue {
   const [loginFallbackAvailable, setLoginFallbackAvailable] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const loginDependencies = useRef<FirebaseLoginDependencies | null>(null);
+  const refreshVerification = useRef<null | (() => Promise<void>)>(null);
+  const refreshFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     let generation = 0;
@@ -126,7 +129,7 @@ function useAuthState(): AuthContextValue {
         }
         if (disposed) return;
 
-        unsubscribe = authModule.onAuthStateChanged(auth, async (firebaseUser) => {
+        const verifyUser = async (firebaseUser: import("firebase/auth").User | null, forceRefresh = false) => {
           clearTimeout(authTimeout);
           const currentGen = ++generation;
           beginAuthVerification();
@@ -152,17 +155,20 @@ function useAuthState(): AuthContextValue {
 
             try {
               const { ensureAppCheck } = await import("@/lib/firebaseAppCheck");
-              await ensureAppCheck();
+              await ensureAppCheck({ forceRefresh });
               if (!isCurrentAuth()) return;
-              // Role claims are already present in a persisted Firebase session, so
-              // this returns without a Firestore round trip for normal app starts.
-              // They are issued by the trusted admin sync job, unlike client data.
+              // Refresh persisted tokens so newly synchronized admin claims and
+              // revoked/downgraded access are observed before publishing a workspace.
+              // Only trusted Auth claims authorize a privileged workspace.
               const tokenResult = await withTimeout(
-                firebaseUser.getIdTokenResult(),
+                firebaseUser.getIdTokenResult(true),
                 ROLE_VERIFICATION_TIMEOUT_MS,
                 "Role verification timed out.",
               );
               const claimedRole = tokenResult.claims.role;
+              if (claimedRole === "admin" && tokenResult.claims.admin !== true) {
+                throw Object.assign(new Error("Your administrator access is not synchronized. Sign in again or ask an administrator to synchronize trusted Auth claims."), { name: "RoleClaimsMissingError" });
+              }
 
               if (
                 claimedRole === "passenger" ||
@@ -237,6 +243,13 @@ function useAuthState(): AuthContextValue {
               }
 
               if (!isCurrentAuth()) return;
+              if (role === "admin" || role === "driver") {
+                const trusted = await withTimeout(firebaseUser.getIdTokenResult(true), ROLE_VERIFICATION_TIMEOUT_MS, "Role verification timed out.");
+                if (!isCurrentAuth()) return;
+                if (trusted.claims.role !== role || (role === "admin" && trusted.claims.admin !== true)) {
+                  throw Object.assign(new Error("Your administrator or driver profile is waiting for trusted Auth claim synchronization. Sign in again after an administrator synchronizes access."), { name: "RoleClaimsMissingError" });
+                }
+              }
               setRoleError(null);
               window.localStorage.setItem(`eki:role:${firebaseUser.uid}`, role || "passenger");
 
@@ -258,6 +271,10 @@ function useAuthState(): AuthContextValue {
                 setUser(null);
                 setRoleError("Security verification is unavailable. Check App Check configuration and try again.");
                 return;
+              }
+              if (err instanceof Error && err.name === "RoleClaimsMissingError") {
+                if (!isCurrentAuth()) return;
+                setUser(null); setRoleError(err.message); return;
               }
               const code = (err as { code?: string })?.code;
               if (code === "permission-denied") {
@@ -282,7 +299,9 @@ function useAuthState(): AuthContextValue {
             setLoading(false);
             notifyAuthReady();
           }
-        });
+        };
+        refreshVerification.current = () => verifyUser(auth.currentUser, true);
+        unsubscribe = authModule.onAuthStateChanged(auth, firebaseUser => verifyUser(firebaseUser));
         setLoginReady(true);
 
         // Complete a full-page OAuth fallback if the prior page redirected here.
@@ -313,9 +332,23 @@ function useAuthState(): AuthContextValue {
 
     return () => {
       disposed = true;
+      refreshVerification.current = null;
       clearTimeout(authTimeout);
       unsubscribe();
     };
+  }, []);
+
+  const refreshAccess = useCallback((): Promise<void> => {
+    if (refreshFlight.current) return refreshFlight.current;
+    if (!refreshVerification.current) {
+      setRoleError("Sign-in has not initialized. Reload the page and try again.");
+      return Promise.resolve();
+    }
+    const flight = refreshVerification.current().finally(() => {
+      if (refreshFlight.current === flight) refreshFlight.current = null;
+    });
+    refreshFlight.current = flight;
+    return flight;
   }, []);
 
   const loginWithGoogle = useCallback(async () => {
@@ -428,6 +461,7 @@ function useAuthState(): AuthContextValue {
     loginWithGoogle,
     loginWithGoogleRedirect,
     logout,
+    refreshAccess,
   };
 }
 

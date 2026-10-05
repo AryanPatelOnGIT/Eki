@@ -1,6 +1,34 @@
 import { expect, test } from "@playwright/test";
 const entry = { id: "feedback", userId: "passenger", userName: "Browser Passenger", type: "general", busId: null,
   driverId: null, sessionId: null, rating: null, comment: "Browser verification", timestamp: null, status: "new" };
+test("fleet and route denial retries share fresh verification before resubscribing", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const events: unknown[] = [];
+    Object.assign(window, { qaAccessEvents: events });
+    for (const name of ["qa-verification", "qa-metadata-read"]) {
+      window.addEventListener(name, event => events.push({ name, detail: (event as CustomEvent).detail }));
+    }
+  });
+  await page.goto("/?metadata");
+  await page.getByRole("button", { name: "Approve verification" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(2);
+  await page.getByRole("button", { name: "Retry fleet access" }).click();
+  await expect(page.getByText("Signing you in…")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fleet and routes" })).toHaveCount(0);
+  // The gate closes synchronously; dynamic module loading starts the SDK call
+  // later. Observe that pending call before asserting its exact count.
+  await expect(page.getByRole("button", { name: "Approve verification" })).toBeEnabled();
+  const events = () => page.evaluate(() => (window as typeof window & { qaAccessEvents: Array<{ name: string; detail: { forceRefresh?: boolean } }> }).qaAccessEvents);
+  const pending = await events();
+  expect(pending.filter(event => event.name === "qa-metadata-read")).toHaveLength(2);
+  expect(pending.filter(event => event.name === "qa-verification").map(event => event.detail.forceRefresh)).toEqual([false, true]);
+  await page.getByRole("button", { name: "Approve verification" }).click();
+  await expect(page.getByText("Verified buses", { exact: true })).toBeVisible();
+  await expect(page.getByText("Verified routes", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect((await events()).filter(event => event.name === "qa-metadata-read")).toHaveLength(4);
+  await page.screenshot({ path: testInfo.outputPath("verified-metadata.png") });
+});
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v2/feedback**", async route => {
     if (route.request().method() === "PATCH") await route.fulfill({ json: { updated: true, status: "reviewed" } });

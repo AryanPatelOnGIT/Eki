@@ -10,6 +10,7 @@ import { withTimeout } from "./promiseTimeout";
 
 let appCheck: AppCheck | null = null;
 const APP_CHECK_TOKEN_TIMEOUT_MS = 10_000;
+let tokenFlight: { startedAt: number; raw: ReturnType<typeof getToken> } | null = null;
 
 export class AppCheckVerificationError extends Error {
   constructor() {
@@ -65,18 +66,26 @@ function initializeFirebaseAppCheck(): AppCheck | null {
  * Browser production resolves only after a valid first App Check token.
  * Server calls and explicitly unenforced local development are no-ops.
  */
-export async function ensureAppCheck(): Promise<void> {
+export async function ensureAppCheck(options: { forceRefresh?: boolean } = {}): Promise<void> {
   if (typeof window === "undefined") return;
   try {
     const instance = initializeFirebaseAppCheck();
     if (!instance) return;
+    if (!tokenFlight) {
+      const flight = { startedAt: performance.now(), raw: getToken(instance, options.forceRefresh === true) };
+      tokenFlight = flight;
+      void flight.raw.then(() => { if (tokenFlight === flight) tokenFlight = null; }, () => { if (tokenFlight === flight) tokenFlight = null; });
+    }
+    const flight = tokenFlight;
+    const remaining = APP_CHECK_TOKEN_TIMEOUT_MS - (performance.now() - flight.startedAt);
+    if (remaining <= 0) throw new Error("[AppCheck] Token acquisition deadline expired.");
     const tokenResult = await withTimeout(
-      getToken(instance),
-      APP_CHECK_TOKEN_TIMEOUT_MS,
+      flight.raw,
+      remaining,
       "App Check token acquisition timed out.",
     );
     const result = tokenResult as typeof tokenResult & { error?: unknown };
-    if (!result.token || result.error) throw new Error("[AppCheck] Token acquisition failed.");
+    if (!result.token || result.error || performance.now() - flight.startedAt >= APP_CHECK_TOKEN_TIMEOUT_MS) throw new Error("[AppCheck] Token acquisition failed.");
   } catch {
     // Normalize provider, configuration and deadline failures without leaking
     // provider response/debug credential details into UI messages.

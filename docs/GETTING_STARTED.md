@@ -1,6 +1,6 @@
 # Eki getting started and operating guide
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 17:45 IST (UTC+05:30).
 
 This is the plain-language entry point for the Eki campus bus-tracking system.
 It explains what the system does, who uses it, how to run it locally, and
@@ -260,7 +260,7 @@ complete production rollout.
 | Backend will not start in production | `CORS_ORIGIN`, `FIREBASE_DATABASE_URL`, credentials, Maps configuration, and replica shard factor | [Backend README](backend/README.md), [configuration](CONFIGURATION.md) |
 | `/health` returns 503 | Firebase Admin credentials, Firestore/RTDB reachability, and the cached probe timestamp | [API health](../backend/API.md#health) |
 | Browser shows no live bus | Auth/App Check, RTDB URL, rules, device health, and whether the fix is fresh | [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md) |
-| Security verification fails or fleet permissions fail after sign-in | Check App Check provider/debug token and enforcement first; protected listeners wait for App Check and role verification. Timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-app-check-and-auth-setup) |
+| Security verification fails or fleet permissions fail after sign-in | Check App Check provider/debug token and enforcement first; protected listeners wait for refreshed Auth claims and App Check. Permission retries refresh access together; timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-app-check-and-auth-setup) |
 | Feedback cannot load | Check backend reachability and verified admin claims for `GET /api/v2/feedback`; retry from the panel. Do not relax Firestore rules | [Feedback API](../backend/API.md#feedback-profile-and-settings-endpoints) |
 | Sign-out fails | Protected content stays hidden; reload and retry sign-out. Previous verification/results must not reopen access | [Frontend guide](../frontend/README.md) |
 | Device receives 400 | Validate the deployed schema (nine-field current; eight-field sequenced and six-field legacy compatibility), JSON size, ranges, sequence, and capture/send timestamps | [API device endpoints](../backend/API.md#device-endpoints) |

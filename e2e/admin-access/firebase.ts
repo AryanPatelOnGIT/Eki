@@ -30,6 +30,35 @@ export function subscribeTokenWaiting(callback: () => void) { tokenObservers.add
 function notifyWaiting(value: boolean) { waiting = value; tokenObservers.forEach(callback => callback()); }
 let approve: ((result: { token: string }) => void) | undefined;
 let deny: ((error: Error) => void) | undefined;
-export function getToken() { return new Promise<{ token: string }>((resolve, reject) => { approve = resolve; deny = reject; notifyWaiting(true); }); }
+export function getToken(_instance: unknown, forceRefresh: boolean) {
+  window.dispatchEvent(new CustomEvent("qa-verification", { detail: { forceRefresh } }));
+  return new Promise<{ token: string }>((resolve, reject) => { approve = resolve; deny = reject; notifyWaiting(true); });
+}
 export function approveVerification() { approve?.({ token: "synthetic-attestation" }); notifyWaiting(false); }
 export function rejectVerification() { deny?.(new Error("Synthetic provider failure")); notifyWaiting(false); }
+
+// Only the synthetic SDK transport is replaced; the production collection hook,
+// auth gate and retry logic run unchanged in this fixture.
+export const db = {};
+export class Bytes {}
+export class DocumentReference {}
+export class GeoPoint {}
+export class Timestamp {}
+export const collection = (_db: unknown, name: string) => ({ name });
+export const query = (source: { name: string }) => source;
+export const limit = () => ({});
+export const where = () => ({});
+export const orderBy = () => ({});
+const reads = new Map<string, number>();
+export function onSnapshot(source: { name: string }, success: (snapshot: unknown) => void, failure: (error: unknown) => void) {
+  const count = (reads.get(source.name) ?? 0) + 1;
+  reads.set(source.name, count);
+  window.dispatchEvent(new CustomEvent("qa-metadata-read", { detail: { collection: source.name, count } }));
+  let active = true;
+  queueMicrotask(() => {
+    if (!active) return;
+    if (count === 1) failure({ code: "permission-denied" });
+    else success({ docs: [{ id: source.name, data: () => ({ name: `Verified ${source.name}` }) }] });
+  });
+  return () => { active = false; };
+}

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import RoleGuard from "./RoleGuard";
-const state = vi.hoisted(() => ({ user: { uid: "qa-user", role: "passenger" } as { uid: string; role: string } | null, loading: false, roleError: null as string | null, replace: vi.fn() }));
+const state = vi.hoisted(() => ({ user: { uid: "qa-user", role: "passenger" } as { uid: string; role: string } | null, loading: false, roleError: null as string | null, replace: vi.fn(), refreshAccess: vi.fn() }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ ...state, logout: vi.fn() }) }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin", useRouter: () => ({ replace: state.replace }) }));
 beforeEach(() => { state.user = { uid: "qa-user", role: "passenger" }; state.loading = false; state.roleError = null; state.replace.mockClear(); localStorage.clear(); });
@@ -13,6 +13,8 @@ describe("workspace authorization UI", () => {
     render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
     expect(screen.getByRole("alert")).toBeTruthy(); expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(state.replace).not.toHaveBeenCalled(); expect(screen.queryByText("Protected admin control")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(state.refreshAccess).toHaveBeenCalledOnce();
   });
   it.each(["passenger", "driver"])("never mounts admin controls for a %s", role => {
     state.user!.role = role; render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
