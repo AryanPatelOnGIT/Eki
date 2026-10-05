@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 ## Start with the current gates
 
@@ -108,3 +108,7 @@ proves same-key submission does not replay effects. A second emulator case
 finds 31 expired claims across 25-record pages. These are software fault tests;
 Google billing, Auth revocation uncertainty and replica supervisor termination
 need suitable staging evidence. No physical GNSS or production mutation occurs.
+
+## R10 privacy recovery (5 October 2026)
+
+[Privacy deletion recovery](../operations/PRIVACY_DELETION.md) records bounded pagination/chunks, retry history, current passenger eligibility and admin monitoring/recovery. Emulator cases use actual Firestore SDKs and a killed disposable worker with synthetic Auth. They cover 1001 feedback records, indexed/legacy manifests and personal collection groups; no physical telemetry or live Auth is required. Staging and institutional privacy sign-off remain #245.

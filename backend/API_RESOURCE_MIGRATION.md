@@ -1,6 +1,6 @@
 # HTTP resource migration for issue #192
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 This is the compatibility contract for the six method/path changes on `testing`.
 The existing handlers remain available. The v2 routes call those same handlers,
@@ -14,7 +14,7 @@ consistent. Device telemetry, diagnostics, and firmware URLs do not change.
 | `GET /api/routes-list` | `GET /api/v2/routes` | None | `200 {"routes":[...]}`; at most 250 route records, with metadata and stops but no geometry | `500` list failure | Firebase user; global 200/min limit |
 | `POST /api/devices/:deviceId/disable` | `PATCH /api/v2/devices/:deviceId` | Exactly `{"enabled":false}` on v2; no body on legacy | `200 {"disabled":true}` | `400` invalid ID or v2 body; `500` disable/invalidation failure | Firebase admin; global 200/min and write 30/min limits |
 | `PATCH /api/feedback/:feedbackId/status` | `PATCH /api/v2/feedback/:feedbackId` | Exactly `{"status":"new"|"reviewed"|"resolved"}` | `200 {"updated":boolean,"status":string}` | `400` invalid ID/body; `404` missing feedback; `500` update failure | Firebase admin; global 200/min and write 30/min limits |
-| `POST /api/privacy/deletion-request` | `POST /api/v2/privacy-deletion-requests` | No body on v2; UID comes from the token | `202 {"accepted":true}`; request record is keyed by UID | `400` unexpected v2 body; `409` operator/admin account; `500` queue failure | Firebase passenger; global 200/min and write 30/min limits |
+| `POST /api/privacy/deletion-request` | `POST /api/v2/privacy-deletion-requests` | No body on v2; UID comes from the token; resubmission preserves retry history | `202 {"accepted":true}`; request record is keyed by UID | `400` unexpected v2 body; `409` operator/admin account; `503` uncertain/unavailable queue acknowledgement | Firebase passenger; global 200/min and write 30/min limits |
 
 All six routes can also return `401` for missing or invalid Firebase credentials,
 `403` for an insufficient role where applicable, `413` for a JSON body above the

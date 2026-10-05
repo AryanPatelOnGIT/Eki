@@ -77,13 +77,9 @@ describe("removePassengerManifest", () => {
 
     const count = await removePassengerManifest("uid_1");
 
-    expect(count).toBe(1);
-    // Pagination terminates: the first page is non-empty, the second is empty,
-    // so the while(true) loop exits. Previously the mock ALWAYS returned a
-    // non-empty page, the loop never ended, and the worker OOM'd in CI.
-    // The indexed query has one populated page and one empty page; the
-    // legacy fallback is also queried once and is empty.
-    expect(pageCalls).toBe(3);
+    expect(count).toEqual({ removed: 1, more: false });
+    // One page per path, with continuation reported instead of unbounded loops.
+    expect(pageCalls).toBe(2);
     const passengerIdsUpdate = mocks.batchUpdates[0].data.passengerIds as {
       elements: string[];
     };

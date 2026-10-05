@@ -1,6 +1,6 @@
 # Operation resources (#194)
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 Current implemented contract on `testing`. The original design baseline was `9a7f109`; deployed availability must still be checked per environment.
 
@@ -133,3 +133,5 @@ recovery actions or live billed requests are authorized by these tests.
 The [#167 acceptance record](https://github.com/notnamansinha/Eki/issues/167#issuecomment-5916467888) confirms real-drive latency measurements remain deferred. This change preserves that implementation and does not promote its timeout into a measured latency claim.
 
 Follow [bounded reconciliation](../operations/RECONCILIATION.md) for page continuation, durable worker checkpoints, bounded per-bus repair and legacy/admin audit-lock recovery. Each new cursor uses a new deliberate key after settled effects; uncertain effects require the stopped-executor procedure above.
+
+A fleet lock may link `privacyRequestId`; recover its expired processing privacy claim before releasing the exact stopped-owner lock. Privacy and fleet Auth mutation share the mutex, held through real dependency settlement. See [privacy recovery](../operations/PRIVACY_DELETION.md).

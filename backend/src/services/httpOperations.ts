@@ -4,6 +4,7 @@ import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
 import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
 import { createBoundedSingleFlight } from "../lib/boundedSingleFlight";
+import { privacyExecutions } from "./privacyDeletionRequests";
 
 export const OPERATION_ID = /^[A-Za-z0-9_-]{16,128}$/;
 export const OPERATION_EXECUTOR_ID = randomUUID();
@@ -239,14 +240,15 @@ export async function recoverOperation(options: {
   }));
 }
 
-export type FleetLockSnapshot = { owner: string; executorId: string; operationId: string | null; auditOperationId?: string };
+export type FleetLockSnapshot = { owner: string; executorId: string; operationId: string | null; auditOperationId?: string; privacyRequestId?: string };
 export async function readFleetLock(): Promise<FleetLockSnapshot | null> {
   return control("read:fleet-lock", async () => {
     const snapshot = await db.collection("_fleet_reconciliation_locks").doc("singleton").get();
     if (!snapshot.exists) return null;
     const data = snapshot.data()!;
     return { owner: String(data.owner), executorId: executorOf(data), operationId: typeof data.operationId === "string" ? data.operationId : null,
-      ...(typeof data.auditOperationId === "string" ? { auditOperationId: data.auditOperationId } : {}) };
+      ...(typeof data.auditOperationId === "string" ? { auditOperationId: data.auditOperationId } : {}),
+      ...(typeof data.privacyRequestId === "string" ? { privacyRequestId: data.privacyRequestId } : {}) };
   });
 }
 export async function recoverFleetLock(options: { expectedOwner: string; executorStopped: true; adminUid: string }): Promise<{ recovered: true }> {
@@ -266,9 +268,16 @@ export async function recoverFleetLock(options: { expectedOwner: string; executo
         throw new OperationRecoveryConflict("Recover the linked operation before releasing its lock.");
       }
     }
+    let linkedPrivacyStatus: string | null = null;
+    if (typeof data.privacyRequestId === "string") {
+      const request = await transaction.get(db.collection("_privacy_deletion_requests").doc(data.privacyRequestId));
+      linkedPrivacyStatus = request.exists ? String(request.data()?.status) : "missing";
+      if (linkedPrivacyStatus === "processing" || privacyExecutions.has(data.privacyRequestId)) throw new OperationRecoveryConflict("Recover the linked privacy request before releasing its lock.");
+    }
     if (!isCurrent() || fleetLockOwners.has(options.expectedOwner)) throw new OperationRecoveryConflict("Recovery expired or local work is still active.");
     transaction.create(db.collection("_fleet_lock_recoveries").doc(randomUUID()), {
       owner: data.owner, executorId: executorOf(data), operationId: data.operationId ?? null, linkedOperationStatus, auditOperationId: data.auditOperationId ?? null,
+      privacyRequestId: data.privacyRequestId ?? null, linkedPrivacyStatus,
       recoveredBy: options.adminUid, executorStopped: true, recoveredAt: FieldValue.serverTimestamp(),
     });
     transaction.delete(ref); return { recovered: true as const };

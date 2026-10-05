@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 ## New to the project
 
@@ -39,6 +39,7 @@ Deployment availability must be checked separately.
 
 | Document | Covers |
 |---|---|
+| [Privacy deletion queue and recovery](../operations/PRIVACY_DELETION.md) | Fair bounded cleanup, backoff, resubmission and stopped-executor recovery |
 | [Architecture risk register](../operations/ARCHITECTURE_RISK_REGISTER.md) | Risk status and closure evidence |
 | [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md) | CI checks, branch deployment gates and rollback |
 | [Eki Web App DNS & Domain Setup Guide](../operations/DNS_AND_DOMAINS.md) | Hosting/Auth domains, DNS and certificates |

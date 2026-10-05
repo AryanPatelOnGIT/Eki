@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -431,7 +431,7 @@ surface (issues #72 + #73); the admin route above is the only lifecycle path.
 
 ### `POST /api/privacy/deletion-request` — passenger
 
-Queues `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}`. Driver/admin accounts receive 409 and must be offboarded by IT; failures return 500.
+Registers `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}` without resetting existing retry/error/status history. Current Auth/profile/driver membership permits claim-less passengers while excluding operators (409, IT offboarding). Admission has a three-second caller budget and returns 503/Retry-After on an uncertain or unavailable acknowledgement. Admin `GET /api/v2/privacy-deletion-requests` monitors twenty-record cursor pages; `POST /api/v2/privacy-deletion-requests/{uid}/recovery` compares executor/generation and audits a deliberate retry. Expired processing additionally requires independently verified executor termination and `executorStopped:true`. See [privacy deletion recovery](../docs/operations/PRIVACY_DELETION.md) for bounds, backoff, linked fleet lock recovery and staging limits.
 
 ## Consistency/retry guidance
 
