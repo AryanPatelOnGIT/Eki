@@ -3,6 +3,8 @@ import { deleteApp, initializeApp, type App } from "firebase-admin/app";
 import { Timestamp, Firestore } from "firebase-admin/firestore";
 import { getDatabase, type Database } from "firebase-admin/database";
 import { WorkerFence, WorkerLeadershipExpired, WORKER_LEASE_ID, workerWrite, workerTransaction, workerRtdbTransaction } from "./lib/workerFence";
+import { SerializedChangeWriter } from "./services/serializedChangeWriter";
+import { WorkQueueExpired } from "./lib/boundedKeyedExecutor";
 
 const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describe.skip;
 integration("worker fencing against actual Firebase emulators", () => {
@@ -27,6 +29,31 @@ integration("worker fencing against actual Firebase emulators", () => {
       ownerId: "emulator-leader", generation, expiresAt: Timestamp.fromMillis(Date.now() + 45_000),
     });
   }
+
+  it("retains ordering through a committed write with a stalled acknowledgement and queued expiry", async () => {
+    await lease(20);
+    const destination = firestore.collection("_worker_fence_test").doc("bounded-order");
+    const writer = new SerializedChangeWriter(1, { maxConcurrent: 1, maxQueueAgeMs: 300 });
+    let acknowledge!: () => void; let committed!: () => void;
+    const ack = new Promise<void>(done => { acknowledge = done; });
+    const commit = new Promise<void>(done => { committed = done; });
+    const old = leader(20).run(() => writer.enqueue("bus", "old", async () => {
+      await workerWrite(firestore, tx => { tx.set(destination, { progress: 1 }); });
+      committed(); await ack;
+    }));
+    await commit;
+    const expired = leader(20).run(() => writer.enqueue("bus", "expired", async () => {
+      await workerWrite(firestore, tx => { tx.set(destination, { progress: 0 }); });
+    })).catch(error => error);
+    expect(await expired).toBeInstanceOf(WorkQueueExpired);
+    expect(writer.snapshot()).toMatchObject({ active: 1, pending: 0 });
+    expect((await destination.get()).data()).toEqual({ progress: 1 });
+    const fresh = leader(20).run(() => writer.enqueue("bus", "fresh", async () => {
+      await workerWrite(firestore, tx => { tx.set(destination, { progress: 2 }); });
+    }));
+    acknowledge(); await Promise.all([old, fresh]);
+    expect((await destination.get()).data()).toEqual({ progress: 2 });
+  });
 
   it("commits a valid lifecycle write and rejects the superseded owner", async () => {
     const destination = firestore.collection("_worker_fence_test").doc("lifecycle");

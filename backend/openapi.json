@@ -2353,7 +2353,7 @@
           "Routes"
         ],
         "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
         "security": [
           {
             "FirebaseBearer": []
@@ -3712,7 +3712,7 @@
           "Places"
         ],
         "summary": "Search bounded place candidates using the server key",
-        "description": "Trims query to 3\u00e2\u20ac\u201c200 characters; server-key Places field mask returns at most five normalized candidates. Empty results are valid. Redacted structured errors include code/phase; upstream 429 maps to 503.",
+        "description": "Trims query to 3â€“200 characters; server-key Places field mask returns at most five normalized candidates. Empty results are valid. Redacted structured errors include code/phase; upstream 429 maps to 503.",
         "security": [
           {
             "FirebaseBearer": []
@@ -5010,7 +5010,7 @@
           "Feedback"
         ],
         "summary": "Submit authorized feedback with cooldown and replay protection",
-        "description": "General feedback requires nonempty comment; ride feedback requires completed session membership and matching bus/driver, plus rating 1\u00e2\u20ac\u201c5 or nonempty comment. Comments <=200 words and <=2000 trimmed characters. Identity/name derived from token/profile. General feedback ignores rating/ride identifiers after type checks.",
+        "description": "General feedback requires nonempty comment; ride feedback requires completed session membership and matching bus/driver, plus rating 1â€“5 or nonempty comment. Comments <=200 words and <=2000 trimmed characters. Identity/name derived from token/profile. General feedback ignores rating/ride identifiers after type checks.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8011,7 +8011,7 @@
           "Routes"
         ],
         "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8215,7 +8215,7 @@
           "Routes"
         ],
         "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
         "security": [
           {
             "FirebaseBearer": []
@@ -9044,7 +9044,8 @@
               },
               "routeProcessing": {
                 "type": "object",
-                "additionalProperties": true
+                "additionalProperties": true,
+                "description": "Bounded latest-position matching (8 active, 256 waiting keys) and rerouting (2 active, 64 waiting keys), including coalesced/rejected/expired counts and queue age. One replaceable follow-up per active key; undispatched age is at most 5 seconds."
               },
               "metricWindow": {
                 "type": "object",
@@ -9074,6 +9075,58 @@
                   "crossClockValuesAreEstimates"
                 ],
                 "additionalProperties": false
+              },
+              "workQueues": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kdf",
+                  "lifecycle",
+                  "intake",
+                  "recovery"
+                ],
+                "properties": {
+                  "kdf": {
+                    "$ref": "#/components/schemas/ExecutionQueueStatus"
+                  },
+                  "lifecycle": {
+                    "$ref": "#/components/schemas/ExecutionQueueStatus"
+                  },
+                  "intake": {
+                    "$ref": "#/components/schemas/ExecutionQueueStatus"
+                  },
+                  "recovery": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "requested",
+                      "inFlight",
+                      "scanned",
+                      "failures",
+                      "pageSize"
+                    ],
+                    "properties": {
+                      "requested": {
+                        "type": "boolean"
+                      },
+                      "inFlight": {
+                        "type": "boolean"
+                      },
+                      "scanned": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "failures": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "pageSize": {
+                        "type": "integer",
+                        "const": 25
+                      }
+                    }
+                  }
+                }
               }
             },
             "required": [
@@ -9092,7 +9145,8 @@
               "rateLimit",
               "serverIngressGapMs",
               "routeProcessing",
-              "metricWindow"
+              "metricWindow",
+              "workQueues"
             ],
             "additionalProperties": false
           },
@@ -9768,7 +9822,7 @@
               "number",
               "null"
             ],
-            "description": "Ride feedback: integer 1\u00e2\u20ac\u201c5 or null; general feedback: numeric type is checked but value is ignored."
+            "description": "Ride feedback: integer 1â€“5 or null; general feedback: numeric type is checked but value is ignored."
           },
           "sessionId": {
             "type": "string",
@@ -10179,7 +10233,7 @@
             "type": "string",
             "maxLength": 2000,
             "minLength": 1,
-            "description": "Raw input <=2000 UTF-16 code units. After Unicode normalization it must contain 1\u00e2\u20ac\u201c500 Unicode code points; unsafe formatting is removed and profanity censored."
+            "description": "Raw input <=2000 UTF-16 code units. After Unicode normalization it must contain 1â€“500 Unicode code points; unsafe formatting is removed and profanity censored."
           },
           "requestId": {
             "type": "string",
@@ -11428,6 +11482,65 @@
           "polylineQuality"
         ],
         "additionalProperties": false
+      },
+      "ExecutionQueueStatus": {
+        "type": "object",
+        "description": "Process-local bounded execution. Dispatched work retains its slot until actual settlement; only undispatched work expires. Counts contain no bus, session or credential identifiers.",
+        "additionalProperties": false,
+        "required": [
+          "active",
+          "pending",
+          "keys",
+          "rejected",
+          "expired",
+          "peakPending",
+          "maxConcurrent",
+          "maxPending",
+          "maxPendingPerKey",
+          "maxQueueAgeMs"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "keys": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expired": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peakPending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxConcurrent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPendingPerKey": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxQueueAgeMs": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
       }
     }
   }

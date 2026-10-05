@@ -1,4 +1,7 @@
 import { LruCache } from "../lib/lruCache";
+import { BoundedKeyedExecutor, type ExecutionBudgets } from "../lib/boundedKeyedExecutor";
+
+let writerSequence = 0;
 
 /**
  * Serializes change-only writes per key.
@@ -14,16 +17,20 @@ import { LruCache } from "../lib/lruCache";
 export class SerializedChangeWriter {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly fingerprints: LruCache<string, string>;
+  private readonly executor: BoundedKeyedExecutor<string>;
+  private readonly prefix = `${writerSequence++}:`;
 
   /**
    * @param maxFingerprints Bounds the dedup fingerprint map (issue #37) so
    *   fingerprints of retired keys cannot accumulate forever. Eviction only
    *   drops a dedup entry: the next identical event performs one redundant
-   *   write, then re-caches. Queues are never evicted — dropping a pending
-   *   write would break the per-key ordering guarantee.
+   *   write, then re-caches. Admission and undispatched queue age are bounded
+   *   independently. Dispatched writes retain their slot and per-key ordering
+   *   until settlement; callers must recover rejected/expired transitions.
    */
-  constructor(maxFingerprints = 1_000) {
+  constructor(maxFingerprints = 1_000, options: ExecutionBudgets & { executor?: BoundedKeyedExecutor<string> } = {}) {
     this.fingerprints = new LruCache<string, string>(maxFingerprints);
+    this.executor = options.executor ?? new BoundedKeyedExecutor<string>(options);
   }
 
   /**
@@ -41,12 +48,10 @@ export class SerializedChangeWriter {
     if (fingerprint !== null && this.fingerprints.get(key) === fingerprint) {
       return (this.queues.get(key) ?? Promise.resolve()) as Promise<T>;
     }
-    if (fingerprint !== null) {
-      this.fingerprints.set(key, fingerprint);
-    }
-
-    const previous = this.queues.get(key) ?? Promise.resolve();
-    const queued = previous.catch(() => undefined).then(write);
+    let queued: Promise<T>;
+    try { queued = this.executor.run(this.prefix + key, write); }
+    catch (error) { return Promise.reject(error); }
+    if (fingerprint !== null) this.fingerprints.set(key, fingerprint);
     this.queues.set(key, queued);
     void queued.then(
       () => {
@@ -95,8 +100,11 @@ export class SerializedChangeWriter {
 
   /** In-flight writes for every key, for shutdown draining. */
   pending(): Iterable<Promise<unknown>> {
-    return this.queues.values();
+    return this.executor.pending();
   }
+
+  snapshot() { return this.executor.snapshot(); }
+  canEnqueue(key: string) { return this.executor.canRun(this.prefix + key); }
 
   /** Clears dedup fingerprints while preserving active write ordering. */
   clear(): void {

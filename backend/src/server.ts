@@ -41,6 +41,7 @@ import { readRateLimitShardFactor, shardedLimit } from "./lib/rateLimitShard";
 import { requireAdmin } from "./middleware/requireAdmin";
 import { assertRetentionConfiguration } from "./services/retentionSweeper";
 import { startWorkerCoordinator } from "./services/workerCoordinator";
+import { getTripStateQueueStatus } from "./services/tripStateEngine";
 import busRoutes from "./routes/buses";
 import analyticsRoutes from "./routes/analytics";
 import requestRoutes from "./routes/requests";
@@ -251,6 +252,7 @@ app.get("/api/health", requireAdmin, (_req, res) => {
       lastRejectedAt: telemetry.lastRejectedAt,
       credentialCacheHitRate: telemetry.credentialCacheHitRate,
       credentialFills: telemetry.credentialFills,
+      workQueues: { kdf: telemetry.kdfExecution, ...getTripStateQueueStatus() },
       processingLatencyMs: telemetry.processingLatencyMs,
       deviceQueueLatencyMs: telemetry.deviceQueueLatencyMs,
       networkLatencyMs: telemetry.networkLatencyMs,

@@ -85,7 +85,7 @@ Returns only `{ "status": "ok" }` when the cached 30-second Firestore/RTDB probe
 
 ### `GET /api/health` — admin
 
-Returns the cached Firestore/RTDB status, telemetry counters, latency/transaction summaries, bounded route-processing queue state, background-failure state, and probe timestamp. This is the detailed operational response formerly exposed by `/health`; it requires an admin Firebase ID token.
+Returns the cached Firestore/RTDB status, telemetry counters, latency/transaction summaries, bounded route-processing queue state, background-failure state, and probe timestamp. This is the detailed operational response formerly exposed by `/health`; it requires an admin Firebase ID token. `telemetry.workQueues` reports process-local KDF, durable lifecycle and intake active/waiting counts, admission rejections, expiry and configured ceilings. Recovery reports one bounded 25-item page. `routeProcessing.rerouting` reports the separate reroute scheduler. See [work admission](../operations/WORK_ADMISSION.md) for FIFO, recovery and uncertain-commit boundaries.
 
 ```json
 {
@@ -99,6 +99,13 @@ Returns the cached Firestore/RTDB status, telemetry counters, latency/transactio
     "lastAcceptedAt": "2026-08-08T00:00:00.000Z",
     "lastRejectedAt": null,
     "credentialCacheHitRate": 0.8,
+    "credentialFills": { "activeFills": 0, "waitingCallers": 0 },
+    "workQueues": {
+      "kdf": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 4, "maxPending": 32, "maxPendingPerKey": 1, "maxQueueAgeMs": 5000 },
+      "lifecycle": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 8, "maxPending": 256, "maxPendingPerKey": 32, "maxQueueAgeMs": 5000 },
+      "intake": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 8, "maxPending": 256, "maxPendingPerKey": 32, "maxQueueAgeMs": 5000 },
+      "recovery": { "requested": false, "inFlight": false, "scanned": 0, "failures": 0, "pageSize": 25 }
+    },
     "processingLatencyMs": { "samples": 10, "average": 42.1, "p50": 35, "p95": 80, "p99": 80 },
     "deviceQueueLatencyMs": { "samples": 10, "average": 120, "p50": 80, "p95": 300, "p99": 300 },
     "networkLatencyMs": { "samples": 10, "average": 780, "p50": 700, "p95": 1100, "p99": 1100 },
@@ -122,10 +129,13 @@ Returns the cached Firestore/RTDB status, telemetry counters, latency/transactio
       "processed": 9,
       "coalesced": 1,
       "failed": 0,
+      "rejected": 0,
+      "expired": 0,
       "activeWorkers": 0,
       "pendingKeys": 0,
       "lastQueueAgeMs": 4,
-      "maxQueueAgeMs": 20
+      "maxQueueAgeMs": 20,
+      "rerouting": { "scheduled": 0, "processed": 0, "coalesced": 0, "failed": 0, "rejected": 0, "expired": 0, "activeWorkers": 0, "pendingKeys": 0, "lastQueueAgeMs": 0, "maxQueueAgeMs": 0 }
     },
     "metricWindow": {
       "scope": "process",

@@ -59,6 +59,7 @@ export interface HttpsTelemetryStatus {
   lastRejectedAt: string | null;
   credentialCacheHitRate: number | null;
   credentialFills: { activeFills: number; waitingCallers: number };
+  kdfExecution: ReturnType<typeof scryptLimiter.snapshot>;
   processingLatencyMs: LatencySummary;
   deviceQueueLatencyMs: LatencySummary;
   networkLatencyMs: LatencySummary;
@@ -729,6 +730,7 @@ export function getHttpsTelemetryStatus(): HttpsTelemetryStatus {
         ? null
         : Number((credentialCacheHits / credentialAttempts).toFixed(3)),
     credentialFills: credentialFills.snapshot(),
+    kdfExecution: scryptLimiter.snapshot(),
     processingLatencyMs: summarizeLatencySamples(processingLatencySamples),
     deviceQueueLatencyMs: summarizeLatencySamples(deviceQueueLatencySamples),
     networkLatencyMs: summarizeLatencySamples(networkLatencySamples),

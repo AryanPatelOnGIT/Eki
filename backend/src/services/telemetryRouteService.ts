@@ -1107,7 +1107,7 @@ export function scheduleTelemetryRouteProcessing(
 
 /** Operational counters exposed through the authenticated health endpoint. */
 export function getRouteProcessingStatus() {
-  return routeProcessingScheduler.snapshot();
+  return { ...routeProcessingScheduler.snapshot(), rerouting: rerouteScheduler.snapshot() };
 }
 
 // Slow upstream routing must not block matching newer telemetry samples.
@@ -1116,7 +1116,8 @@ const rerouteScheduler = createLatestPendingScheduler<string, {
   direction: RideDirection; routeVersion: number;
 }>(async (_key, task) => {
   await requestReroute(task.assignment, task.sample, task.route, task.direction, task.routeVersion);
-}, (key, error) => recordBackgroundFailure("devices.rerouting", "Live rerouting", `[Routes] Rerouting failed for ${key}:`, error));
+}, (key, error) => recordBackgroundFailure("devices.rerouting", "Live rerouting", `[Routes] Rerouting failed for ${key}:`, error),
+() => performance.now(), { maxConcurrent: 2, maxPending: 64 });
 
 /** Flush both queues before closing Firebase; routing never blocks ingestion. */
 export async function drainTelemetryRouteProcessing(): Promise<void> {

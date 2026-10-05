@@ -174,3 +174,14 @@ radio, TLS, Secure Boot and OTA acceptance require the hardware runbooks.
 RTDB is the immediate latest-value projection; Firestore is durable truth for configuration and recovery/history. A small window can exist between RTDB claim and Firestore active projection. Session IDs and conditional transactions make retries/reconciliation idempotent. Clients must display interruption/staleness rather than infer lifecycle from coordinates alone.
 
 The fleet authorization safety sweep reads the RTDB assignment mirror once and coalesces Firestore bus-route lookups by bus ID while retaining per-driver Auth checks. If the bulk mirror read fails, it falls back to the original per-driver lookup path so an optimization outage cannot disable repair.
+
+### Bounded work admission
+
+KDF execution is 4 active/32 waiting; ordered intake and the shared durable
+writer pool each allow 8 active/256 waiting/32 waiting per key. Matching allows
+8 active/256 waiting keys, rerouting 2 active/64 waiting keys, plus one newest
+follow-up per active key. Undispatched age is five seconds. Dispatched slots
+remain held through actual settlement. Fair FIFO dispatch preserves caller
+contexts. Rejected lifecycle work requests one paginated 25-item authoritative
+reread; it preserves current ownership and already committed progress. See
+[work admission](../operations/WORK_ADMISSION.md) for recovery and evidence limits.

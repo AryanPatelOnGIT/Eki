@@ -100,3 +100,10 @@ For a first-time setup, role/workflow explanation, environment-variable
 reference, troubleshooting, and the boundary between Hosting deployment and
 backend/runtime deployment, read [Getting started](../docs/GETTING_STARTED.md)
 and [configuration](../docs/CONFIGURATION.md).
+
+Worker/KDF admission has fixed process-local active, waiting and five-second
+queue-age ceilings. Durable FIFO work and replaceable matching use separate
+pools; rejected lifecycle events trigger bounded authoritative-state replay.
+Admin health exposes anonymous queue counters. See
+[work admission](../docs/operations/WORK_ADMISSION.md) for limits, recovery,
+uncertain-commit safety and the synthetic memory acceptance command.
