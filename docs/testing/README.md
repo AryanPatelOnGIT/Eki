@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 ## Start with the current gates
 
@@ -96,3 +96,15 @@ it does not certify live fleet throughput or moving-route recovery.
 R03's [telemetry deadline guide](../operations/TELEMETRY_DEADLINES.md) records
 response/dependency/queue budgets and held-acknowledgement acceptance. Software
 checks continue with the GNSS/ESP32 disconnected; field/live gates stay in #245.
+
+## R07 operation recovery (5 October 2026)
+
+[Operation resources](../api/OPERATION_RESOURCES.md) records the current bounds
+and stop/audit/recovery procedure. Regressions reproduce unbounded independent
+executors and stranded expired claims. `httpOperations.integration.test.ts`
+kills a disposable child after actual emulator claim/effect commits, discovers
+and abandons its unknown outcome, releases its lock with an atomic audit, and
+proves same-key submission does not replay effects. A second emulator case
+finds 31 expired claims across 25-record pages. These are software fault tests;
+Google billing, Auth revocation uncertainty and replica supervisor termination
+need suitable staging evidence. No physical GNSS or production mutation occurs.

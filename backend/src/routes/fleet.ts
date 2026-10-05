@@ -5,8 +5,10 @@ import { requireAdmin } from "../middleware/requireAdmin";
 import { auth, db, rtdb } from "../lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { singleRouteParam } from "../lib/requestParams";
-import { OPERATION_ID, OperationConflict, readOperation, submitOperation } from "../services/httpOperations";
+import { OPERATION_EXECUTOR_ID, OPERATION_ID, OperationConflict, OperationRecoveryConflict, readFleetLock, recoverFleetLock, trackFleetLock, readOperation, submitOperation, type OperationExecutionContext } from "../services/httpOperations";
 import { FleetReconciliationCache } from "../services/fleetReconciliationCache";
+
+import { operationRecovery, operationRecoveryList } from "./operationRecovery";
 
 const router = Router();
 export const fleetReconciliationJobsRouter = Router();
@@ -61,6 +63,7 @@ async function applyDriverAuthorization(
   authUid: string,
   assignedBusId: string | null,
   reconciliationCache?: FleetReconciliationCache,
+  context?: OperationExecutionContext,
 ): Promise<boolean> {
   const user = await auth.getUser(authUid);
   const existing = user.customClaims ?? {};
@@ -81,6 +84,7 @@ async function applyDriverAuthorization(
       existing.assignedBusId !== undefined;
     if (!claimsChanged && mirror === null) return false;
 
+    context?.assertActive();
     assertWorkerLeadership();
     const updates: Promise<unknown>[] = [];
     if (claimsChanged) {
@@ -121,6 +125,7 @@ async function applyDriverAuthorization(
     stableJson(mirror) !== stableJson(expectedMirror);
   if (!claimsChanged && !mirrorChanged) return false;
 
+  context?.assertActive();
   assertWorkerLeadership();
   const updates: Promise<unknown>[] = [];
   if (claimsChanged) {
@@ -148,79 +153,87 @@ async function settleAuthorizationUpdates(updates: Promise<unknown>[]): Promise<
 export class FleetReconciliationBusy extends Error {}
 type FleetRecord = { driverId: string; outcome: "repaired" | "unchanged" | "failed"; code?: string };
 
-export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_000, operationId: string | null = null): Promise<{
+export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_000, operationId: string | null = null, context?: OperationExecutionContext): Promise<{
   checked: number; repaired: number; failed: number; records: FleetRecord[];
 }> {
   const lockRef = db.collection("_fleet_reconciliation_locks").doc("singleton");
   const owner = randomUUID();
-  await workerTransaction(db, async transaction => {
-    const lock = await transaction.get(lockRef);
-    if (lock.exists) throw new FleetReconciliationBusy("Fleet reconciliation is already running or awaiting recovery.");
-    transaction.create(lockRef, { owner, operationId,
-      executorId: process.env.WORKER_INSTANCE_ID || process.env.HOSTNAME || "local",
-      createdAt: FieldValue.serverTimestamp() });
-  });
+  const untrack = trackFleetLock(owner);
   try {
-    const drivers = await db.collection("drivers").limit(500).get();
-    let reconciliationCache: FleetReconciliationCache | undefined;
-    try {
-      const mirrorSnapshot = await rtdb.ref("driverRouteAssignments").once("value");
-      const rawMirrors = mirrorSnapshot.val();
-      reconciliationCache = new FleetReconciliationCache(
-        rawMirrors && typeof rawMirrors === "object" && !Array.isArray(rawMirrors)
-          ? rawMirrors as Record<string, unknown>
-          : {},
-        loadBusRouteIds,
-      );
-    } catch (error) {
-      // Preserve the original per-driver lookup path if the bulk optimization is
-      // temporarily unavailable; reconciliation remains a safety mechanism.
-      console.warn("[Fleet] Bulk assignment mirror read failed; using per-driver reads:", error);
-    }
-    let repaired = 0;
-    let failed = 0;
-    const records: FleetRecord[] = [];
-    for (let index = 0; index < drivers.docs.length; index += 10) {
-      if (Date.now() >= deadlineAt) {
-        for (const driver of drivers.docs.slice(index)) {
-          records.push({ driverId: driver.id, outcome: "failed", code: "TIME_BUDGET_EXCEEDED" }); failed += 1;
-        }
-        break;
-      }
-      assertWorkerLeadership();
-      const chunk = drivers.docs.slice(index, index + 10);
-      await Promise.all(chunk.map(async (driver) => {
-        const data = driver.data();
-        if (!validId(data.authUid)) {
-          failed += 1;
-          records.push({ driverId: driver.id, outcome: "failed", code: "INVALID_DRIVER_AUTH" });
-          return;
-        }
-        try {
-          const changed = await applyDriverAuthorization(
-            driver.id,
-            data.authUid,
-            validId(data.assignedBusId) ? data.assignedBusId : null,
-            reconciliationCache,
-          );
-          if (changed) repaired += 1;
-          records.push({ driverId: driver.id, outcome: changed ? "repaired" : "unchanged" });
-        } catch (error) {
-          failed += 1;
-          records.push({ driverId: driver.id, outcome: "failed", code: "RECONCILIATION_RECORD_FAILED" });
-          console.error(`[Fleet] Reconciliation failed for ${driver.id}:`, error);
-        }
-      }));
-    }
-    return { checked: drivers.size, repaired, failed, records: records.sort((a, b) => a.driverId.localeCompare(b.driverId)) };
-  } finally {
-    // No expiry takeover: Firebase side effects cannot be fenced by a lease.
-    // Release only after all in-flight record writes have settled.
-    await db.runTransaction(async transaction => {
+    await context?.checkpoint({ phase: "locking" });
+    await workerTransaction(db, async transaction => {
+      context?.assertActive();
       const lock = await transaction.get(lockRef);
-      if (lock.data()?.owner === owner) transaction.delete(lockRef);
+      if (lock.exists) throw new FleetReconciliationBusy("Fleet reconciliation is already running or awaiting recovery.");
+      context?.assertActive();
+      transaction.create(lockRef, { owner, operationId,
+        executorId: OPERATION_EXECUTOR_ID,
+        createdAt: FieldValue.serverTimestamp() });
     });
-  }
+    try {
+      const drivers = await db.collection("drivers").limit(500).get();
+      let reconciliationCache: FleetReconciliationCache | undefined;
+      try {
+        const mirrorSnapshot = await rtdb.ref("driverRouteAssignments").once("value");
+        const rawMirrors = mirrorSnapshot.val();
+        reconciliationCache = new FleetReconciliationCache(
+          rawMirrors && typeof rawMirrors === "object" && !Array.isArray(rawMirrors)
+            ? rawMirrors as Record<string, unknown>
+            : {},
+          loadBusRouteIds,
+        );
+      } catch (error) {
+        // Preserve the original per-driver lookup path if the bulk optimization is
+        // temporarily unavailable; reconciliation remains a safety mechanism.
+        console.warn("[Fleet] Bulk assignment mirror read failed; using per-driver reads:", error);
+      }
+      let repaired = 0;
+      let failed = 0;
+      const records: FleetRecord[] = [];
+      for (let index = 0; index < drivers.docs.length; index += 10) {
+        if (Date.now() >= deadlineAt) {
+          for (const driver of drivers.docs.slice(index)) {
+            records.push({ driverId: driver.id, outcome: "failed", code: "TIME_BUDGET_EXCEEDED" }); failed += 1;
+          }
+          break;
+        }
+        assertWorkerLeadership();
+        const chunk = drivers.docs.slice(index, index + 10);
+        await context?.checkpoint({ phase: "authorizing", checked: records.length, repaired, failed, batchDriverIds: chunk.map(driver => driver.id) });
+        await Promise.all(chunk.map(async (driver) => {
+          const data = driver.data();
+          if (!validId(data.authUid)) {
+            failed += 1;
+            records.push({ driverId: driver.id, outcome: "failed", code: "INVALID_DRIVER_AUTH" });
+            return;
+          }
+          try {
+            const changed = await applyDriverAuthorization(
+              driver.id,
+              data.authUid,
+              validId(data.assignedBusId) ? data.assignedBusId : null,
+              reconciliationCache, context,
+            );
+            if (changed) repaired += 1;
+            records.push({ driverId: driver.id, outcome: changed ? "repaired" : "unchanged" });
+          } catch (error) {
+            failed += 1;
+            records.push({ driverId: driver.id, outcome: "failed", code: "RECONCILIATION_RECORD_FAILED" });
+            console.error(`[Fleet] Reconciliation failed for ${driver.id}:`, error);
+          }
+        }));
+        await context?.checkpoint({ phase: "authorizing", checked: records.length, repaired, failed, batchDriverIds: [] });
+      }
+      return { checked: drivers.size, repaired, failed, records: records.sort((a, b) => a.driverId.localeCompare(b.driverId)) };
+    } finally {
+      // No expiry takeover: Firebase side effects cannot be fenced by a lease.
+      // Release only after all in-flight record writes have settled.
+      await db.runTransaction(async transaction => {
+        const lock = await transaction.get(lockRef);
+        if (lock.data()?.owner === owner) transaction.delete(lockRef);
+      });
+    }
+  } finally { untrack(); }
 }
 
 router.use(requireAdmin);
@@ -481,12 +494,11 @@ fleetReconciliationJobsRouter.post("/", privateResponse, requireAdmin, async (re
     res.status(400).json({ error: "A valid Idempotency-Key and empty body are required.", code: "INVALID_RECONCILIATION" }); return;
   }
   try {
-    const deadlineAt = Date.now() + 30_000;
     const snapshot = await submitOperation({ collection: "_fleet_reconciliation_jobs", id,
       adminUid: (req as Request & { user?: { uid?: string } }).user?.uid,
-      payload: {}, budgetMs: 30_000, execute: async () => {
+      payload: {}, budgetMs: 30_000, execute: async context => {
         try {
-          const result = await reconcileFleetAuthorization(deadlineAt, id);
+          const result = await reconcileFleetAuthorization(Date.now() + 30_000, id, context);
           return { result, ...(result.failed ? { error: { code: "RECONCILIATION_PARTIAL_FAILURE", error: "Some records could not be reconciled; inspect per-record results." } } : {}) };
         } catch (error) {
           if (error instanceof FleetReconciliationBusy) return { error: { code: "FLEET_RECONCILIATION_BUSY", error: "Another reconciliation is running or awaiting recovery; poll it before starting a new job." } };
@@ -498,10 +510,36 @@ fleetReconciliationJobsRouter.post("/", privateResponse, requireAdmin, async (re
     res.status(snapshot.status === "processing" ? 202 : 200).json(snapshot);
   } catch (error) {
     const conflict = error instanceof OperationConflict;
+    if (!conflict) res.set("Retry-After", "1");
     res.status(conflict ? 409 : 503).json({ error: conflict ? "Operation key belongs to a different payload." : "Job status is unavailable; retry with the same key.",
       code: conflict ? "IDEMPOTENCY_KEY_REUSED" : "OPERATION_UNAVAILABLE" });
   }
 });
+fleetReconciliationJobsRouter.get("/lock", privateResponse, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const lock = await readFleetLock();
+    if (!lock) { res.status(404).json({ error: "No reconciliation lock exists.", code: "LOCK_NOT_FOUND" }); return; }
+    res.json(lock);
+  } catch { res.set("Retry-After", "1").status(503).json({ error: "Lock status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
+});
+fleetReconciliationJobsRouter.post("/lock/recovery", privateResponse, requireAdmin, async (req: Request, res: Response) => {
+  const body = req.body;
+  if (!body || Array.isArray(body) || Object.keys(body).some(key => !["expectedOwner", "executorStopped"].includes(key)) ||
+      !validId(body.expectedOwner) || body.executorStopped !== true) {
+    res.status(400).json({ error: "Current lock owner and executorStopped:true are required.", code: "INVALID_RECOVERY" }); return;
+  }
+  try {
+    const adminUid = (req as Request & { user?: { uid?: string } }).user?.uid ?? "";
+    res.json(await recoverFleetLock({ ...body, adminUid }));
+  } catch (error) {
+    const conflict = error instanceof OperationRecoveryConflict;
+    if (!conflict) res.set("Retry-After", "1");
+    res.status(conflict ? 409 : 503).json({ error: conflict ? "Lock recovery is not eligible; recover its operation and stop the prior executor first." : "Recovery acknowledgement is unavailable; inspect lock status before retrying.",
+      code: conflict ? "RECOVERY_CONFLICT" : "OPERATION_UNAVAILABLE" });
+  }
+});
+fleetReconciliationJobsRouter.post("/:operationId/recovery", privateResponse, requireAdmin, operationRecovery("_fleet_reconciliation_jobs"));
+fleetReconciliationJobsRouter.get("/recovery", privateResponse, requireAdmin, operationRecoveryList("_fleet_reconciliation_jobs"));
 fleetReconciliationJobsRouter.get("/:operationId", privateResponse, requireAdmin, async (req: Request, res: Response) => {
   const id = singleRouteParam(req.params.operationId);
   if (!id || !OPERATION_ID.test(id)) { res.status(400).json({ error: "Invalid operation ID.", code: "INVALID_OPERATION_ID" }); return; }
@@ -510,7 +548,7 @@ fleetReconciliationJobsRouter.get("/:operationId", privateResponse, requireAdmin
     if (!snapshot) { res.status(404).json({ error: "Job not found.", code: "OPERATION_NOT_FOUND" }); return; }
     if (snapshot.status === "processing") res.set("Retry-After", "1");
     res.json(snapshot);
-  } catch { res.status(503).json({ error: "Job status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
+  } catch { res.set("Retry-After", "1").status(503).json({ error: "Job status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
 });
 
 export default router;

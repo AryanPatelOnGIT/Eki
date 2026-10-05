@@ -30,7 +30,7 @@ import {
   getRouteProcessingStatus,
   startTelemetryRouteWatcher,
 } from "./services/telemetryRouteService";
-import { drainHttpOperations } from "./services/httpOperations";
+import { OPERATION_EXECUTOR_ID, drainHttpOperations } from "./services/httpOperations";
 import { drainDurableRideRecovery } from "./services/durableRideRecovery";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
 import { createHealthState } from "./lib/healthState";
@@ -324,6 +324,7 @@ app.use((
 let stopWorkers: (() => Promise<void>) | null = null;
 let stopTelemetryRouteWatcher: (() => void) | null = null;
 httpServer.listen(Number(PORT), "0.0.0.0", () => {
+  console.log(`[Operations] Executor identity: ${OPERATION_EXECUTOR_ID}`);
   console.log(`✅ BusTrack backend running on port ${PORT} (0.0.0.0)`);
   stopTelemetryRouteWatcher = startTelemetryRouteWatcher();
   stopWorkers = startWorkerCoordinator();

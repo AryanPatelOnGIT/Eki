@@ -21,7 +21,7 @@ const harness = vi.hoisted(() => ({
 vi.mock("../middleware/requireAdmin", () => ({
   requireAdmin: (_req: unknown, res: { status: (code: number) => { json: (data: unknown) => void } }, next: () => void) => {
     if (!harness.admin) { res.status(403).json({ error: "Admin required." }); return; }
-    next();
+    Object.assign(_req as object, { user: { uid: "admin" } }); next();
   },
 }));
 vi.mock("../middleware/requireAuth", () => ({
@@ -365,6 +365,17 @@ it("saves 100 ordered stops with independently computed return geometry", async 
 
 
 describe("durable geometry preview resources", () => {
+  it("abandons expired preview ownership without repeating billable calls", async () => {
+    const id = "recovery_preview_1";
+    harness.previews.set(id, { status: "processing", deadlineAt: Date.now() - 1, executorId: "stopped-preview", generation: 1 });
+    const request = (body: unknown) => networkFetch(`${baseUrl}/api/v2/route-geometry-previews/${id}/recovery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const body = { expectedExecutorId: "stopped-preview", expectedGeneration: 1, executorStopped: true };
+    expect((await request({ ...body, inject: true })).status).toBe(400);
+    const reply = await request(body); expect(reply.status).toBe(200); expect(reply.headers.get("cache-control")).toBe("no-store");
+    expect(await reply.json()).toMatchObject({ status: "failed", error: { outcomeUnknown: true } });
+    expect((await request(body)).status).toBe(409);
+    harness.admin = false; expect((await request(body)).status).toBe(403);
+  });
   const key = "preview_key_00001";
   const points = [{ lat: 23, lng: 72 }, { lat: 23.1, lng: 72.1 }];
   const post = (waypoints = points, id = key) => networkFetch(`${baseUrl}/api/v2/route-geometry-previews`, {

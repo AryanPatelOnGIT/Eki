@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -258,6 +258,28 @@ Idempotency/reconciliation operation metadata such as stable request fingerprint
 ### `_route_save_operations/{saveId}`
 
 Server-only route-save coordination record. It binds a stable `saveId` to `routeId` and an exact payload hash, with `processing|succeeded|failed` status, a bounded cross-replica lease/owner, attempt count, timestamps, and a replayable result or structured failure. A different payload cannot reuse the ID. The final transaction writes the versioned route and successful operation together, allowing timeout-after-commit reconciliation without a duplicate Google request or stale overwrite.
+
+### `_route_geometry_previews/{operationId}` / `_fleet_reconciliation_jobs/{operationId}`
+
+Server-only payload hash, admin UID, `processing|succeeded|failed` status, unique
+process `executorId`, positive `generation`, wall-clock `deadlineAt`, timestamps,
+and redacted replay outcome. Phase/progress checkpoints identify the current
+bounded fleet batch without exposing Auth UIDs. Expired status reads persist
+`recovery_required`; processing records have no terminal-retention timestamp.
+Operator abandonment requires a verified stopped executor and exact generation;
+it writes a failed unknown outcome, generation bump and internal `recoveredBy`
+audit. No automatic billable/Auth replay. Legacy claims use identity `legacy`/0.
+
+### `_fleet_reconciliation_locks/singleton` / `_fleet_lock_recoveries/{id}`
+
+The singleton has `owner`, process `executorId`, optional linked `operationId`
+and creation timestamp. Legacy, periodic and operation reconciliation share it;
+there is no expiry takeover of dispatched Auth work. Recovery atomically audits
+that owner, operation, executor, stopped-executor attestation, admin UID and
+`recoveredAt`, then deletes only the matching singleton. Linked processing jobs
+must first be recovered; local unsettled work is refused. Recovery logs follow
+`OPERATION_LOG_RETENTION_DAYS` from `recoveredAt`; retention never removes a lock.
+See the [operator recovery runbook](../api/OPERATION_RESOURCES.md).
 
 ### `_health/*`
 

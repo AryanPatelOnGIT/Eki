@@ -49,7 +49,10 @@ const networkFetch = globalThis.fetch;
 export async function contractFetch(input: string | URL, init?: RequestInit): Promise<Response> {
   const url = new URL(input);
   const method = init?.method ?? "GET";
-  const template = Object.keys(spec.paths).find(path => {
+  const template = Object.keys(spec.paths)
+    // Static resources precede parameter resources in Express (e.g. /lock).
+    .sort((left, right) => (left.match(/\{/g)?.length ?? 0) - (right.match(/\{/g)?.length ?? 0))
+    .find(path => {
     const pattern = path.split("/").map(segment => segment.startsWith("{") ? "[^/]+" : segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("/");
     return new RegExp(`^${pattern}/?$`).test(url.pathname) && spec.paths[path][method.toLowerCase()];
   });
