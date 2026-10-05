@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 16:32 IST (UTC+05:30).
 
 ## New to the project
 
@@ -39,6 +39,7 @@ Deployment availability must be checked separately.
 
 | Document | Covers |
 |---|---|
+| [Versioned telemetry route catalog](../operations/ROUTE_CATALOG.md) | Shared watcher data, freshness and edit/deletion fencing |
 | [Privacy deletion queue and recovery](../operations/PRIVACY_DELETION.md) | Fair bounded cleanup, backoff, resubmission and stopped-executor recovery |
 | [Architecture risk register](../operations/ARCHITECTURE_RISK_REGISTER.md) | Risk status and closure evidence |
 | [CI, deployment, and release guide](../operations/CI_CD_AND_RELEASES.md) | CI checks, branch deployment gates and rollback |

@@ -7,7 +7,6 @@ import {
   nextMatchedTelemetryValue,
   remainingRerouteStops,
   rerouteContextIsCurrent,
-  routeRepairSnapshotWrite,
   routeMatchingElapsedMs,
   telemetryRouteSnapshotIsCurrent,
   telemetryIsCurrent,
@@ -252,39 +251,5 @@ describe("previous route-match continuity window", () => {
 
   it("does not reuse a future match after device clock regression", () => {
     expect(previousMatch({ ...match, sampledAt: 200_000 }, 5, 100_000)).toBeNull();
-  });
-});
-
-describe("route repair snapshot writes", () => {
-  const forward = { encoded: "fwd" };
-  const reverse = { encoded: "rev" };
-  const fresh = { distanceMeters: 5000, duration: "600s" };
-
-  it("stamps HIGH_QUALITY plus metrics only when both directions were freshly computed", () => {
-    const write = routeRepairSnapshotWrite({
-      forward,
-      reverse,
-      forwardRepair: fresh,
-      reverseRepair: fresh,
-    });
-    expect(write.polylineQuality).toBe("HIGH_QUALITY");
-    expect(write.distanceMeters).toBe(5000);
-    expect(write.reverseDistanceMeters).toBe(5000);
-    expect(write.duration).toBe("600s");
-  });
-
-  it("preserves legacy forward geometry but never claims quality or metrics", () => {
-    const write = routeRepairSnapshotWrite({
-      forward,
-      reverse,
-      forwardRepair: null,
-      reverseRepair: fresh,
-    });
-    expect(write.polyline).toBe("fwd");
-    expect(write.forwardPolyline).toBe("fwd");
-    expect(write.polylineQuality).toBeUndefined();
-    expect(write.distanceMeters).toBeUndefined();
-    expect(write.duration).toBeUndefined();
-    expect(write.reverseDistanceMeters).toBe(5000);
   });
 });

@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 16:32 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -227,3 +227,5 @@ unknown claim; retention includes terminal claims and audited lock recoveries.
 Reconciliation uses fixed software bounds: 100-record pages, four abandoned-session pipelines and ten fleet Auth pipelines per batch. Worker cursors are durable and lease-fenced. Fleet legacy/admin admission is two active/eight waiting with a two-second queue age; no new environment variable or retention/privacy policy changes. See [reconciliation](operations/RECONCILIATION.md).
 
 Privacy queue software bounds are fixed: twenty-record pages every minute, one raw execution/twenty waiting, two-second queue age, thirty-second dispatch budget and five consecutive failures with exponential jittered retry capped at one hour. No new environment variable or retention policy is introduced. See [privacy deletion](operations/PRIVACY_DELETION.md).
+
+The telemetry route catalog uses fixed 1000-entry LRU data/generation bounds and five-minute monotonic positive/negative freshness. Pending directions share per-route fills; watcher failure invalidates data, with existing 1–30 second reconnect backoff. No new environment variable/provider policy is introduced. See [route catalog](operations/ROUTE_CATALOG.md).

@@ -1,6 +1,6 @@
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
 import { geometryPublicationIsFresh } from "./rtdbRetention";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import {
@@ -28,6 +28,8 @@ import {
   withoutLiveRouteContext,
 } from "../lib/liveRouteContext";
 import { createLatestPendingScheduler } from "../lib/latestPendingScheduler";
+import { LruCache } from "../lib/lruCache";
+import { settleTogether } from "../lib/reconciliationPages";
 import { routeGeometrySignature } from "../lib/routeGeometrySignature";
 import { routeDocumentVersion, routeGeometryVersion } from "../lib/routeSaveContract";
 import type { DeviceAssignment } from "./deviceTelemetryService";
@@ -58,12 +60,15 @@ interface StoredRoute {
   stops: RouteStop[];
   endpointVersion: string;
   geometryVersion: number;
+  configVersion: number;
+  geometrySignature: string;
   cacheGeneration: number;
 }
 
 interface RouteCacheEntry {
   expiresAt: number;
   value: StoredRoute | null;
+  signature: string;
 }
 
 interface LiveMatchedLocation extends LatLng {
@@ -73,9 +78,18 @@ interface LiveMatchedLocation extends LatLng {
   routeVersion: number;
 }
 
-const routeCache = new Map<string, RouteCacheEntry>();
+const routeCache = new LruCache<string, RouteCacheEntry>(1_000);
 const routeLoads = new Map<string, Promise<StoredRoute | null>>();
-const routeCacheGenerations = new Map<string, number>();
+let generationSequence = 0;
+// Unique generations do not revive old callbacks after tombstone/cache eviction.
+const routeCacheGenerations = new LruCache<string, number>(1_000, routeId => {
+  routeCache.delete(routeId); routeLoads.delete(routeId);
+});
+function routeGeneration(routeId: string): number {
+  let generation = routeCacheGenerations.get(routeId);
+  if (generation === undefined) { generation = ++generationSequence; routeCacheGenerations.set(routeId, generation); }
+  return generation;
+}
 interface RouteProcessingTask {
   assignment: DeviceAssignment;
   sample: TelemetryPayload;
@@ -123,114 +137,46 @@ function decodeStoredPolyline(value: unknown): { encoded: string; path: LatLng[]
   }
 }
 
-async function loadStoredRouteUncached(
-  routeId: string,
-  forceFresh = false,
-): Promise<StoredRoute | null> {
-  const cacheGeneration = routeCacheGenerations.get(routeId) ?? 0;
-  const cached = routeCache.get(routeId);
-  if (!forceFresh && cached && cached.expiresAt > Date.now()) return cached.value;
-  const snapshot = await db.collection("routes").doc(routeId).get();
-  const data = snapshot.data() as Record<string, unknown> | undefined;
-  let value: StoredRoute | null = null;
-  if (snapshot.exists && data) {
-    const stops = parseStops(data.stops);
-    let forward = decodeStoredPolyline(data.forwardPolyline ?? data.polyline);
-    let reverse = decodeStoredPolyline(data.reversePolyline);
-    if (stops.length >= 2 && (!forward || !reverse)) {
-      const compute = async (orderedStops: readonly RouteStop[]) => {
-        const origin = orderedStops[0];
-        const destination = orderedStops[orderedStops.length - 1];
-        return computeRouteGeometry(
-          origin,
-          destination,
-          orderedStops.slice(1, -1),
-        );
-      };
-      const [forwardRepair, reverseRepair] = await Promise.all([
-        forward ? Promise.resolve(null) : compute(stops),
-        reverse ? Promise.resolve(null) : compute([...stops].reverse()),
-      ]);
-      if (forwardRepair) {
-        forward = decodeStoredPolyline(forwardRepair.encodedPolyline);
-      }
-      if (reverseRepair) {
-        reverse = decodeStoredPolyline(reverseRepair.encodedPolyline);
-      }
-      if (
-        forward &&
-        reverse &&
-        telemetryRouteSnapshotIsCurrent(routeId, cacheGeneration)
-      ) {
-        const repairedForward = forward;
-        const repairedReverse = reverse;
-        const expectedConfigVersion = routeDocumentVersion(data);
-        const expectedSignature = routeGeometrySignature(stops);
-        const repaired = await db.runTransaction(async (transaction) => {
-          const current = await transaction.get(snapshot.ref);
-          const currentData = current.data() as Record<string, unknown> | undefined;
-          const currentStops = parseStops(currentData?.stops);
-          if (
-            !current.exists ||
-            routeDocumentVersion(currentData) !== expectedConfigVersion ||
-            currentStops.length < 2 ||
-            routeGeometrySignature(currentStops) !== expectedSignature
-          ) return false;
-          transaction.set(snapshot.ref, {
-            ...routeRepairSnapshotWrite({
-              forward: repairedForward,
-              reverse: repairedReverse,
-              forwardRepair,
-              reverseRepair,
-            }),
-            geometrySignature: expectedSignature,
-            geometryVersion: routeGeometryVersion(currentData) + 1,
-            updatedAt: FieldValue.serverTimestamp(),
-          }, { merge: true });
-          return true;
-        });
-        if (!repaired) return null;
-      }
-    }
-    if (forward && reverse && stops.length >= 2) {
-      value = {
-        forwardPolyline: forward.encoded,
-        reversePolyline: reverse.encoded,
-        forwardCoordinates: forward.path,
-        reverseCoordinates: reverse.path,
-        stops,
-        // Same endpoint binding as shift creation and automatic turnaround.
-        endpointVersion: endpointSnapshotVersion(stops)!,
-        geometryVersion: routeGeometryVersion(data),
-        cacheGeneration,
-      };
-    }
-  }
-  if ((routeCacheGenerations.get(routeId) ?? 0) === cacheGeneration) {
-    routeCache.set(routeId, { value, expiresAt: Date.now() + ROUTE_CACHE_MS });
-  }
-  return value;
+function catalogEntry(data: Record<string, unknown> | undefined, cacheGeneration: number): RouteCacheEntry {
+  const stops = parseStops(data?.stops);
+  const forward = decodeStoredPolyline(data?.forwardPolyline ?? data?.polyline);
+  const reverse = decodeStoredPolyline(data?.reversePolyline);
+  const configVersion = routeDocumentVersion(data), geometryVersion = routeGeometryVersion(data);
+  const geometrySignature = routeGeometrySignature(stops);
+  const signature = createHash("sha256").update(JSON.stringify([Boolean(data), configVersion, geometryVersion, geometrySignature, forward?.encoded ?? null, reverse?.encoded ?? null])).digest("hex");
+  return { signature, expiresAt: performance.now() + ROUTE_CACHE_MS,
+    value: forward && reverse && stops.length >= 2 ? {
+      forwardPolyline: forward.encoded, reversePolyline: reverse.encoded,
+      forwardCoordinates: forward.path, reverseCoordinates: reverse.path,
+      stops, endpointVersion: endpointSnapshotVersion(stops)!, geometryVersion, configVersion, geometrySignature, cacheGeneration,
+    } : null };
 }
-
-async function loadStoredRoute(
-  routeId: string,
-  forceFresh = false,
-): Promise<StoredRoute | null> {
-  if (forceFresh) return loadStoredRouteUncached(routeId, true);
+/** Read-only route data. Legacy repair belongs to explicit authorized admin work. */
+async function loadStoredRoute(routeId: string): Promise<StoredRoute | null> {
   const cached = routeCache.get(routeId);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached && cached.expiresAt > performance.now()) return cached.value;
   const pending = routeLoads.get(routeId);
   if (pending) return pending;
-  const load = loadStoredRouteUncached(routeId).finally(() => {
-    if (routeLoads.get(routeId) === load) routeLoads.delete(routeId);
-  });
+  const generation = routeGeneration(routeId);
+  const load = (async () => {
+    const snapshot = await db.collection("routes").doc(routeId).get();
+    if (!telemetryRouteSnapshotIsCurrent(routeId, generation)) return null;
+    let entry = catalogEntry(snapshot.exists ? snapshot.data() : undefined, generation);
+    // Freshness reads also invalidate changed data when the watcher missed an edit.
+    if (cached && cached.signature !== entry.signature) {
+      invalidateTelemetryRoute(routeId);
+      entry = catalogEntry(snapshot.exists ? snapshot.data() : undefined, routeGeneration(routeId));
+    }
+    routeCache.set(routeId, entry);
+    return entry.value;
+  })().finally(() => { if (routeLoads.get(routeId) === load) routeLoads.delete(routeId); });
   routeLoads.set(routeId, load);
   return load;
 }
 
 /** Invalidate matcher data and make already-running work fail its version guard. */
 export function invalidateTelemetryRoute(routeId: string): void {
-  routeCacheGenerations.set(routeId, (routeCacheGenerations.get(routeId) ?? 0) + 1);
+  routeCacheGenerations.set(routeId, ++generationSequence);
   routeCache.delete(routeId);
   routeLoads.delete(routeId);
 }
@@ -253,19 +199,35 @@ export function startTelemetryRouteWatcher(): () => void {
   let unsubscribe: (() => void) | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let reconnectDelayMs = initialDelayMs;
+  let watcherGeneration = 0;
+  const invalidateCatalog = () => {
+    for (const id of new Set([...routeCache].map(([key]) => key).concat([...routeLoads.keys()]))) invalidateTelemetryRoute(id);
+  };
 
   const attach = () => {
     if (stopped) return;
+    const generation = ++watcherGeneration;
+    let initial = true;
     unsubscribe = db.collection("routes").onSnapshot(
       (snapshot) => {
+        if (stopped || generation !== watcherGeneration) return;
         reconnectDelayMs = initialDelayMs;
+        if (initial) {
+          const present = new Set(snapshot.docs.map(doc => doc.id));
+          for (const [id] of routeCache) if (!present.has(id)) invalidateTelemetryRoute(id);
+          initial = false;
+        }
         for (const change of snapshot.docChanges()) {
-          invalidateTelemetryRoute(change.doc.id);
+          const id = change.doc.id;
+          invalidateTelemetryRoute(id);
+          routeCache.set(id, catalogEntry(change.type === "removed" ? undefined : change.doc.data(), routeGeneration(id)));
         }
       },
-      (error) => {
+      () => {
+        if (stopped || generation !== watcherGeneration) return;
+        watcherGeneration++; invalidateCatalog();
         unsubscribe = null;
-        console.error("[Routes] Matcher cache watcher failed:", error);
+        console.warn("[Routes] Catalog watcher failed; freshness reads are required.");
         if (stopped || reconnectTimer) return;
         const retryInMs = reconnectDelayMs;
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, maximumDelayMs);
@@ -280,7 +242,7 @@ export function startTelemetryRouteWatcher(): () => void {
   attach();
 
   return () => {
-    stopped = true;
+    stopped = true; watcherGeneration++; invalidateCatalog();
     unsubscribe?.();
     unsubscribe = null;
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -399,10 +361,13 @@ async function persistResolvedSessionDirection(
   if (!origin || !destination) return false;
 
   const persisted = await db.runTransaction(async (transaction) => {
-    const [session, lock] = await Promise.all([
-      transaction.get(sessionRef),
-      transaction.get(lockRef),
+    const [session, lock, currentRoute] = await settleTogether([
+      transaction.get(sessionRef), transaction.get(lockRef), transaction.get(db.collection("routes").doc(assignment.routeId)),
     ]);
+    const currentRouteData = currentRoute.data();
+    if (!currentRoute.exists || !telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration) ||
+        routeDocumentVersion(currentRouteData) !== route.configVersion || routeGeometryVersion(currentRouteData) !== route.geometryVersion ||
+        routeGeometrySignature(parseStops(currentRouteData?.stops)) !== route.geometrySignature) return false;
     const sessionData = session.data();
     const sessionDirection = resolvedDirection(sessionData?.direction);
     if (
@@ -455,9 +420,11 @@ async function markDirectionProjectionSynchronized(
 ): Promise<void> {
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+    // An empty local SDK cache must retry against the authoritative server value.
+    if (current === null) return null;
     const currentLive = current as Record<string, unknown> | null;
     if (
-      !currentLive ||
+      !currentLive || !telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration) ||
       currentLive.sessionId !== live.sessionId ||
       resolvedDirection(currentLive.direction) !== direction ||
       currentLive.directionEndpointVersion !== route.endpointVersion ||
@@ -469,6 +436,18 @@ async function markDirectionProjectionSynchronized(
   });
 }
 
+/** Undo only our still-provisional projection after a definitive durable refusal. */
+async function resetRefusedDirection(assignment: DeviceAssignment, live: Record<string, unknown>, sample: TelemetryPayload): Promise<void> {
+  await rtdb.ref(`activeBuses/${assignment.busId}_${assignment.routeId}`).transaction(current => {
+    if (current === null) return null;
+    if (!telemetryIsCurrent(current, sample) || current.sessionId !== live.sessionId ||
+        current.directionEndpointVersion !== live.directionEndpointVersion || current.direction !== live.direction ||
+        current.directionFirestoreSynced !== false || current.tripState !== "pre_departure") return;
+    return { ...withoutLiveRouteContext(current), direction: null, directionState: "pending", directionEndpointVersion: null,
+      originStopId: null, destinationStopId: null, directionResolvedAt: null };
+  });
+}
+
 async function resolvePendingDirection(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
@@ -477,8 +456,10 @@ async function resolvePendingDirection(
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   const now = Date.now();
   const transaction = await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+    // An empty local SDK cache must retry against the authoritative server value.
+    if (current === null) return null;
     const live = current as Record<string, unknown> | null;
-    if (!live || !telemetryIsCurrent(live, sample)) return;
+    if (!live || !telemetryIsCurrent(live, sample) || !telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) return;
     const existingDirection = resolvedDirection(live.direction);
     if (existingDirection && typeof live.sessionId === "string") return;
     if (!directionResolutionIsEligible(live, assignment)) return;
@@ -693,6 +674,7 @@ async function activateReroute(
   routeId: string,
   sample: TelemetryPayload,
   geometry: Awaited<ReturnType<typeof computeRouteGeometry>>,
+  cacheGeneration: number,
 ): Promise<void> {
   // A new session must never reuse a cached geometry version from an earlier ride.
   const nextVersion = Math.max(expectedVersion + 1, Date.now());
@@ -717,8 +699,10 @@ async function activateReroute(
     createdAt: { ".sv": "timestamp" },
   });
   await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+    // An empty local SDK cache must retry against the authoritative server value.
+    if (current === null) return null;
     const live = current as Record<string, unknown> | null;
-    if (!geometryPublicationIsFresh(publicationCreatedAt) || !rerouteContextIsCurrent(live, {
+    if (!telemetryRouteSnapshotIsCurrent(routeId, cacheGeneration) || !geometryPublicationIsFresh(publicationCreatedAt) || !rerouteContextIsCurrent(live, {
       requestId,
       routeVersion: expectedVersion,
       sessionId: expectedSessionId,
@@ -770,10 +754,12 @@ async function requestReroute(
   const requestId = `${sample.timestamp}-${sample.seq}-${randomBytes(6).toString("hex")}`;
   const now = Date.now();
   const started = await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+    // An empty local SDK cache must retry against the authoritative server value.
+    if (current === null) return null;
     const live = current as Record<string, unknown> | null;
     const lastAttemptAt = Number(live?.lastRerouteAttemptAt);
     if (
-      !live ||
+      !live || !telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration) ||
       live.routeState !== "OFF_ROUTE" ||
       live.routeVersion !== expectedVersion ||
       live.status !== "active" ||
@@ -808,6 +794,7 @@ async function requestReroute(
     }
     const destination = remainingStops[remainingStops.length - 1];
     const intermediates = remainingStops.slice(0, -1);
+    if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) throw new Error("Route configuration changed before rerouting.");
     const geometry = await computeRouteGeometry(
       { lat: sample.lat, lng: sample.lng },
       destination,
@@ -829,9 +816,12 @@ async function requestReroute(
       assignment.routeId,
       sample,
       geometry,
+      route.cacheGeneration,
     );
   } catch (error) {
     await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+      // An empty local SDK cache must retry against the authoritative server value.
+      if (current === null) return null;
       const currentLive = current as Record<string, unknown> | null;
       if (!rerouteContextIsCurrent(currentLive, {
         requestId,
@@ -860,12 +850,8 @@ async function processTelemetryRoute(
   const initialLive = snapshot.val() as Record<string, unknown> | null;
   if (!telemetryIsCurrent(initialLive, sample)) return;
   if (initialLive?.tripState === "completed") return;
-  // Direction is bound to admin-managed endpoints, so a pending node must not
-  // use a cached route snapshot while an administrator can still edit it.
-  const route = await loadStoredRoute(
-    assignment.routeId,
-    !resolvedDirection(initialLive?.direction),
-  );
+  // Pending and resolved directions share the watcher-versioned catalog.
+  const route = await loadStoredRoute(assignment.routeId);
   if (
     !route ||
     !telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)
@@ -881,7 +867,11 @@ async function processTelemetryRoute(
       route,
       direction,
     );
-    if (!synchronized) return;
+    if (!synchronized) {
+      // Unknown commit errors throw; never undo a durable outcome on a lost acknowledgement.
+      await resetRefusedDirection(assignment, live, sample);
+      return;
+    }
     await markDirectionProjectionSynchronized(assignment, live, route, direction);
   }
 
@@ -961,6 +951,8 @@ async function processTelemetryRoute(
   );
 
   const transaction = await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+    // An empty local SDK cache must retry against the authoritative server value.
+    if (current === null) return null;
     const currentLive = current as Record<string, unknown> | null;
     if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) {
       return;
@@ -1013,48 +1005,6 @@ async function processTelemetryRoute(
   ) {
     rerouteScheduler.schedule(nodeKey, { assignment, sample: acceptedSample, route, direction, routeVersion });
   }
-}
-
-interface RouteRepairGeometry {
-  distanceMeters: number;
-  duration: string;
-}
-
-/**
- * Write payload for a stored-route geometry snapshot. Legacy geometry is
- * preserved as-is, but the HIGH_QUALITY marker and required distance/duration
- * fields are only stamped when BOTH directions were freshly computed. A
- * forward value that merely decodes legacy data keeps its geometry but never
- * claims cache quality or fabricates metrics.
- */
-export function routeRepairSnapshotWrite(params: {
-  forward: { encoded: string };
-  reverse: { encoded: string };
-  forwardRepair: RouteRepairGeometry | null;
-  reverseRepair: RouteRepairGeometry | null;
-}): Record<string, unknown> {
-  return {
-    polyline: params.forward.encoded,
-    forwardPolyline: params.forward.encoded,
-    reversePolyline: params.reverse.encoded,
-    ...(params.forwardRepair && params.reverseRepair
-      ? { polylineQuality: "HIGH_QUALITY" }
-      : {}),
-    ...(params.forwardRepair
-      ? {
-          distanceMeters: params.forwardRepair.distanceMeters,
-          forwardDistanceMeters: params.forwardRepair.distanceMeters,
-          duration: params.forwardRepair.duration,
-          forwardDuration: params.forwardRepair.duration,
-        }
-      : {}),
-    ...(params.reverseRepair
-      ? {
-          reverseDistanceMeters: params.reverseRepair.distanceMeters,
-          reverseDuration: params.reverseRepair.duration,
-        }
-      : {}),
-  };
 }
 
 /**
