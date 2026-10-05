@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/errors";
 import { auth } from "@/lib/firebaseAuth";
 import { ApiError, apiRequest } from "@/lib/apiClient";
 import { withTimeout } from "@/lib/promiseTimeout";
+import { getAuthVerificationGeneration } from "@/lib/authState";
 
 interface Props {
   sessionId: string;
@@ -136,9 +137,11 @@ export default function PassengerBoardingView({
     const updatingExistingPassenger = hasJoined;
     const controller = new AbortController();
     joinAbortRef.current = controller;
+    const authGeneration = getAuthVerificationGeneration();
     const isCurrent = () => mountedRef.current &&
       joinAbortRef.current === controller && !controller.signal.aborted &&
-      sessionRef.current === sessionId && auth.currentUser?.uid === currentUser.uid;
+      sessionRef.current === sessionId && auth.currentUser === currentUser &&
+      getAuthVerificationGeneration() === authGeneration;
     try {
       const [token, position] = await Promise.all([
         withTimeout(untilCancelled(currentUser.getIdToken(), controller.signal), PREPARATION_TIMEOUT_MS, "Sign-in verification timed out. Please try again."),

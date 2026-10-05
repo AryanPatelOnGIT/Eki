@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PassengerBoardingView from "./PassengerBoardingView";
 import type { RouteData } from "@/hooks/useRoutes";
+import { beginAuthVerification } from "@/lib/authState";
 
 const sdk = vi.hoisted(() => ({ token: vi.fn(), auth: { currentUser: null as null | { uid: string; getIdToken: () => Promise<string> } } }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: sdk.auth }));
@@ -136,5 +137,33 @@ describe("boarding preparation and API budgets", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).not.toHaveProperty("lat");
     view.rerender(<PassengerBoardingView sessionId="qa-next-session" route={route} tripState="in_service" onJoined={view.joined} />);
     view.board(); expect(gps).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["principal", "verification"])("fences preparation when the same UID changes %s", async change => {
+    const fetchMock = delayedFetch(1); const view = prepare(); view.board();
+    if (change === "principal") sdk.auth.currentUser = { uid: "qa-passenger", getIdToken: sdk.token };
+    else beginAuthVerification();
+    act(() => fix()); await flush();
+    expect(fetchMock).not.toHaveBeenCalled(); expect(view.joined).not.toHaveBeenCalled();
+  });
+
+  it.each(["principal", "verification"])("fences an HTTP acknowledgement when the same UID changes %s", async change => {
+    let acknowledge: (response: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { acknowledge = resolve; })));
+    const view = prepare(); view.board(); act(() => fix()); await flush();
+    if (change === "principal") sdk.auth.currentUser = { uid: "qa-passenger", getIdToken: sdk.token };
+    else beginAuthVerification();
+    await act(async () => acknowledge(new Response('{"joined":true}')));
+    expect(view.joined).not.toHaveBeenCalled(); expect(screen.queryByText("On board")).toBeNull();
+  });
+
+  it("ignores late preparation failures after a session change", async () => {
+    let tokenFailure: (error: Error) => void = () => {};
+    sdk.token.mockImplementationOnce(() => new Promise((_resolve, reject) => { tokenFailure = reject; }));
+    const fetchMock = delayedFetch(1); const view = prepare(); view.board();
+    view.rerender(<PassengerBoardingView sessionId="qa-next-session" route={route} tripState="in_service" onJoined={view.joined} />);
+    act(() => { tokenFailure(new Error("old token failed")); callbacks[0].failure({ code: 3 } as GeolocationPositionError); });
+    await flush(); expect(screen.queryByRole("alert")).toBeNull(); expect(fetchMock).not.toHaveBeenCalled();
+    view.board(); act(() => fix(1)); await flush(); await advance(1); expect(view.joined).toHaveBeenCalledOnce();
   });
 });
