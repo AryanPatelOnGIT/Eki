@@ -15,6 +15,15 @@ export function isTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   return env.OTEL_SDK_DISABLED?.trim().toLowerCase() !== "true" && hasOtlpEndpoint(env);
 }
 
+/** Keep unsampled incoming parents while sampling one tenth of new root traces. */
+export function configureTraceSampling(env: NodeJS.ProcessEnv = process.env): void {
+  env.OTEL_TRACES_SAMPLER ??= "parentbased_traceidratio";
+  if (env.OTEL_TRACES_SAMPLER === "parentbased_traceidratio" ||
+      env.OTEL_TRACES_SAMPLER === "traceidratio") {
+    env.OTEL_TRACES_SAMPLER_ARG ??= "0.1";
+  }
+}
+
 /** Removes request URL values that can contain user searches or identifiers. */
 export function redactHttpSpanUrl(
   setAttribute: (key: string, value: string) => unknown,
@@ -33,6 +42,7 @@ export async function startTelemetry(): Promise<boolean> {
   // The exporter/auto-instrumentation graph is large. Load it only when an
   // endpoint is configured, before importing any application HTTP modules.
   startPromise = (async () => {
+  configureTraceSampling();
   const [
     { getNodeAutoInstrumentations },
     { OTLPLogExporter },

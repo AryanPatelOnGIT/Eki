@@ -58,6 +58,8 @@ interface CredentialCacheEntry {
 export interface HttpsTelemetryStatus {
   accepted: number;
   rejected: number;
+  /** Aggregate, redacted categories; never keyed by untrusted device ID. */
+  rejectionReasons: Record<TelemetryRejectionReason, number>;
   lastAcceptedAt: string | null;
   lastRejectedAt: string | null;
   credentialCacheHitRate: number | null;
@@ -83,6 +85,9 @@ export interface HttpsTelemetryStatus {
   };
   serverIngressGapMs: LatencySummary;
 }
+
+export type TelemetryRejectionReason =
+  | "credentials" | "timestamp" | "hdop" | "schema" | "other_payload" | "dependency";
 
 export interface LatencySummary {
   samples: number;
@@ -127,6 +132,10 @@ const status: Pick<
   rejected: 0,
   lastAcceptedAt: null,
   lastRejectedAt: null,
+};
+const rejectionReasons: Record<TelemetryRejectionReason, number> = {
+  credentials: 0, timestamp: 0, hdop: 0, schema: 0,
+  other_payload: 0, dependency: 0,
 };
 export const TELEMETRY_METRIC_SAMPLE_CAPACITY = 512;
 const processingLatencySamples: number[] = [];
@@ -733,9 +742,13 @@ export async function ingestDeviceTelemetry(
   } finally { deadline.dispose(); }
 }
 
-export function recordTelemetryRejection(now = Date.now()): void {
+export function recordTelemetryRejection(
+  reason: TelemetryRejectionReason = "dependency",
+  now = Date.now(),
+): void {
   status.rejected += 1;
   status.lastRejectedAt = new Date(now).toISOString();
+  rejectionReasons[reason] += 1;
 }
 
 export function invalidateDeviceCredentialCache(deviceId: string): void {
@@ -759,6 +772,7 @@ export function getHttpsTelemetryStatus(): HttpsTelemetryStatus {
   const credentialAttempts = credentialCacheHits + credentialCacheMisses;
   return {
     ...status,
+    rejectionReasons: { ...rejectionReasons },
     credentialCacheHitRate:
       credentialAttempts === 0
         ? null

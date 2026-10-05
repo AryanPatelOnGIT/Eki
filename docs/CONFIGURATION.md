@@ -45,6 +45,7 @@ runtime secret/configuration system.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Optional | An endpoint enables backend instrumentation | Keep exporter authorization in runtime secrets; local stack uses port `4318` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Optional | Exporter authorization header | Secret; never commit or print it |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Optional | Template uses `http/protobuf` | Match the receiving Collector |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | Optional | With an endpoint, defaults to parent-based trace-ID ratio sampling of 0.1 for new roots | Explicit operator values override the default; parent trace decisions remain respected |
 | `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` | Optional | Service identity and bounded environment/version attributes | Do not include user/device secrets or personal identifiers |
 | `OTEL_SDK_DISABLED` | Optional | `true` disables instrumentation | Use as an exporter kill switch |
 | `LOG_LEVEL` | Optional | Structured application logging level; template `info` | `debug`, `info`, `warn` or `error` |

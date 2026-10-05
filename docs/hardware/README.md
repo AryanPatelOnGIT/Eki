@@ -138,6 +138,10 @@ credential values:
    `202` responses.
 4. The backend's authenticated diagnostics endpoint receives a report. An
    admin can inspect it at `GET /api/devices/:deviceId/diagnostics`.
+   If a credential fault disables the radio, the last authenticated report
+   becomes stale. Treat a silent device as an alert requiring a last-seen and
+   assignment check, then inspect the redacted serial fault code during a
+   controlled physical visit. Do not infer healthy GNSS from a missing report.
 5. Admin-authenticated `/api/health` shows accepted telemetry and no sustained background failures; public `/health` reports readiness only.
 6. A controlled Wi-Fi/backend outage recovers without a recovery portal, stale
    replay, or a second ride session.

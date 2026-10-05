@@ -103,7 +103,11 @@ router.post(
         ? parseTelemetryValue(req.body, serverReceivedAt)
         : { ok: false as const, reason: "payload_size" };
     if (deviceId === null || !SAFE_ID.test(deviceId) || !secret || !parsed.ok) {
-      recordTelemetryRejection();
+      recordTelemetryRejection(!secret ? "credentials" : !parsed.ok &&
+        (parsed.reason === "stale_or_invalid_timestamp" || parsed.reason === "invalid_device_sent_at")
+        ? "timestamp" : !parsed.ok && parsed.reason === "invalid_gps_hdop"
+          ? "hdop" : !parsed.ok && parsed.reason === "unexpected_fields"
+            ? "schema" : "other_payload");
       const payloadTooLarge = !parsed.ok && parsed.reason === "payload_size";
       res.status(!secret ? 401 : payloadTooLarge ? 413 : 400).json({
         error: !secret
@@ -133,6 +137,7 @@ router.post(
             retryAfterMs: result.retryAfterMs,
           });
         } else {
+          recordTelemetryRejection("credentials");
           res.status(401).json({ error: "Invalid device credentials." });
         }
         return;
@@ -145,7 +150,7 @@ router.post(
         duplicate: result.duplicate,
       });
     } catch (error) {
-      recordTelemetryRejection();
+      recordTelemetryRejection("dependency");
       console.error("[Devices] HTTPS telemetry ingestion failed:", error);
       res.set("Retry-After", "1");
       res.status(503).json({ error: "Telemetry service unavailable.", retryAfterMs: 1_000,

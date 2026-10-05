@@ -37,6 +37,20 @@ async function send(user = userEvent.setup()) {
   return user;
 }
 describe("ride chat user workflows", () => {
+  it("labels an administrator message distinctly from a driver message", async () => {
+    panel();
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    act(() => mocks.listen.mock.calls[0][2]({
+      docs: [
+        { id: "admin-1", data: () => ({ text: "Service update", from: "admin", senderName: "Alex", senderId: "admin-1", timestamp: null }) },
+        { id: "driver-1", data: () => ({ text: "At Alpha", from: "driver", senderName: "Sam", senderId: "driver-1", timestamp: null }) },
+      ],
+      metadata: { fromCache: false },
+    }));
+    expect(screen.getByText("Administrator · Alex")).toBeTruthy();
+    expect(screen.getByText("Sam")).toBeTruthy();
+    expect(screen.getByText("Service update")).toBeTruthy();
+  });
   it.each(["<html>proxy warning</html>", "null", "{}"])("preserves the draft on an invalid success acknowledgement: %s", async body => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
     panel(); await send();

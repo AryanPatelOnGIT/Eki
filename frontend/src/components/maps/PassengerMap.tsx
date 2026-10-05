@@ -48,6 +48,7 @@ type IncomingBusData = PassengerMapBus;
 
 const WALKING_KMH = 5;
 const WALKING_M_PER_MIN = (WALKING_KMH * 1000) / 60;
+const EMPTY_ETAS: Record<string, number> = {};
 const BUS_MOTION_COLORS: Record<string, string> = {
   moving:    "#34D399", // emerald — bus is rolling
   stopped:   "#FBBF24", // amber   — stopped at station or in traffic
@@ -396,7 +397,6 @@ function PassengerMapInner({
       // the bus that produced them (#67).
       if (Object.keys(arrivalTimestampsRef.current).length > 0) {
         arrivalTimestampsRef.current = {};
-        setStopETAs({});
       }
       return;
     }
@@ -684,7 +684,7 @@ function PassengerMapInner({
         preview={preview}
         targetStopId={targetStop.id}
         activeBusId={null}
-        stopETAs={stopETAs}
+        stopETAs={preview || buses.size === 0 ? EMPTY_ETAS : stopETAs}
         walkMinutesToTarget={walkMinutesToTarget}
         currentStopIndex={activeBusStopIndex}
         aggregateArrivals={aggregateArrivals}

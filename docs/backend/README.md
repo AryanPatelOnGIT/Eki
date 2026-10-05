@@ -57,11 +57,18 @@ are no-store. The admin-only `/api/health` contains detailed diagnostics.
 
 The backend enables vendor-neutral traces, metrics, and structured logs when
 `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set.
+Without an endpoint, the exporter graph is not loaded. With an endpoint, new
+root traces use parent-based 10% sampling by default; `OTEL_TRACES_SAMPLER`
+and `OTEL_TRACES_SAMPLER_ARG` override that policy. Parent sampling decisions
+are respected. The backend image is pinned to the verified Node 24.21.0 Alpine
+3.24 multi-architecture digest; TypeScript uses Node 24 declarations and ES2022.
 It captures inbound Express requests, supported outbound clients, failed
 request exceptions, correlated application logs, Node.js runtime metrics,
 dependency readiness, authentication outcomes, device-ingestion health, and
 background-worker failures. `/health` and `/live` are excluded from request telemetry to
 keep probe traffic from obscuring real failures.
+Authenticated health exposes aggregate redacted telemetry rejection categories
+(`timestamp`, `hdop`, `schema`, `credentials`, `other_payload`, `dependency`).
 
 Start the local Collector and Jaeger UI, then run the backend with the endpoint
 from `.env.example` enabled:
