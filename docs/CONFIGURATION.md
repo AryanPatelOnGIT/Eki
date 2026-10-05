@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -223,3 +223,5 @@ fills, 32 coalesced waiters/fill and 3-second response budgets. Fleet locks and
 recovery use unique process UUIDs independent of `WORKER_INSTANCE_ID`.
 See [operation resources](api/OPERATION_RESOURCES.md) before recovering an
 unknown claim; retention includes terminal claims and audited lock recoveries.
+
+Reconciliation uses fixed software bounds: 100-record pages, four abandoned-session pipelines and ten fleet Auth pipelines per batch. Worker cursors are durable and lease-fenced. Fleet legacy/admin admission is two active/eight waiting with a two-second queue age; no new environment variable or retention/privacy policy changes. See [reconciliation](operations/RECONCILIATION.md).

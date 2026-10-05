@@ -4,10 +4,10 @@ import { Timestamp } from "firebase-admin/firestore";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(), tripStop: vi.fn(async () => undefined),
   retentionStop: vi.fn(), privacyStop: vi.fn(), rideStop: vi.fn(),
-  tripStart: vi.fn(), leadership: vi.fn(), fleet: vi.fn(async () => undefined),
+  tripStart: vi.fn(), leadership: vi.fn(), fleet: vi.fn(), cursor: undefined as string | undefined, cursorWrites: [] as any[],
 }));
 vi.mock("../lib/firebaseAdmin", () => ({ db: {
-  collection: () => ({ doc: () => ({}) }), runTransaction: mocks.transaction,
+  collection: () => ({ doc: () => ({ get: async () => ({ data: () => ({ cursor: mocks.cursor }) }) }) }), runTransaction: mocks.transaction,
 } }));
 vi.mock("./tripStateEngine", () => ({ startTripStateEngine: mocks.tripStart }));
 vi.mock("./retentionSweeper", () => ({ startRetentionSweeper: () => mocks.retentionStop }));
@@ -15,12 +15,22 @@ vi.mock("./privacyDeletionWorker", () => ({ startPrivacyDeletionWorker: () => mo
 vi.mock("./abandonedRideReconciler", () => ({ startAbandonedRideReconciler: () => mocks.rideStop }));
 vi.mock("../routes/fleet", () => ({ reconcileFleetAuthorization: mocks.fleet }));
 vi.mock("../lib/metrics", () => ({ setWorkerLeadership: mocks.leadership, recordWorkerRun: vi.fn() }));
+vi.mock("../lib/workerFence", async importOriginal => {
+  const actual = await importOriginal<typeof import("../lib/workerFence")>();
+  return { ...actual, workerTransaction: async (_store: unknown, callback: any) => {
+    actual.assertWorkerLeadership();
+    const result = await callback({ set: (_ref: unknown, data: any) => { mocks.cursorWrites.push(data); mocks.cursor = data.cursor ?? undefined; } });
+    actual.assertWorkerLeadership(); return result;
+  } };
+});
 import { startWorkerCoordinator } from "./workerCoordinator";
 
 describe("worker leadership expiry", () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: 1_000_000, toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     vi.clearAllMocks();
+    mocks.cursor = undefined; mocks.cursorWrites = [];
+    mocks.fleet.mockResolvedValue({ checked: 0, repaired: 0, failed: 0, records: [], nextCursor: null, timeBudgetExceeded: false });
     mocks.tripStart.mockReturnValue(mocks.tripStop);
     delete process.env.WORKER_ENABLED;
     mocks.transaction.mockImplementation(async (callback) => callback({
@@ -117,5 +127,29 @@ describe("worker leadership expiry", () => {
     const stop = startWorkerCoordinator(); await vi.advanceTimersByTimeAsync(0);
     expect(write).not.toHaveBeenCalled(); expect(mocks.tripStart).not.toHaveBeenCalled();
     await stop();
+  });
+  it("continues and checkpoints fleet pages beyond the original prefix", async () => {
+    mocks.cursor = "previous-page";
+    mocks.fleet.mockResolvedValueOnce({ checked: 100, failed: 0, nextCursor: "page-2" }).mockResolvedValueOnce({ checked: 100, failed: 0, nextCursor: "page-3" }).mockResolvedValueOnce({ checked: 1, failed: 0, nextCursor: null });
+    const stop = startWorkerCoordinator(); await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.fleet.mock.calls.map(args => args[3])).toEqual(["previous-page", "page-2", "page-3"]);
+    expect(mocks.cursorWrites.map(data => data.cursor)).toEqual(["page-2", "page-3", null]); await stop();
+  });
+  it("retains the failed page cursor and resumes it on the next scheduled scan", async () => {
+    mocks.fleet.mockResolvedValueOnce({ checked: 100, failed: 0, nextCursor: "page-2" }).mockRejectedValueOnce(Error("page unavailable"));
+    const stop = startWorkerCoordinator(); await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.cursor).toBe("page-2");
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(mocks.fleet.mock.calls.at(-1)?.[3]).toBe("page-2"); await stop();
+  });
+  it("does not checkpoint a held page after independent leadership expiry", async () => {
+    let settle!: (value: unknown) => void;
+    mocks.fleet.mockImplementationOnce(() => new Promise(done => { settle = done; }));
+    const stop = startWorkerCoordinator(); await vi.advanceTimersByTimeAsync(0);
+    mocks.transaction.mockImplementation(() => new Promise(() => undefined));
+    await vi.advanceTimersByTimeAsync(46_000);
+    settle({ checked: 100, failed: 0, nextCursor: "stale-page" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.cursorWrites).toEqual([]); expect(mocks.fleet).toHaveBeenCalledOnce(); await stop();
   });
 });

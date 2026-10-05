@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -356,7 +356,7 @@ Accepts a non-empty partial object containing only `serviceStartTime`, `noBusesM
 
 ## Fleet/admin endpoints
 
-All `/api/fleet/*` handlers are behind `requireAdmin` plus a persisted audit record before mutation. Audit fingerprints are not a durable HTTP idempotency/replay guarantee.
+All `/api/fleet/*` handlers are behind `requireAdmin` plus a persisted audit record before mutation. Audit records identify bounded progress; they are not a durable HTTP idempotency/replay guarantee.
 
 ### `POST /api/fleet/reconcile`
 
@@ -476,7 +476,7 @@ and return `Cache-Control: no-store`.
 | `GET /api/v2/routes/:routeId/save-operations/:saveId` | 200 state snapshot with operationId, routeId, status and result or redacted error; processing includes retryAfterMs. |
 | `POST /api/v2/route-geometry-previews` | Idempotency-Key (16-128 safe ASCII characters), `{waypoints:[{lat,lng},...]}`. 202 while processing, 200 terminal replay; changed payload 409. |
 | `GET /api/v2/route-geometry-previews/:operationId` | 200 state/result/error, 404 missing; never calls Google. |
-| `POST /api/v2/fleet-reconciliation-jobs` | Idempotency-Key and empty/absent body. 202 while processing; 200 terminal replay including partial per-driver outcomes. |
+| `POST /api/v2/fleet-reconciliation-jobs` | Idempotency-Key and optional `{cursor}` body; one 100-driver page with nextCursor/timeBudgetExceeded. 202 while processing; 200 terminal replay including partial per-driver outcomes. |
 | `GET /api/v2/fleet-reconciliation-jobs/:operationId` | 200 state/result/error, 404 missing; may classify expired operation metadata, never modifies Auth/assignment state. |
 | `GET /api/v2/route-geometry-previews/recovery`, `GET /api/v2/fleet-reconciliation-jobs/recovery` | Discover processing claims in 25-record pages; optional `cursor`, returned `nextCursor`. No external replay. |
 | `POST /api/v2/route-geometry-previews/:operationId/recovery`, `POST /api/v2/fleet-reconciliation-jobs/:operationId/recovery` | Exact `expectedExecutorId`, `expectedGeneration`, `executorStopped:true`; abandon an expired unknown outcome with admin audit and generation bump. 409 if changed/ineligible/live locally. |
@@ -486,7 +486,7 @@ and return `Cache-Control: no-store`.
 Preview/fleet submission exposes Location and Retry-After for polling. An
 unresolved operation past its budget reports outcomeUnknown and is never
 re-executed automatically. Retention ends the replay window (default 90 days).
-Fleet reconciliation is serialized across the new jobs, legacy endpoint and
+Fleet reconciliation is serialized across the new jobs, legacy endpoint, all fleet admin mutations and
 periodic worker; legacy `/api/fleet/reconcile` retains aggregate response bodies
 and returns 409 while another reconciliation owns the lock. Execution is bounded
 per process (2 active, 8 queued, 2-second queue age); durable admissions and
@@ -503,3 +503,5 @@ an unknown outcome may have committed. See
 [telemetry deadlines](../docs/operations/TELEMETRY_DEADLINES.md) for ordering,
 replica and receipt-timeout boundaries. Admin health adds anonymous
 `workQueues.ingestion` active/waiting/rejection/expiry counters and budgets.
+
+Fleet reconciliation returns one 100-record page. Legacy POST /api/fleet/reconcile accepts optional cursor and exposes X-Reconciliation-Complete / X-Next-Cursor through CORS while retaining its aggregate JSON body. Follow every page; new jobs use a new key per settled cursor. Bus guards and repairs page all bound rides/devices/drivers; no first-250/500 truncation remains. See [bounded reconciliation](../docs/operations/RECONCILIATION.md) for bounds, partial mutations, audit checkpoints and recovery.

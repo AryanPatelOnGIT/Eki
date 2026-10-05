@@ -1,4 +1,4 @@
-import { workerTransaction, workerRtdbTransaction } from "../lib/workerFence";
+import { assertWorkerLeadership, workerTransaction, workerRtdbTransaction } from "../lib/workerFence";
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import type { Database } from "firebase-admin/database";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -9,6 +9,11 @@ import {
   matchingSession,
   reconciliationDecision,
 } from "./abandonedRideReconciliationLogic";
+
+import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
+import { reconciliationPage, forEachBounded, settleTogether } from "../lib/reconciliationPages";
+const backgroundScans = new BoundedKeyedExecutor<string>({ maxConcurrent: 1, maxPending: 1, maxPendingPerKey: 1, maxQueueAgeMs: 5_000 });
+const pageExecutions = new BoundedKeyedExecutor<string>({ maxConcurrent: 1, maxPending: 3, maxPendingPerKey: 3, maxQueueAgeMs: 5_000 });
 
 const RECONCILIATION_INTERVAL_MS = 60 * 60 * 1000;
 const INTERRUPTION_REASON = "abandoned_session_timeout";
@@ -26,16 +31,12 @@ function lifecycleKey(session: Record<string, unknown>): string | null {
     : null;
 }
 
-function records(value: unknown): Record<string, Record<string, unknown>> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, Record<string, unknown>>;
-}
-
 export interface AbandonedRideReconciliationSummary {
   dryRun: boolean;
   now: number;
   thresholdMs: number;
   scanned: number;
+  nextCursor: string | null;
   staleIds: string[];
   interruptedIds: string[];
   protectedIds: string[];
@@ -45,6 +46,7 @@ export interface AbandonedRideReconciliationSummary {
 }
 
 export interface AbandonedRideReconciliationOptions {
+  cursor?: string;
   now?: number;
   thresholdMs?: number;
   dryRun?: boolean;
@@ -61,6 +63,10 @@ export interface AbandonedRideReconciliationOptions {
 export async function runAbandonedRideReconciliation(
   options: AbandonedRideReconciliationOptions = {},
 ): Promise<AbandonedRideReconciliationSummary> {
+  return pageExecutions.run("abandoned", () => runReconciliationPage(options));
+}
+async function runReconciliationPage(options: AbandonedRideReconciliationOptions): Promise<AbandonedRideReconciliationSummary> {
+  assertWorkerLeadership();
   const now = options.now ?? Date.now();
   const thresholdMs = options.thresholdMs ?? configuredThresholdMs(
     process.env.ABANDONED_RIDE_THRESHOLD_HOURS,
@@ -76,7 +82,7 @@ export async function runAbandonedRideReconciliation(
     dryRun,
     now,
     thresholdMs,
-    scanned: 0,
+    scanned: 0, nextCursor: null,
     staleIds: [],
     interruptedIds: [],
     protectedIds: [],
@@ -85,16 +91,12 @@ export async function runAbandonedRideReconciliation(
     liveNodeKeysRetired: [],
   };
 
-  const [sessionsSnapshot, liveSnapshot] = await Promise.all([
-    firestore.collection("ride_sessions")
-      .where("status", "in", ["pending", "armed", "active"])
-      .get(),
-    realtimeDatabase.ref("activeBuses").once("value"),
-  ]);
-  const liveBuses = records(liveSnapshot.val());
-  summary.scanned = sessionsSnapshot.size;
+  const page = await reconciliationPage(firestore.collection("ride_sessions")
+    .where("status", "in", ["pending", "armed", "active"]), options.cursor);
+  summary.scanned = page.docs.length; summary.nextCursor = page.nextCursor;
 
-  await Promise.all(sessionsSnapshot.docs.map(async (sessionDocument) => {
+  await forEachBounded(page.docs, 4, async sessionDocument => {
+    assertWorkerLeadership();
     const sessionId = sessionDocument.id;
     const initialSession = sessionDocument.data();
     const key = lifecycleKey(initialSession);
@@ -105,11 +107,13 @@ export async function runAbandonedRideReconciliation(
     const activeRideRef = firestore.collection("active_rides").doc(key);
     const busId = typeof initialSession.busId === "string" ? initialSession.busId : "";
     const busLockRef = firestore.collection("_active_bus_locks").doc(busId);
-    const initialActiveRideDocument = await activeRideRef.get();
+    const liveRef = realtimeDatabase.ref(`activeBuses/${key}`);
+    const [initialActiveRideDocument, initialLiveSnapshot] = await settleTogether([activeRideRef.get(), liveRef.once("value")]);
     const initialActiveRide = initialActiveRideDocument.exists
       ? initialActiveRideDocument.data() ?? null
       : null;
-    const initialLiveBus = liveBuses[key] ?? null;
+    const rawLive = initialLiveSnapshot.val();
+    const initialLiveBus = rawLive && typeof rawLive === "object" && !Array.isArray(rawLive) ? rawLive as Record<string, unknown> : null;
     const initialDecision = reconciliationDecision(
       sessionId,
       initialSession,
@@ -126,11 +130,15 @@ export async function runAbandonedRideReconciliation(
 
     let liveBlocked = false;
     let retiredLiveRecord: Record<string, unknown> | null = null;
-    const liveRef = realtimeDatabase.ref(`activeBuses/${key}`);
     await workerRtdbTransaction(liveRef, (currentValue) => {
+      liveBlocked = false;
+      retiredLiveRecord = null;
       const current = currentValue && typeof currentValue === "object"
         ? currentValue as Record<string, unknown>
         : null;
+      // RTDB can start a transaction with an empty local cache. Returning
+      // undefined here would abort before the server supplies its real value.
+      if (currentValue === null) return null;
       if (!matchingSession(current, sessionId)) return;
       const activity = latestLiveBusActivity(current!);
       if (activity === null || activity > cutoff) {
@@ -147,7 +155,7 @@ export async function runAbandonedRideReconciliation(
 
     const transactionResult = await workerTransaction(firestore, async (transaction) => {
       const sessionRef = firestore.collection("ride_sessions").doc(sessionId);
-      const [currentSessionDocument, currentActiveRideDocument, currentBusLock] = await Promise.all([
+      const [currentSessionDocument, currentActiveRideDocument, currentBusLock] = await settleTogether([
         transaction.get(sessionRef),
         transaction.get(activeRideRef),
         transaction.get(busLockRef),
@@ -193,7 +201,7 @@ export async function runAbandonedRideReconciliation(
     summary.interruptedIds.push(sessionId);
     if (transactionResult.deleted) summary.activeRideIdsDeleted.push(key);
     if (retiredLiveRecord) summary.liveNodeKeysRetired.push(key);
-  }));
+  });
 
   summary.staleIds.sort();
   summary.interruptedIds.sort();
@@ -205,14 +213,33 @@ export async function runAbandonedRideReconciliation(
 }
 
 export function startAbandonedRideReconciler(): () => void {
-  const run = () => {
-    void runAbandonedRideReconciliation().then(
-      (summary) => console.log("[RideReconciliation] Sweep complete", summary),
-      (error) => console.error("[RideReconciliation] Sweep failed:", error),
-    );
+  let stopped = false; let inFlight = false;
+  const cursorRef = db.collection("_reconciliation_cursors").doc("abandoned-sessions");
+  const run = async () => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    try {
+      await backgroundScans.run("abandoned", async () => {
+        if (stopped) return;
+        assertWorkerLeadership();
+        const saved = await cursorRef.get();
+        let cursor = typeof saved.data()?.cursor === "string" ? saved.data()!.cursor as string : undefined;
+        do {
+          if (stopped) break;
+          assertWorkerLeadership();
+          const summary = await runAbandonedRideReconciliation({ cursor });
+          await workerTransaction(db, async transaction => {
+            transaction.set(cursorRef, { cursor: summary.nextCursor, updatedAt: FieldValue.serverTimestamp() });
+          });
+          console.log("[RideReconciliation] Page complete", summary);
+          cursor = summary.nextCursor ?? undefined;
+        } while (!stopped && cursor);
+      });
+    } catch (error) { console.error("[RideReconciliation] Sweep failed; cursor retained:", error); }
+    finally { inFlight = false; }
   };
-  run();
-  const timer = setInterval(run, RECONCILIATION_INTERVAL_MS);
+  void run();
+  const timer = setInterval(() => { void run(); }, RECONCILIATION_INTERVAL_MS);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => { stopped = true; clearInterval(timer); };
 }

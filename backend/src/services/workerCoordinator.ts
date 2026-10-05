@@ -7,7 +7,7 @@ import { reconcileFleetAuthorization } from "../routes/fleet";
 import { startPrivacyDeletionWorker } from "./privacyDeletionWorker";
 import { startAbandonedRideReconciler } from "./abandonedRideReconciler";
 import { recordWorkerRun, setWorkerLeadership } from "../lib/metrics";
-import { WorkerFence, WORKER_CLOCK_SKEW_MS, WORKER_LEASE_ID } from "../lib/workerFence";
+import { WorkerFence, workerTransaction, WORKER_CLOCK_SKEW_MS, WORKER_LEASE_ID } from "../lib/workerFence";
 
 const LEASE_ID = WORKER_LEASE_ID;
 const LEASE_DURATION_MS = 45_000;
@@ -128,10 +128,31 @@ export function startWorkerCoordinator(): () => Promise<void> {
           stopRetention = startRetentionSweeper();
           stopPrivacyDeletion = startPrivacyDeletionWorker();
           stopRideReconciliation = startAbandonedRideReconciler();
+          const runFleetPages = async () => {
+            const cursorRef = db.collection("_reconciliation_cursors").doc("fleet-authorizations");
+            currentFence.assert();
+            const saved = await cursorRef.get();
+            let cursor = typeof saved.data()?.cursor === "string" ? saved.data()!.cursor as string : undefined;
+            let partialFailure = false;
+            do {
+              if (stopped || !active || fence !== currentFence) return;
+              currentFence.assert();
+              const result = await reconcileFleetAuthorization(Date.now() + 30_000, null, undefined, cursor);
+              if (result.nextCursor !== null && result.nextCursor === (cursor ?? "")) {
+                throw new Error("Fleet page made no progress before its budget; cursor retained.");
+              }
+              await workerTransaction(db, async transaction => {
+                transaction.set(cursorRef, { cursor: result.nextCursor, updatedAt: Timestamp.now() });
+              });
+              partialFailure ||= result.failed > 0;
+              cursor = result.nextCursor ?? undefined;
+            } while (cursor);
+            return !partialFailure;
+          };
           const runFleet = () => {
             if (stopped || !active || fence !== currentFence || fleetInFlight) return;
-            const running = reconcileFleetAuthorization().then(
-              () => recordWorkerRun("fleet_reconciliation", "success"),
+            const running = runFleetPages().then(
+              complete => recordWorkerRun("fleet_reconciliation", complete === false ? "failure" : "success"),
               (error) => {
                 recordWorkerRun("fleet_reconciliation", "failure");
                 console.error("[Worker] Fleet reconciliation failed:", error);

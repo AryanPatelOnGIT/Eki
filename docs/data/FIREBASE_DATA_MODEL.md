@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -253,7 +253,7 @@ Independent backend-only retry reference with `requestedAt` for an Admin-request
 
 ### `_fleet_operations/{operationId}`
 
-Idempotency/reconciliation operation metadata such as stable request fingerprint, result/status and `createdAt`. Admin fleet guard prevents conflicting request reuse; opt-in retention deletes old entries.
+Server-only legacy/admin fleet audit: method, path, admin UID, pending/completed/failed status, created/completed timestamps and bounded batch/count/cursor progress. Persisted before mutation; it does not provide durable HTTP replay. Existing operational retention applies.
 
 ### `_route_save_operations/{saveId}`
 
@@ -321,3 +321,7 @@ credential-cache entries. Browser rules deny all reads and writes.
 - Firestore operational writes: `FieldValue.serverTimestamp()`/`Timestamp`.
 - Some legacy/history summaries use ISO strings or epoch milliseconds; normalizers accept documented variants.
 - Never infer IDs by splitting composite keys; use stored fields.
+
+### `_reconciliation_cursors/{scan}`
+
+Server-only stable document-ID continuation for `abandoned-sessions` and `fleet-authorizations`: `cursor` is a string or null after a completed cycle, with `updatedAt`. A lease-valid transaction advances it only after a settled page; restart resumes the saved page. Pages contain at most 100 records. This is not a whole-collection snapshot. Fleet operation progress adds the last settled cursor; `_fleet_operations` stores bounded per-batch driver IDs/counts/cursor, and the shared singleton mutex can carry `auditOperationId` for crashed legacy/admin mutation audit. See [reconciliation](../operations/RECONCILIATION.md).

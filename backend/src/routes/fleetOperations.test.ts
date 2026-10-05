@@ -7,7 +7,7 @@ import { contractFetch } from "../../test-support/openapi";
 const state = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
   mirrors: {} as Record<string, unknown>,
-  claims: {} as Record<string, unknown>,
+  claims: {} as Record<string, unknown>, userClaims: new Map<string, Record<string, unknown>>(), liveNodes: {} as Record<string, any>, activeAuth: 0, maxAuth: 0, mirrorRoots: 0,
   admin: true, writes: 0, revocations: 0, sequence: 0,
   gate: null as Promise<void> | null,
   tail: Promise.resolve() as Promise<unknown>,
@@ -29,8 +29,9 @@ vi.mock("../lib/firebaseAdmin", () => {
   const snapshot = (path: string) => ({ exists: state.docs.has(path), data: () => state.docs.get(path),
     id: path.split("/").at(-1)!, ref: document(path) });
   function document(path: string) {
-    return { path,
+    return { path, id: path.split("/").at(-1)!,
       get: async () => snapshot(path),
+      delete: async () => { state.docs.delete(path); },
       set: async (data: Record<string, unknown>, options?: { merge: boolean }) => {
         if (state.failFinalWrite && path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
           state.failFinalWrite = false; throw new Error("ambiguous outcome write");
@@ -41,30 +42,34 @@ vi.mock("../lib/firebaseAdmin", () => {
   }
   return {
     auth: {
-      getUser: async () => { if (state.gate) await state.gate; return { customClaims: state.claims }; },
+      getUser: async (uid: string) => { state.activeAuth++; state.maxAuth = Math.max(state.maxAuth, state.activeAuth); try { if (state.gate) await state.gate; return { customClaims: state.userClaims.get(uid) ?? state.claims }; } finally { state.activeAuth--; } },
       setCustomUserClaims: async (_uid: string, claims: Record<string, unknown>) => {
         if (state.rejectClaims) { state.claimsRejected = true; throw new Error("private upstream failure"); }
-        state.claims = claims; state.writes++;
+        state.userClaims.set(_uid, claims); state.writes++;
       },
       revokeRefreshTokens: async () => { if (state.revokeGate) await state.revokeGate; state.revocations++; },
     },
     db: {
-      collection: (name: string) => ({ doc: (id = `audit_${++state.sequence}`) => document(`${name}/${id}`),
-        where: (field: string, _op: string, value: unknown) => ({ orderBy: () => ({ limit: (limit: number) => ({ get: async () => {
-          const docs = [...state.docs.entries()].filter(([path, data]) => path.startsWith(`${name}/`) && data[field] === value).slice(0, limit).map(([path]) => snapshot(path));
-          return { docs, size: docs.length };
-        } }) }) }),
-        limit: (limit: number) => ({ get: async () => {
-          const docs = [...state.docs.keys()].filter(path => path.startsWith(`${name}/`)).slice(0, limit).map(snapshot);
-          return { docs, size: docs.length, empty: !docs.length };
-        } }),
-      }),
+      collection: (name: string) => {
+        const query = (field?: string, value?: unknown, cursor = "", cap = Infinity): any => ({
+          doc: (id = `audit_${++state.sequence}`) => document(`${name}/${id}`),
+          where: (nextField: string, _op: string, nextValue: unknown) => query(nextField, nextValue, cursor, cap),
+          orderBy: () => query(field, value, cursor, cap),
+          limit: (count: number) => query(field, value, cursor, count),
+          startAfter: (id: string) => query(field, value, id, cap),
+          get: async () => {
+            const docs = [...state.docs.entries()].filter(([path, data]) => path.startsWith(`${name}/`) && path.split("/").at(-1)! > cursor && (!field || data[field] === value)).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).slice(0, cap).map(([path]) => snapshot(path));
+            return { docs, size: docs.length, empty: !docs.length };
+          },
+        });
+        return query();
+      },
       runTransaction: (callback: (transaction: { get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
         create: (ref: Ref, data: Record<string, unknown>) => void; set: (ref: Ref, data: Record<string, unknown>, options?: { merge: boolean }) => void; delete: (ref: Ref) => void }) => Promise<unknown>) => {
         const operation = state.tail.then(async () => {
           if (state.admissionGate) { state.admissionStarted = true; await state.admissionGate; state.admissionGate = null; }
           const writes: (() => void)[] = [];
-          const result = await callback({ get: async ref => snapshot(ref.path),
+          const result = await callback({ get: async (ref: any) => ref.path ? snapshot(ref.path) : ref.get(),
             create: (ref, data) => { if (state.docs.has(ref.path)) throw new Error("Already exists"); writes.push(() => state.docs.set(ref.path, data)); },
             set: (ref, data, options) => {
               if (state.failFinalWrite && ref.path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
@@ -78,15 +83,27 @@ vi.mock("../lib/firebaseAdmin", () => {
         state.tail = operation.catch(() => {}); return operation;
       },
     },
-    rtdb: { ref: (path: string) => ({
-      once: async () => ({ val: () => path === "driverRouteAssignments" ? state.mirrors : state.mirrors[path.split("/").at(-1)!] ?? null }),
-      set: async (value: unknown) => { state.mirrors[path.split("/").at(-1)!] = value; },
-      remove: async () => { delete state.mirrors[path.split("/").at(-1)!]; },
-    }) },
+    rtdb: { ref: (path: string) => {
+      const ref: any = {
+        once: async () => {
+          if (path === "driverRouteAssignments") state.mirrorRoots++;
+          return { val: () => path === "driverRouteAssignments" ? state.mirrors : path === "activeBuses" ? state.liveNodes : state.mirrors[path.split("/").at(-1)!] ?? null };
+        },
+        set: async (value: unknown) => { state.mirrors[path.split("/").at(-1)!] = value; },
+        remove: async () => { delete state.mirrors[path.split("/").at(-1)!]; },
+        transaction: async (work: any) => { const key = path.split("/").at(-1)!; const value = work(state.liveNodes[key] ?? null); if (value !== undefined) { if (value === null) delete state.liveNodes[key]; else state.liveNodes[key] = value; } return { committed: value !== undefined }; },
+        orderByKey: () => {
+          const query = (cap = Infinity, cursor = ""): any => ({ limitToFirst: (count: number) => query(count, cursor), startAfter: (id: string) => query(cap, id), once: async () => {
+            const entries = Object.entries(state.liveNodes).filter(([key]) => key > cursor).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).slice(0, cap);
+            return { val: () => Object.fromEntries(entries), forEach: (callback: any) => { entries.forEach(([key, value]) => callback({ key, val: () => value })); } };
+          } }); return query();
+        },
+      }; return ref;
+    } },
   };
 });
 
-import fleetRouter, { fleetReconciliationJobsRouter, reconcileFleetAuthorization, FleetReconciliationBusy } from "./fleet";
+import fleetRouter, { fleetReconciliationJobsRouter, reconcileFleetAuthorization, FleetReconciliationBusy, drainFleetMutations } from "./fleet";
 import { drainHttpOperations } from "../services/httpOperations";
 
 let server: Server;
@@ -99,9 +116,10 @@ beforeAll(async () => {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("No address");
   base = `http://127.0.0.1:${address.port}`;
 });
-afterAll(async () => { await drainHttpOperations(); await new Promise<void>(resolve => server.close(() => resolve())); });
-beforeEach(() => {
-  state.docs.clear(); state.mirrors = {}; state.claims = {}; state.admin = true;
+afterAll(async () => { await drainFleetMutations(false); await drainHttpOperations(); await new Promise<void>(resolve => server.close(() => resolve())); });
+beforeEach(async () => {
+  await drainFleetMutations(false);
+  state.docs.clear(); state.mirrors = {}; state.claims = {}; state.userClaims.clear(); state.liveNodes = {}; state.activeAuth = 0; state.maxAuth = 0; state.mirrorRoots = 0; state.admin = true;
   state.writes = 0; state.revocations = 0; state.gate = null; state.tail = Promise.resolve(); state.failFinalWrite = false;
   state.admissionGate = null; state.admissionStarted = false;
   state.rejectClaims = false; state.claimsRejected = false; state.revokeGate = null;
@@ -156,7 +174,7 @@ describe("fleet operation resources", () => {
   });
   it("stops launching work past its budget and releases ownership safely", async () => {
     const result = await reconcileFleetAuthorization(Date.now() - 1);
-    expect(result).toMatchObject({ repaired: 0, failed: 1, records: [{ code: "TIME_BUDGET_EXCEEDED" }] });
+    expect(result).toMatchObject({ checked: 0, repaired: 0, failed: 0, records: [], timeBudgetExceeded: true, nextCursor: "" });
     expect(state.writes).toBe(0); expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
   });
   it("preserves an unresolved crash lock instead of retrying side effects", async () => {
@@ -215,6 +233,85 @@ describe("fleet operation resources", () => {
     const owner = state.docs.get("_fleet_reconciliation_locks/singleton")!.owner;
     try { expect((await request({ expectedOwner: owner, executorStopped: true })).status).toBe(409); }
     finally { release(); await waitTerminal(); }
+  });
+  it("visits drivers beyond the first 500 through bounded continuation pages", async () => {
+    state.docs.clear(); state.docs.set("buses/bus_1", { assignedRoutes: ["route_1"] });
+    for (let index = 0; index < 1001; index++) state.docs.set(`drivers/driver_${String(index).padStart(4, "0")}`, { authUid: `auth_${index}`, assignedBusId: "bus_1" });
+    const visited = new Set<string>(); let cursor: string | undefined;
+    do {
+      const result = await reconcileFleetAuthorization(Date.now() + 30000, null, undefined, cursor);
+      expect(result.records.length).toBeLessThanOrEqual(100);
+      for (const record of result.records) visited.add(record.driverId);
+      cursor = (result as any).nextCursor ?? undefined;
+    } while (cursor);
+    expect(visited.size).toBe(1001); expect(state.mirrorRoots).toBe(0); expect(state.maxAuth).toBeLessThanOrEqual(10);
+  });
+  it("detects a conflicting bound device beyond the previous per-bus 250 cap", async () => {
+    state.docs.set("routes/route_1", {});
+    for (let index = 0; index < 301; index++) state.docs.set(`devices/device_${String(index).padStart(4, "0")}`, { busId: "bus_1", routeId: index === 300 ? "removed_route" : "route_1" });
+    const reply = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Bus", assignedRoutes: ["route_1"] }) });
+    expect(reply.status).toBe(409); expect(state.writes).toBe(0);
+  });
+  it("repairs every bound driver beyond 250 with at most ten Auth reads", async () => {
+    state.docs.set("routes/route_1", {});
+    for (let index = 0; index < 301; index++) state.docs.set(`drivers/bound_${String(index).padStart(4, "0")}`, { authUid: `auth_${index}`, assignedBusId: "bus_1" });
+    const reply = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Bus", assignedRoutes: ["route_1"] }) });
+    expect(reply.status).toBe(200); expect(Object.keys(state.mirrors)).toHaveLength(302); expect(state.mirrors.bound_0300).toEqual({ bus_1: { route_1: true } });
+    expect(state.maxAuth).toBeLessThanOrEqual(10); expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
+  });
+  it("deletes a bus only after all paged drivers and live nodes are safely cleared", async () => {
+    state.docs.delete("drivers/driver_1");
+    for (let index = 0; index < 301; index++) {
+      const id = `bound_${String(index).padStart(4, "0")}`;
+      state.docs.set(`drivers/${id}`, { authUid: `auth_${index}`, assignedBusId: "bus_1" });
+      state.userClaims.set(`auth_${index}`, { role: "driver", driverId: id, assignedBusId: "bus_1" }); state.mirrors[id] = { bus_1: { route_1: true } };
+      state.liveNodes[`old_${String(index).padStart(4, "0")}`] = { busId: "bus_1", sessionId: `old_${index}`, timestamp: 1 };
+    }
+    state.liveNodes.keep = { busId: "bus_2", sessionId: "current" };
+    const reply = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "DELETE" });
+    expect(reply.status).toBe(200); expect(state.docs.has("buses/bus_1")).toBe(false);
+    expect([...state.docs.entries()].filter(([key]) => key.startsWith("drivers/")).every(([, data]) => data.assignedBusId === null)).toBe(true);
+    expect(Object.keys(state.mirrors)).toHaveLength(0); expect(state.liveNodes).toEqual({ keep: { busId: "bus_2", sessionId: "current" } });
+    expect(state.revocations).toBe(301); expect(state.maxAuth).toBeLessThanOrEqual(10);
+  });
+  it("exposes continuation without silently hiding the rest of a legacy reconciliation", async () => {
+    for (let index = 0; index < 200; index++) state.docs.set(`drivers/more_${String(index).padStart(4, "0")}`, { authUid: `auth_${index}`, assignedBusId: "bus_1" });
+    let cursor = ""; let checked = 0; let complete = false;
+    do {
+      const reply = await contractFetch(`${base}/api/fleet/reconcile${cursor ? `?cursor=${cursor}` : ""}`, { method: "POST" });
+      expect(reply.status).toBe(200); checked += (await reply.json()).checked;
+      complete = reply.headers.get("x-reconciliation-complete") === "true"; cursor = reply.headers.get("x-next-cursor") ?? "";
+    } while (!complete);
+    expect(checked).toBe(201);
+  });
+  it("blocks admin reassignment while a reconciliation page retains the Auth lock", async () => {
+    let release!: () => void; state.gate = new Promise<void>(done => { release = done; });
+    await post(); await vi.waitFor(() => expect(state.activeAuth).toBe(1));
+    try {
+      const blocked = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Driver", authUid: "auth_uid", assignedBusId: null }) });
+      expect(blocked.status).toBe(409); expect(blocked.headers.get("retry-after")).toBe("1");
+      expect(state.docs.get("drivers/driver_1")?.assignedBusId).toBe("bus_1");
+    } finally { release(); await waitTerminal(); }
+  });
+  it("preserves a bus when a device is bound during paginated driver cleanup", async () => {
+    let release!: () => void; state.gate = new Promise<void>(done => { release = done; });
+    const request = contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "DELETE" });
+    await vi.waitFor(() => expect(state.activeAuth).toBe(1));
+    state.docs.set("devices/new_install", { busId: "bus_1", routeId: "route_1" });
+    release(); expect((await request).status).toBe(500);
+    expect(state.docs.has("buses/bus_1")).toBe(true);
+  });
+  it("drains accepted fleet work while rejecting late mutation admission", async () => {
+    let release!: () => void; state.gate = new Promise<void>(done => { release = done; });
+    const accepted = contractFetch(`${base}/api/fleet/reconcile`, { method: "POST" });
+    await vi.waitFor(() => expect(state.activeAuth).toBe(1));
+    const draining = drainFleetMutations();
+    try {
+      const rejected = await contractFetch(`${base}/api/fleet/drivers/late_driver`, { method: "DELETE" });
+      expect(rejected.status).toBe(503); expect(rejected.headers.get("retry-after")).toBe("1");
+    } finally { release(); }
+    expect((await accepted).status).toBe(200); await draining;
+    expect(state.writes).toBe(1); expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
   });
   it("drains accepted work and rejects new admissions during shutdown", async () => {
     let admit!: () => void; state.admissionGate = new Promise<void>(resolve => { admit = resolve; });

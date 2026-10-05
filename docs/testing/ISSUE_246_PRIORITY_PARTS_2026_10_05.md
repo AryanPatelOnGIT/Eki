@@ -202,3 +202,11 @@ keeps its slot unavailable; synthetic checks do not certify staging latency or
 replica capacity. GNSS/ESP32 are disconnected and local dev/ngrok stopped by the
 owner. No board or production change occurred. #245's live/moving/physical gates
 and R34 remain open. R07 retains durable resource/stranded-lock recovery.
+
+## R09 bounded reconciliation software evidence
+
+Baseline reproductions exposed 600 simultaneous held session reads, unbounded 601-session summaries, only 500 of 1001 drivers visited, and a missed conflicting 301st bound device. Document-ID pages now bound query/results/caches to 100 records, with four session or ten fleet pipelines. Worker checkpoints resume failed/interrupted pages and preserve leadership fencing; admin jobs/legacy headers expose continuation. Per-bus repair/validation traverses all pages and shares the durable fleet mutex with periodic work. SDK pairs/batches settle fully after failure before freeing ownership. Actual RTDB tests also reproduced an empty-local-cache transaction abort; server retries now perform conditional cleanup.
+
+Regression and actual loopback-emulator evidence covers full 1001-driver traversal (synthetic Auth), 201 interrupted stale sessions with protected newer/unknown lifecycles, beyond-cap device conflicts and inactive RTDB cleanup. The [operating contract](../operations/RECONCILIATION.md) records bounds, new-key continuation after settled outcomes, partial mutations, legacy audit locks and stopped-executor recovery. Final suite/CI/head/merge evidence is recorded in #246 after verification. Live Auth, suitable staging indexes, replica load/supervision and latency remain #245 acceptance gates. Board/dev/ngrok remain disconnected/stopped; R34 remains open.
+
+Local final verification: 753 backend cases, 438 frontend cases (two workers after startup/resource timeouts in an overlapping default run), 59 script checks, 68-operation OpenAPI/UI contracts, lint/TypeScript, strict production export/CSP/service worker, ten mobile/desktop browser cases and zero-vulnerability audit. All 17 actual Linux-container emulator cases pass; live Auth is synthetic in fleet tests. Final exact-head CI and merged verification remain mandatory before completion.

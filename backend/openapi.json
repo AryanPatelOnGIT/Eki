@@ -1645,13 +1645,23 @@
           "Fleet"
         ],
         "summary": "Rebuild driver claims and assignment mirrors",
-        "description": "Rebuilds Firebase Auth claims and RTDB mirrors from Firestore; 207 denotes per-record failures. Audit start must persist before mutation (503 if unavailable). Audit fingerprint is not an idempotency replay guarantee.",
+        "description": "Reconcile one bounded 100-driver page with at most 10 concurrent authorization pipelines. Legacy aggregate JSON is preserved. Follow X-Next-Cursor until X-Reconciliation-Complete is true; 207 includes partial record/page-budget failures.",
         "security": [
           {
             "FirebaseBearer": []
           }
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response.",
@@ -1659,6 +1669,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FleetReconciled"
+                }
+              }
+            },
+            "headers": {
+              "X-Reconciliation-Complete": {
+                "description": "True when no continuation remains",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              },
+              "X-Next-Cursor": {
+                "description": "Continuation driver ID; empty means retry the first unvisited page",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1669,6 +1697,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FleetReconciled"
+                }
+              }
+            },
+            "headers": {
+              "X-Reconciliation-Complete": {
+                "description": "True when no continuation remains",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              },
+              "X-Next-Cursor": {
+                "description": "Continuation driver ID; empty means retry the first unvisited page",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1783,7 +1829,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "Stop new batches after 30 seconds, await all dispatched work, and retain the singleton until settlement. No expiry takeover. Admin mutation/audit work: 2 active, 8 queued, 2-second queue age; all Auth-changing paths share the durable mutex. Per-bus scans page 100 documents and authorization batches settle at 10.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Reconciliation is convergent; no durable HTTP replay key. Repeated calls may repeat claim/token and mirror effects."
       }
@@ -1926,7 +1972,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Admin mutation/audit work: 2 active, 8 queued, 2-second queue age; all Auth-changing paths share the durable mutex. Per-bus scans page 100 documents and authorization batches settle at 10.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "No durable replay key. Repeating the same assignment converges, but audit/claim/token effects may repeat."
       },
@@ -2057,7 +2103,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Admin mutation/audit work: 2 active, 8 queued, 2-second queue age; all Auth-changing paths share the durable mutex. Per-bus scans page 100 documents and authorization batches settle at 10.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "No durable replay key. Reconcile unknown outcomes before repeating; a deleted driver can return 404."
       }
@@ -2200,7 +2246,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Admin mutation/audit work: 2 active, 8 queued, 2-second queue age; all Auth-changing paths share the durable mutex. Per-bus scans page 100 documents and authorization batches settle at 10.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "No durable replay key. Repeating the same assignment converges, but audit/claim/token effects may repeat."
       },
@@ -2341,7 +2387,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Admin mutation/audit work: 2 active, 8 queued, 2-second queue age; all Auth-changing paths share the durable mutex. Per-bus scans page 100 documents and authorization batches settle at 10.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "No durable replay key. Reconcile unknown outcomes before repeating; a deleted driver can return 404."
       }
@@ -8365,7 +8411,7 @@
           "Fleet"
         ],
         "summary": "Rebuild driver claims and assignment mirrors",
-        "description": "Submit a bounded durable admin reconciliation job. Per-record failures are retained in its failed terminal operation result (200 on replay); 202 while processing. The singleton also coordinates legacy and periodic reconciliation. No automatic recovery replay.",
+        "description": "Submit a bounded 100-driver page, with at most 10 Auth pipelines. Optional cursor binds the page in the idempotency payload. Follow terminal result.nextCursor using a new operation key until null. Old operation keys replay their original outcome; never resubmit unknown effects automatically.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8514,7 +8560,7 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
+        "x-timeout-policy": "Admission/control response 3 seconds; retain raw slots until settlement. Page scans at most 100 drivers, batches of 10, and stop new batches after 30 seconds. The durable mutex covers all fleet Auth mutations.",
         "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [
@@ -8534,7 +8580,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": false
+                "additionalProperties": false,
+                "properties": {
+                  "cursor": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^(?:|[A-Za-z0-9_-]{1,128})$"
+                  }
+                }
               }
             }
           }
@@ -12120,6 +12173,17 @@
               ],
               "additionalProperties": false
             }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New executions visit at most 100 drivers per page. Continue with a deliberate new-key job carrying this cursor; null completes the scan. Legacy stored outcomes may omit this field."
+          },
+          "timeBudgetExceeded": {
+            "type": "boolean",
+            "description": "No new batch started after the page budget. Follow the cursor to unvisited records."
           }
         },
         "required": [
@@ -12489,6 +12553,11 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,128}$"
             }
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Last completed driver ID; empty string means the first page. A pending batch still requires unknown-effect audit."
           }
         }
       },
@@ -12562,6 +12631,10 @@
               "string",
               "null"
             ]
+          },
+          "auditOperationId": {
+            "type": "string",
+            "description": "Optional legacy/admin mutation audit identity; no automatic replay."
           }
         }
       },
