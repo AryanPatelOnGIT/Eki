@@ -163,3 +163,42 @@ R03 retains whole-ingestion dependency/response deadlines; #245 retains staged
 replica and moving-route evidence. Recovery cannot reconstruct movement/times
 never observed or committed during overload. R34 remains open; the board and
 production remain untouched.
+
+## R03 telemetry deadline verification
+
+Both actual-ingestion baseline regressions failed before the fix: a committed
+transaction with a held acknowledgement never bounded its caller, and an
+expired delayed SDK callback could still publish an old fix. Telemetry now
+uses monotonic immediate/capped admission, two-second queue age, five-second
+dependency stages within an eight-second total service response budget, and
+eight active/32 waiting pipelines (one waiting/device). Raw dispatched promises
+retain permits and per-device order through actual settlement. Expired callbacks
+abort, including when the timer callback has not run. Repeated timed-out retries
+do not multiply the stalled telemetry operation. Queued KDF work rechecks the
+credential/deadline authority before expensive computation starts.
+
+Actual service regressions cover a held committed acknowledgement with 20
+retries, expired callback, quota reservation expiry, queued request expiry and
+expired queued KDF. Monotonic helper cases cover cumulative stage budgets,
+wall-clock rollback, actual permit retention and delayed timer callbacks. HTTP
+contract cases validate both `not_dispatched` and `unknown` 503 states with a
+one-second retry header. Actual Linux-container Firebase emulators pass all
+12 rules/fencing/ordering/deadline cases; the new case verifies committed RTDB
+state, held acknowledgement, retained capacity and a newer final update.
+
+All 438 frontend cases, 59 script checks, 62-operation OpenAPI/UI contracts,
+lint/TypeScript and zero-vulnerability audit pass locally. The final backend
+suite passes all 724 cases, including the queued-KDF regression; strict-build/CI
+results and PR merge are tracked in #246. The
+[telemetry deadline contract](../operations/TELEMETRY_DEADLINES.md), API/README
+mirrors, health schema, design, configuration and testing index are updated.
+
+R02's merged commit baeb878 passed its own
+[verification run](https://github.com/notnamansinha/Eki/actions/runs/37269141912)
+and all 67 targeted bounded queue/replay/engine cases on the merged tree.
+R03 changes service execution after validated body parsing; Node body/header
+receipt timeouts remain separate. A permanently unresolved SDK call deliberately
+keeps its slot unavailable; synthetic checks do not certify staging latency or
+replica capacity. GNSS/ESP32 are disconnected and local dev/ngrok stopped by the
+owner. No board or production change occurred. #245's live/moving/physical gates
+and R34 remain open. R07 retains durable resource/stranded-lock recovery.

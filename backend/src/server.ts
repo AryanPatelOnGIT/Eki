@@ -252,7 +252,7 @@ app.get("/api/health", requireAdmin, (_req, res) => {
       lastRejectedAt: telemetry.lastRejectedAt,
       credentialCacheHitRate: telemetry.credentialCacheHitRate,
       credentialFills: telemetry.credentialFills,
-      workQueues: { kdf: telemetry.kdfExecution, ...getTripStateQueueStatus() },
+      workQueues: { kdf: telemetry.kdfExecution, ingestion: telemetry.ingestionExecution, ...getTripStateQueueStatus() },
       processingLatencyMs: telemetry.processingLatencyMs,
       deviceQueueLatencyMs: telemetry.deviceQueueLatencyMs,
       networkLatencyMs: telemetry.networkLatencyMs,

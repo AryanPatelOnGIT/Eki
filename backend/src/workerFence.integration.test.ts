@@ -5,6 +5,8 @@ import { getDatabase, type Database } from "firebase-admin/database";
 import { WorkerFence, WorkerLeadershipExpired, WORKER_LEASE_ID, workerWrite, workerTransaction, workerRtdbTransaction } from "./lib/workerFence";
 import { SerializedChangeWriter } from "./services/serializedChangeWriter";
 import { WorkQueueExpired } from "./lib/boundedKeyedExecutor";
+import { BoundedKeyedExecutor } from "./lib/boundedKeyedExecutor";
+import { ExecutionDeadline, ExecutionDeadlineError } from "./lib/executionDeadline";
 
 const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describe.skip;
 integration("worker fencing against actual Firebase emulators", () => {
@@ -29,6 +31,29 @@ integration("worker fencing against actual Firebase emulators", () => {
       ownerId: "emulator-leader", generation, expiresAt: Timestamp.fromMillis(Date.now() + 45_000),
     });
   }
+
+  it("keeps an actual committed telemetry update uncertain until acknowledgement and then admits newer state", async () => {
+    const destination = realtime.ref("_worker_fence_test/deadline");
+    await destination.set({ timestamp: 1 });
+    const pool = new BoundedKeyedExecutor<string>({ maxConcurrent: 1 });
+    let acknowledge!: () => void; let committed!: () => void;
+    const ack = new Promise<void>(done => { acknowledge = done; });
+    const commit = new Promise<void>(done => { committed = done; });
+    // Real Firebase commits before the injected lost/held acknowledgement.
+    const underlying = destination.transaction(current => ({ ...current, timestamp: 2 })).then(async value => {
+      committed(); await ack; return value;
+    });
+    await commit;
+    const deadline = new ExecutionDeadline(500, 100); deadline.markWriteDispatched();
+    const operation = pool.run("device", () => deadline.dependency("telemetry commit", () => underlying));
+    await expect(deadline.waitForResponse(operation)).rejects.toMatchObject({ uncertainCommit: true });
+    expect(pool.snapshot()).toMatchObject({ active: 1, pending: 0 });
+    expect((await destination.get()).val().timestamp).toBe(2);
+    const fresh = pool.run("device", async () => destination.transaction(current => ({ ...current, timestamp: 3 })));
+    acknowledge(); await expect(operation).rejects.toBeInstanceOf(ExecutionDeadlineError); await fresh;
+    expect((await destination.get()).val().timestamp).toBe(3);
+    expect(pool.snapshot()).toMatchObject({ active: 0, pending: 0 });
+  });
 
   it("retains ordering through a committed write with a stalled acknowledgement and queued expiry", async () => {
     await lease(20);

@@ -181,3 +181,9 @@ Admin health includes the closed `ExecutionQueueStatus` schema in
 and rerouter counters remain in the extensible `routeProcessing` object.
 [Work admission](../operations/WORK_ADMISSION.md) defines process-local ceilings,
 five-second undispatched expiry, retry behavior and real-settlement ordering.
+
+Telemetry 503 responses now use the closed `TelemetryUnavailable` schema:
+`error`, fixed `retryAfterMs: 1000` and `commitState: not_dispatched|unknown`,
+with `Retry-After: 1`. Both telemetry aliases share the execution deadline
+policy; detailed health adds `workQueues.ingestion`. See
+[telemetry deadlines](../operations/TELEMETRY_DEADLINES.md).

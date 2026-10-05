@@ -731,7 +731,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Error"
+                  "$ref": "#/components/schemas/TelemetryUnavailable"
                 }
               }
             }
@@ -741,8 +741,8 @@
         "x-body-limit-bytes": 512,
         "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
-        "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
+        "x-timeout-policy": "Request-body receipt is bounded by 15000 ms and headers by 70000 ms. Valid telemetry service admission starts an 8000 ms monotonic response budget; waiting execution age is 2000 ms, each credential/rate-limit/telemetry dependency stage at most 5000 ms within the remaining response budget. Eight dispatched pipelines and 32 waiting jobs per process, at most one dispatched and one waiting per device. Caller expiry does not free unsettled dependency permits. Credential fills retain their independent 16-fill, 64-caller/digest, 5000 ms bounds.",
+        "x-retry-policy": "503 includes Retry-After: 1 and commitState not_dispatched or unknown. An unknown response may have committed; preserve sample timestamp/sequence or send a newer valid fix. Retries cannot dispatch another per-device pipeline until the unsettled predecessor finishes. Expired callbacks abort; compare current timestamps/sequences on every SDK retry. Repeated stale samples are idempotent duplicates.",
         "x-idempotency": "Ordered timestamp/sequence duplicate suppression. Refresh deviceSentAt on each attempt without changing GNSS sample timestamp/seq. Do not blindly retry permanent 400/401/413 errors."
       }
     },
@@ -9083,7 +9083,8 @@
                   "kdf",
                   "lifecycle",
                   "intake",
-                  "recovery"
+                  "recovery",
+                  "ingestion"
                 ],
                 "properties": {
                   "kdf": {
@@ -9125,6 +9126,9 @@
                         "const": 25
                       }
                     }
+                  },
+                  "ingestion": {
+                    "$ref": "#/components/schemas/ExecutionQueueStatus"
                   }
                 }
               }
@@ -11539,6 +11543,32 @@
           "maxQueueAgeMs": {
             "type": "number",
             "exclusiveMinimum": 0
+          }
+        }
+      },
+      "TelemetryUnavailable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error",
+          "retryAfterMs",
+          "commitState"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "retryAfterMs": {
+            "type": "integer",
+            "const": 1000
+          },
+          "commitState": {
+            "type": "string",
+            "enum": [
+              "not_dispatched",
+              "unknown"
+            ],
+            "description": "Unknown means a telemetry write was dispatched or its outcome cannot be established. A 503 is not proof that it failed to commit; preserve timestamp/sequence retry ordering."
           }
         }
       }

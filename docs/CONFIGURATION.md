@@ -209,3 +209,10 @@ After changing configuration:
 5. For device changes, build the intended PlatformIO environment, verify the
    device-specific artifact in the controlled process, and perform the physical
    acceptance checks in [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md).
+
+Telemetry response/dependency budgets are fixed in software: 8 seconds for
+validated service calls, at most 5 seconds per dependency stage, 2 seconds
+waiting and 8 active/32 waiting pipelines per process (1 waiting/device).
+Replicas multiply these execution ceilings. See
+[telemetry deadlines](operations/TELEMETRY_DEADLINES.md); these limits do not
+replace body/header receipt timeouts or the shared per-device quota.

@@ -7,7 +7,9 @@ import {
 import { promisify } from "node:util";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { createConcurrencyLimiter } from "../lib/concurrency";
-import { createBoundedSingleFlight } from "../lib/boundedSingleFlight";
+import { createBoundedSingleFlight, SingleFlightDeadlineError } from "../lib/boundedSingleFlight";
+import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
+import { ExecutionDeadline, TelemetryExecutionFailure, currentExecutionDeadline } from "../lib/executionDeadline";
 import { recordBackgroundFailure } from "../lib/backgroundFailureTracker";
 import { evaluateOutageReacquisition, isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
 import { restoreDurableRide } from "./durableRideRecovery";
@@ -33,6 +35,7 @@ const scryptAsync = promisify(scrypt);
 // cache misses cannot exhaust CPU/ memory on the request path (issue #48 L1).
 const SCRYPT_MAX_CONCURRENT = 4;
 const scryptLimiter = createConcurrencyLimiter(SCRYPT_MAX_CONCURRENT);
+const ingestionExecution = new BoundedKeyedExecutor<string>({ maxConcurrent: 8, maxPending: 32, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CREDENTIAL_CACHE_MS = 60_000;
 const NEGATIVE_CACHE_MS = 5_000;
@@ -60,6 +63,7 @@ export interface HttpsTelemetryStatus {
   credentialCacheHitRate: number | null;
   credentialFills: { activeFills: number; waitingCallers: number };
   kdfExecution: ReturnType<typeof scryptLimiter.snapshot>;
+  ingestionExecution: ReturnType<typeof ingestionExecution.snapshot>;
   processingLatencyMs: LatencySummary;
   deviceQueueLatencyMs: LatencySummary;
   networkLatencyMs: LatencySummary;
@@ -287,6 +291,7 @@ function assignmentFromDevice(
 export async function verifyDeviceSecretHash(
   secret: string,
   encodedHash: unknown,
+  mayDispatch: () => boolean = () => true,
 ): Promise<boolean> {
   let salt = DUMMY_SALT;
   let storedKey = DUMMY_HASH;
@@ -303,7 +308,12 @@ export async function verifyDeviceSecretHash(
       storedHashIsValid = true;
     }
   }
-  const derived = (await scryptLimiter.run(() => scryptAsync(secret, salt, 64))) as Buffer;
+  const deadline = currentExecutionDeadline();
+  const derived = (await scryptLimiter.run(() => {
+    deadline?.assert();
+    if (!mayDispatch()) throw new SingleFlightDeadlineError();
+    return scryptAsync(secret, salt, 64);
+  })) as Buffer;
   return safeBufferEqual(derived, storedKey) && storedHashIsValid;
 }
 
@@ -330,6 +340,7 @@ export async function authenticateDeviceCredentials(
 
   credentialCacheMisses += 1;
   return credentialFills.run(cacheKey, deviceId, async isCurrent => {
+    if (!isCurrent()) throw new SingleFlightDeadlineError();
     const fillStartedAt = performance.now();
     const publish = (value: CredentialCacheEntry) => {
       if (!isCurrent()) return false;
@@ -340,7 +351,7 @@ export async function authenticateDeviceCredentials(
     if (!isCurrent()) return null;
     const device = deviceDoc.data() as Record<string, unknown> | undefined;
     const assignment = deviceDoc.exists ? assignmentFromDevice(device) : null;
-    const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash);
+    const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash, isCurrent);
     if (!isCurrent()) return null;
     if (!assignment || !secretMatches) {
       publish({
@@ -407,12 +418,15 @@ async function reserveDistributedDeviceTokens(
   limit: number,
   requested: number,
 ): Promise<DistributedTokenReservation> {
+  const deadline = currentExecutionDeadline();
+  deadline?.assert();
   let callbackAttempts = 0;
   let finalDecision: ReturnType<typeof reserveRateLimitTokens> | null = null;
   deviceRateLimitStoreTransactions += 1;
   const transaction = await rtdb
     .ref(`${DEVICE_RATE_LIMIT_PATH}/${deviceId}`)
     .transaction((value) => {
+      if (deadline && !deadline.isActive()) return undefined;
       callbackAttempts += 1;
       const record = value as Partial<RateBucket> | null;
       const existing = record
@@ -609,11 +623,14 @@ async function persistTelemetry(
   sample: TelemetryPayload,
   backendReceivedAt: number,
 ): Promise<{ committed: boolean; hasSession: boolean; claimId: string | null }> {
+  const deadline = currentExecutionDeadline();
+  deadline?.markWriteDispatched();
   const writeStartedAt = Date.now();
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   const ref = rtdb.ref(`activeBuses/${nodeKey}`);
   let transactionAttempts = 0;
   const transaction = await ref.transaction((current) => {
+    if (deadline && !deadline.isActive()) return undefined;
     transactionAttempts += 1;
     return nextTelemetryValue(
       current as Record<string, unknown> | null,
@@ -642,11 +659,12 @@ export function parseDeviceAuthorization(
   return secret.length >= 20 && secret.length <= 512 ? secret : null;
 }
 
-export async function ingestDeviceTelemetry(
+async function executeDeviceTelemetry(
   deviceId: string,
   secret: string,
   sample: TelemetryPayload,
-  now = Date.now(),
+  now: number,
+  deadline: ExecutionDeadline,
 ): Promise<TelemetryIngestResult> {
   // One server ingress timestamp for the whole request boundary. `now` is
   // captured when the handler enters, so `backendReceivedAt` and the network
@@ -660,20 +678,20 @@ export async function ingestDeviceTelemetry(
     return { ok: false, reason: "credentials" };
   }
 
-  const assignment = await authenticateDeviceCredentials(deviceId, secret, now);
+  const assignment = await deadline.dependency("credentials", () => authenticateDeviceCredentials(deviceId, secret, now));
   if (!assignment) {
     status.rejected += 1;
     status.lastRejectedAt = new Date(now).toISOString();
     return { ok: false, reason: "credentials" };
   }
-  const retryAfterMs = await deviceRateLimitRetryAfterMs(deviceId, now);
+  const retryAfterMs = await deadline.dependency("rate limit", () => deviceRateLimitRetryAfterMs(deviceId, now));
   if (retryAfterMs !== null) {
     status.rejected += 1;
     status.lastRejectedAt = new Date(now).toISOString();
     return { ok: false, reason: "rate_limit", retryAfterMs };
   }
 
-  const persisted = await persistTelemetry(assignment, sample, serverReceivedAt);
+  const persisted = await deadline.dependency("telemetry commit", () => persistTelemetry(assignment, sample, serverReceivedAt));
   if (!persisted.hasSession) {
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
@@ -697,6 +715,22 @@ export async function ingestDeviceTelemetry(
     recordSample(deviceToServerLatencySamples, deviceToServerLatency);
   }
   return { ok: true, duplicate: !persisted.committed };
+}
+
+export async function ingestDeviceTelemetry(
+  deviceId: string, secret: string, sample: TelemetryPayload, now = Date.now(),
+): Promise<TelemetryIngestResult> {
+  const deadline = new ExecutionDeadline();
+  try {
+    const operation = ingestionExecution.run(deviceId, () => deadline.run(() => {
+      deadline.assert();
+      return executeDeviceTelemetry(deviceId, secret, sample, now, deadline);
+    }));
+    return await deadline.waitForResponse(operation);
+  } catch (error) {
+    if (error instanceof TelemetryExecutionFailure) throw error;
+    throw new TelemetryExecutionFailure("Telemetry service dependency failed.", deadline.hasUncertainCommit(), error);
+  } finally { deadline.dispose(); }
 }
 
 export function recordTelemetryRejection(now = Date.now()): void {
@@ -731,6 +765,7 @@ export function getHttpsTelemetryStatus(): HttpsTelemetryStatus {
         : Number((credentialCacheHits / credentialAttempts).toFixed(3)),
     credentialFills: credentialFills.snapshot(),
     kdfExecution: scryptLimiter.snapshot(),
+    ingestionExecution: ingestionExecution.snapshot(),
     processingLatencyMs: summarizeLatencySamples(processingLatencySamples),
     deviceQueueLatencyMs: summarizeLatencySamples(deviceQueueLatencySamples),
     networkLatencyMs: summarizeLatencySamples(networkLatencySamples),

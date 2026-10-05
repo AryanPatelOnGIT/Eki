@@ -185,3 +185,11 @@ remain held through actual settlement. Fair FIFO dispatch preserves caller
 contexts. Rejected lifecycle work requests one paginated 25-item authoritative
 reread; it preserves current ownership and already committed progress. See
 [work admission](../operations/WORK_ADMISSION.md) for recovery and evidence limits.
+
+Telemetry uses a bounded 8-pipeline/32-waiter executor, one active/one waiting
+per device, two-second queue age, eight-second monotonic service response and
+five-second dependency stages capped by remaining time. Caller expiry leaves
+raw SDK permits/order occupied; every quota/telemetry retry callback rechecks
+the captured deadline. Capture timestamp/sequence ordering remains transactional.
+[Telemetry deadlines](../operations/TELEMETRY_DEADLINES.md) define uncertain
+commit responses and the distinction from HTTP request receipt timeouts.

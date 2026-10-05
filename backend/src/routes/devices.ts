@@ -6,6 +6,7 @@ import { ipKeyGenerator } from "../lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "../lib/rateLimitShard";
 import { db } from "../lib/firebaseAdmin";
 import { singleRouteParam } from "../lib/requestParams";
+import { TelemetryExecutionFailure } from "../lib/executionDeadline";
 import {
   authenticateDeviceCredentials,
   ingestDeviceTelemetry,
@@ -146,7 +147,9 @@ router.post(
     } catch (error) {
       recordTelemetryRejection();
       console.error("[Devices] HTTPS telemetry ingestion failed:", error);
-      res.status(503).json({ error: "Telemetry service unavailable." });
+      res.set("Retry-After", "1");
+      res.status(503).json({ error: "Telemetry service unavailable.", retryAfterMs: 1_000,
+        commitState: error instanceof TelemetryExecutionFailure && !error.uncertainCommit ? "not_dispatched" : "unknown" });
     }
   },
 );

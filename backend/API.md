@@ -102,6 +102,7 @@ Returns the cached Firestore/RTDB status, telemetry counters, latency/transactio
     "credentialFills": { "activeFills": 0, "waitingCallers": 0 },
     "workQueues": {
       "kdf": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 4, "maxPending": 32, "maxPendingPerKey": 1, "maxQueueAgeMs": 5000 },
+      "ingestion": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 8, "maxPending": 32, "maxPendingPerKey": 1, "maxQueueAgeMs": 2000 },
       "lifecycle": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 8, "maxPending": 256, "maxPendingPerKey": 32, "maxQueueAgeMs": 5000 },
       "intake": { "active": 0, "pending": 0, "keys": 0, "rejected": 0, "expired": 0, "peakPending": 0, "maxConcurrent": 8, "maxPending": 256, "maxPendingPerKey": 32, "maxQueueAgeMs": 5000 },
       "recovery": { "requested": false, "inFlight": false, "scanned": 0, "failures": 0, "pageSize": 25 }
@@ -484,3 +485,12 @@ re-executed automatically. Retention ends the replay window (default 90 days).
 Fleet reconciliation is serialized across the new jobs, legacy endpoint and
 periodic worker; legacy `/api/fleet/reconcile` retains aggregate response bodies
 and returns 409 while another reconciliation owns the lock.
+
+Telemetry service admission now uses an 8-second monotonic response budget,
+2-second undispatched queue age and 5-second maximum dependency stages. Dispatched
+work retains its slot through real settlement. A retryable 503 includes
+`Retry-After: 1`, `retryAfterMs: 1000` and `commitState: not_dispatched|unknown`;
+an unknown outcome may have committed. See
+[telemetry deadlines](../docs/operations/TELEMETRY_DEADLINES.md) for ordering,
+replica and receipt-timeout boundaries. Admin health adds anonymous
+`workQueues.ingestion` active/waiting/rejection/expiry counters and budgets.
