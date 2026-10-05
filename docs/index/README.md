@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 ## New to the project
 
@@ -83,3 +83,5 @@ owns current commands; historical test counts apply only to their recorded run.
   and architectural decisions remain available.
 - Update the top date/time when editing. Keep original evidence timestamps,
   commit references and measurements intact. See [contributing](../../CONTRIBUTING.md).
+
+- [Bounded reconciliation and continuation](../operations/RECONCILIATION.md): durable page cursors, all-record fleet/device guards, bounded Auth/session work and stranded mutation recovery.

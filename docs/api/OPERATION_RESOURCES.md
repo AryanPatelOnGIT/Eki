@@ -1,6 +1,6 @@
 # Operation resources (#194)
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 Current implemented contract on `testing`. The original design baseline was `9a7f109`; deployed availability must still be checked per environment.
 
@@ -11,7 +11,7 @@ Existing HTTP clients remain supported. No second streaming transport is added.
 | --- | --- | --- | --- |
 | Route save | PUT /api/v2/routes/:routeId, existing saveId/body/version | GET /api/v2/routes/:routeId/save-operations/:saveId | At most 8 Google requests (4 chunks per direction), 10 seconds per upstream call, existing 30-second lease. Metadata-only saves reuse geometry and make zero calls. |
 | Geometry preview | POST /api/v2/route-geometry-previews, Idempotency-Key + waypoints | GET /api/v2/route-geometry-previews/:operationId | At most 4 parallel Google requests for 100 stops, 10 seconds per call. No automatic upstream retries. |
-| Fleet reconciliation | POST /api/v2/fleet-reconciliation-jobs, Idempotency-Key + absent/empty body | GET /api/v2/fleet-reconciliation-jobs/:operationId | Up to 500 drivers, 10 concurrently; stop launching batches after 30 seconds, await outstanding SDK writes before releasing ownership. |
+| Fleet reconciliation | POST /api/v2/fleet-reconciliation-jobs, Idempotency-Key + optional cursor | GET /api/v2/fleet-reconciliation-jobs/:operationId | One page of 100 drivers, 10 concurrently; stop launching batches after 30 seconds and return nextCursor. Await outstanding SDK calls before releasing ownership. |
 | Live reroute | Existing telemetry worker | Existing operational telemetry/traces | At most 4 chunks for the current position plus 100 remaining stops, 3.5 seconds per upstream call. Preserve #167; no new reroute endpoint or extra Google calls. |
 
 Preview/fleet admission is process-bounded: at most 16 unsettled durable admission
@@ -42,10 +42,10 @@ acknowledgment. A processing snapshot past its execution budget reports
 outcomeUnknown and an opaque recovery identity (`executorId`, `generation`).
 A selected status read persists `phase:recovery_required` for an expired
 nonlocal claim. Known last progress (`claimed`, `executing`, `locking`,
-`authorizing`) includes bounded batch driver IDs and completed-record counts;
+`authorizing`) includes bounded batch driver IDs and completed-record counts and last-settled cursor;
 it never asserts an in-flight Auth/Google effect failed. Terminal outcomes are
 written conditionally on the original executor and generation. The fleet
-singleton lock also covers legacy reconciliation and the periodic worker.
+singleton lock also covers legacy reconciliation, admin fleet mutations and the periodic worker.
 After a crash, operators must verify the previous executor is stopped before
 clearing the internal lock and deliberately submitting a new job. A timeout
 alone is insufficient proof that external side effects stopped.
@@ -131,3 +131,5 @@ load, actual Google/Auth outcomes and supervisor termination. No production
 recovery actions or live billed requests are authorized by these tests.
 
 The [#167 acceptance record](https://github.com/notnamansinha/Eki/issues/167#issuecomment-5916467888) confirms real-drive latency measurements remain deferred. This change preserves that implementation and does not promote its timeout into a measured latency claim.
+
+Follow [bounded reconciliation](../operations/RECONCILIATION.md) for page continuation, durable worker checkpoints, bounded per-bus repair and legacy/admin audit-lock recovery. Each new cursor uses a new deliberate key after settled effects; uncertain effects require the stopped-executor procedure above.

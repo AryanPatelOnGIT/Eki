@@ -55,7 +55,7 @@ import sessionsRoutes, { rideSessionBoardingRouter } from "./routes/sessions";
 import feedbackRoutes, { feedbackV2Router } from "./routes/feedback";
 import usersRoutes from "./routes/users";
 import settingsRoutes, { settingsV2Router } from "./routes/settings";
-import fleetRoutes, { fleetReconciliationJobsRouter } from "./routes/fleet";
+import fleetRoutes, { drainFleetMutations, fleetReconciliationJobsRouter } from "./routes/fleet";
 import privacyRoutes, { privacyDeletionRequestsRouter } from "./routes/privacy";
 
 const PORT = process.env.PORT || 4000;
@@ -113,7 +113,7 @@ const CORS_ORIGINS = [...new Set([
   ...configuredCorsOrigins,
   ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
 ])];
-app.use(cors({ origin: CORS_ORIGINS, credentials: false, exposedHeaders: ["Location", "Retry-After"] }));
+app.use(cors({ origin: CORS_ORIGINS, credentials: false, exposedHeaders: ["Location", "Retry-After", "X-Reconciliation-Complete", "X-Next-Cursor"] }));
 app.use(createBrowserIngressLimiter(RATE_LIMIT_SHARD_FACTOR));
 app.use((req, res, next) => {
   if (req.method === "TRACE" || req.method === "CONNECT") {
@@ -349,7 +349,7 @@ async function shutdown(signal: string) {
     httpServer.close((error) => error ? reject(error) : resolve());
     httpServer.closeIdleConnections();
   });
-  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations()]);
+  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations(), drainFleetMutations()]);
   const [serverResult, workerResult] = await Promise.allSettled([
     closeServer,
     stopBackgroundWorkers,

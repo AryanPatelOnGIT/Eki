@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-05 12:20 IST (UTC+05:30).
+Last updated: 2026-10-05 13:37 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -203,3 +203,5 @@ exposes expired claims after restart; selected status reads persist classificati
 and conditional fleet-lock release after verified executor termination.
 [Operation resources](../api/OPERATION_RESOURCES.md) defines the external
 Auth/Google fencing boundary and staging gates.
+
+Reconciliation bounds queries/results/caches to 100 records and uses four per-session or ten fleet Auth pipelines. Hourly session and ten-minute fleet scans persist document-ID checkpoints through the worker lease transaction; a held SDK call retains scan ownership across leadership changes. Admin jobs expose continuation, while per-bus device/driver guards visit every page. All fleet Auth mutations share the no-takeover mutex and record bounded audit progress. See [reconciliation](../operations/RECONCILIATION.md) for partial mutation and cross-store limits.

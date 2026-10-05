@@ -23,7 +23,7 @@ const tracer = trace.getTracer("eki-backend");
 export type OperationCollection = "_route_geometry_previews" | "_fleet_reconciliation_jobs";
 export type OperationError = { code: string; error: string; outcomeUnknown?: boolean };
 export type OperationOutcome = { result?: unknown; error?: OperationError };
-export type OperationProgress = { phase: "claimed" | "executing" | "locking" | "authorizing"; checked?: number; repaired?: number; failed?: number; batchDriverIds?: string[] };
+export type OperationProgress = { phase: "claimed" | "executing" | "locking" | "authorizing"; checked?: number; repaired?: number; failed?: number; batchDriverIds?: string[]; cursor?: string };
 export type OperationSnapshot = {
   operationId: string; status: "processing" | "succeeded" | "failed";
   result?: unknown; error?: OperationError; retryAfterMs?: number; outcomeUnknown?: boolean;
@@ -65,6 +65,7 @@ export function operationSnapshot(id: string, data: Record<string, unknown>): Op
   const phases = ["claimed", "executing", "locking", "authorizing"];
   const progress = raw && phases.includes(String(raw.phase)) ? {
     phase: raw.phase as OperationProgress["phase"],
+    ...(typeof raw.cursor === "string" && /^(?:|[A-Za-z0-9_-]{1,128})$/.test(raw.cursor) ? { cursor: raw.cursor } : {}),
     ...Object.fromEntries(["checked", "repaired", "failed"].filter(key => Number.isSafeInteger(raw[key]) && Number(raw[key]) >= 0).map(key => [key, raw[key]])),
     ...(Array.isArray(raw.batchDriverIds) ? { batchDriverIds: raw.batchDriverIds.filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id)).slice(0, 10) } : {}),
   } : undefined;
@@ -238,13 +239,14 @@ export async function recoverOperation(options: {
   }));
 }
 
-export type FleetLockSnapshot = { owner: string; executorId: string; operationId: string | null };
+export type FleetLockSnapshot = { owner: string; executorId: string; operationId: string | null; auditOperationId?: string };
 export async function readFleetLock(): Promise<FleetLockSnapshot | null> {
   return control("read:fleet-lock", async () => {
     const snapshot = await db.collection("_fleet_reconciliation_locks").doc("singleton").get();
     if (!snapshot.exists) return null;
     const data = snapshot.data()!;
-    return { owner: String(data.owner), executorId: executorOf(data), operationId: typeof data.operationId === "string" ? data.operationId : null };
+    return { owner: String(data.owner), executorId: executorOf(data), operationId: typeof data.operationId === "string" ? data.operationId : null,
+      ...(typeof data.auditOperationId === "string" ? { auditOperationId: data.auditOperationId } : {}) };
   });
 }
 export async function recoverFleetLock(options: { expectedOwner: string; executorStopped: true; adminUid: string }): Promise<{ recovered: true }> {
@@ -266,7 +268,7 @@ export async function recoverFleetLock(options: { expectedOwner: string; executo
     }
     if (!isCurrent() || fleetLockOwners.has(options.expectedOwner)) throw new OperationRecoveryConflict("Recovery expired or local work is still active.");
     transaction.create(db.collection("_fleet_lock_recoveries").doc(randomUUID()), {
-      owner: data.owner, executorId: executorOf(data), operationId: data.operationId ?? null, linkedOperationStatus,
+      owner: data.owner, executorId: executorOf(data), operationId: data.operationId ?? null, linkedOperationStatus, auditOperationId: data.auditOperationId ?? null,
       recoveredBy: options.adminUid, executorStopped: true, recoveredAt: FieldValue.serverTimestamp(),
     });
     transaction.delete(ref); return { recovered: true as const };
