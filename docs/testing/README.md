@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 16:32 IST (UTC+05:30).
 
 ## Start with the current gates
 
@@ -112,3 +112,7 @@ need suitable staging evidence. No physical GNSS or production mutation occurs.
 ## R10 privacy recovery (5 October 2026)
 
 [Privacy deletion recovery](../operations/PRIVACY_DELETION.md) records bounded pagination/chunks, retry history, current passenger eligibility and admin monitoring/recovery. Emulator cases use actual Firestore SDKs and a killed disposable worker with synthetic Auth. They cover 1001 feedback records, indexed/legacy manifests and personal collection groups; no physical telemetry or live Auth is required. Staging and institutional privacy sign-off remain #245.
+
+## R12 route catalog (5 October 2026)
+
+[The telemetry route catalog](../operations/ROUTE_CATALOG.md) documents watcher-populated bounded state, shared freshness reads and edit/deletion fencing. Actual Firestore/RTDB cases process sixty unchanged pending fixes without explicit route point reads, preserve armed direction binding, refuse delayed-watcher stale direction and recover a real committed direction after injected acknowledgement loss. Coordinates/Google are synthetic; live/moving/replica acceptance remains open.

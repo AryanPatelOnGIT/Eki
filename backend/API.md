@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 16:32 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -505,3 +505,5 @@ replica and receipt-timeout boundaries. Admin health adds anonymous
 `workQueues.ingestion` active/waiting/rejection/expiry counters and budgets.
 
 Fleet reconciliation returns one 100-record page. Legacy POST /api/fleet/reconcile accepts optional cursor and exposes X-Reconciliation-Complete / X-Next-Cursor through CORS while retaining its aggregate JSON body. Follow every page; new jobs use a new key per settled cursor. Bus guards and repairs page all bound rides/devices/drivers; no first-250/500 truncation remains. See [bounded reconciliation](../docs/operations/RECONCILIATION.md) for bounds, partial mutations, audit checkpoints and recovery.
+
+Telemetry configured-route reads now use the watcher-populated catalog for both pending and resolved directions. Missing legacy geometry is read-only on this live path and requires an authorized route save/repair; accepted raw fixes/lifecycle remain available. See [route catalog](../docs/operations/ROUTE_CATALOG.md). The passenger geometry GET adapter remains a separate R13 migration item.

@@ -60,6 +60,13 @@ describe("live routing publication", () => {
       expect(state.values.get(key)?.routeSource).not.toBe("dynamic-reroute");
     } finally { vi.restoreAllMocks(); }
   });
+  it("discards a reroute pointer if route editing occurs during sibling publication", async () => {
+    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
+    state.onGeometryWrite = () => invalidateTelemetryRoute(assignment.routeId);
+    publish(sample(1)); await drainTelemetryRouteProcessing();
+    expect(state.writes.some(path => path.startsWith("activeRouteGeometry/"))).toBe(true);
+    expect(state.values.get(key)?.routeSource).not.toBe("dynamic-reroute");
+  });
   it("matches new fixes while Google is pending, then publishes one shared version through all remaining stops", async () => {
     let resolve!: (value: unknown) => void;
     state.compute.mockImplementation(() => new Promise(done => { resolve = done; }));

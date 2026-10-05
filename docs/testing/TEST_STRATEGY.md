@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 16:32 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -221,3 +221,7 @@ Archive commit/branch, environment class (no secrets), `npm run verify` log, fir
 ### Privacy deletion recovery (R10)
 
 Run privacy route, manifest and queue regressions plus `privacyDeletion.integration.test.ts` through the loopback rules-integration command. Verify resubmission preserves failure history; twenty poison/backoff records do not starve later users; 1001-record histories continue in bounded turns; operators/recreated identities are refused; held raw Auth retains the mutex/permit; and stopped-executor claim recovery precedes lock recovery. The child-process crash uses actual Firestore and synthetic Auth. Live Auth/index/supervisor/quiescence acceptance remains #245.
+
+### Versioned telemetry route catalog (R12)
+
+Run `telemetryRouteCatalog.test.ts`, route service/live-routing cases and `telemetryCatalog.integration.test.ts` in the rules-integration command. Check sixty unchanged pending fixes do not reread a watched route, shared expired fills, observed edit/deletion and delayed subscription/RTDB callbacks, read-only missing geometry, armed direction transaction binding, definitive stale refusal and actual committed direction with lost acknowledgement. Physical/provider/replica edit timing stays #245.
