@@ -1,6 +1,6 @@
 # Eki backend
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 The TypeScript/Express backend is the authority for hardware ingestion, fleet/route/device commands and ordered ride lifecycle. It uses Firebase Admin with service-account JSON or Application Default Credentials, writes current data to RTDB and durable state to Firestore, and elects one background worker with a Firestore lease.
 
@@ -111,3 +111,9 @@ uncertain-commit safety and the synthetic memory acceptance command.
 [Telemetry deadlines](../operations/TELEMETRY_DEADLINES.md) define bounded
 service responses/dependency stages, per-device execution and unknown-commit
 retry behavior. A timed-out dispatched SDK call keeps its slot until settlement.
+
+Durable preview/fleet work has bounded admission/execution and persisted progress.
+After an executor crash, use paginated discovery and the audited recovery APIs in
+[operation resources](../api/OPERATION_RESOURCES.md). Verify the previous
+executor stopped; unknown billable/Auth work is never automatically replayed.
+The emulator suite kills a disposable child after a real claim/effect commit.

@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -477,14 +477,23 @@ and return `Cache-Control: no-store`.
 | `POST /api/v2/route-geometry-previews` | Idempotency-Key (16-128 safe ASCII characters), `{waypoints:[{lat,lng},...]}`. 202 while processing, 200 terminal replay; changed payload 409. |
 | `GET /api/v2/route-geometry-previews/:operationId` | 200 state/result/error, 404 missing; never calls Google. |
 | `POST /api/v2/fleet-reconciliation-jobs` | Idempotency-Key and empty/absent body. 202 while processing; 200 terminal replay including partial per-driver outcomes. |
-| `GET /api/v2/fleet-reconciliation-jobs/:operationId` | 200 state/result/error, 404 missing; never modifies fleet state. |
+| `GET /api/v2/fleet-reconciliation-jobs/:operationId` | 200 state/result/error, 404 missing; may classify expired operation metadata, never modifies Auth/assignment state. |
+| `GET /api/v2/route-geometry-previews/recovery`, `GET /api/v2/fleet-reconciliation-jobs/recovery` | Discover processing claims in 25-record pages; optional `cursor`, returned `nextCursor`. No external replay. |
+| `POST /api/v2/route-geometry-previews/:operationId/recovery`, `POST /api/v2/fleet-reconciliation-jobs/:operationId/recovery` | Exact `expectedExecutorId`, `expectedGeneration`, `executorStopped:true`; abandon an expired unknown outcome with admin audit and generation bump. 409 if changed/ineligible/live locally. |
+| `GET /api/v2/fleet-reconciliation-jobs/lock` | Admin owner/executor/linked operation; 404 without a lock. |
+| `POST /api/v2/fleet-reconciliation-jobs/lock/recovery` | `expectedOwner`, `executorStopped:true`; linked processing operation must first be terminal; missing retained records are audited. Atomic audited conditional lock release, never Auth/Google replay. |
 
 Preview/fleet submission exposes Location and Retry-After for polling. An
 unresolved operation past its budget reports outcomeUnknown and is never
 re-executed automatically. Retention ends the replay window (default 90 days).
 Fleet reconciliation is serialized across the new jobs, legacy endpoint and
 periodic worker; legacy `/api/fleet/reconcile` retains aggregate response bodies
-and returns 409 while another reconciliation owns the lock.
+and returns 409 while another reconciliation owns the lock. Execution is bounded
+per process (2 active, 8 queued, 2-second queue age); durable admissions and
+control reads/recovery each retain at most 16 raw fills, 32 waiters/fill with
+3-second response deadlines. Progress and recovery identity are redacted admin
+fields. Follow the operation-resource runbook to verify executor termination,
+audit unknown effects and recover ownership; expiry alone is insufficient.
 
 Telemetry service admission now uses an 8-second monotonic response budget,
 2-second undispatched queue age and 5-second maximum dependency stages. Dispatched

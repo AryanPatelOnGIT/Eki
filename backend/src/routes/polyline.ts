@@ -1,3 +1,4 @@
+import { operationRecovery, operationRecoveryList } from "./operationRecovery";
 import { computeOrderedRouteGeometry, MAX_ROUTE_STOPS } from "../lib/orderedRouteGeometry";
 import { randomBytes } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -14,7 +15,7 @@ import {
   routeGeometryVersion,
   routeSavePayloadHash,
 } from "../lib/routeSaveContract";
-import { OPERATION_ID, OperationConflict, OperationsUnavailable, readOperation, submitOperation } from "../services/httpOperations";
+import { OPERATION_ID, OperationConflict, readOperation, submitOperation } from "../services/httpOperations";
 import { invalidateTelemetryRoute } from "../services/telemetryRouteService";
 import { invalidatePlanRoute } from "./plan";
 
@@ -930,7 +931,8 @@ routeGeometryPreviewsRouter.post("/", privateResponse, requireAdmin, async (req:
   try {
     const snapshot = await submitOperation({ collection: "_route_geometry_previews", id,
       adminUid: (req as Request & { user?: { uid?: string } }).user?.uid,
-      payload: { waypoints }, budgetMs: 10_000, execute: async () => {
+      payload: { waypoints }, budgetMs: 10_000, execute: async context => {
+        context.assertActive();
         try { return { result: await computePolyline(waypoints) }; }
         catch (error) {
           if (error instanceof RouteApiError) return { error: { code: error.payload.code, error: error.payload.error } };
@@ -942,10 +944,13 @@ routeGeometryPreviewsRouter.post("/", privateResponse, requireAdmin, async (req:
     res.status(snapshot.status === "processing" ? 202 : 200).json(snapshot);
   } catch (error) {
     const conflict = error instanceof OperationConflict;
+    if (!conflict) res.set("Retry-After", "1");
     res.status(conflict ? 409 : 503).json({ error: conflict ? "Operation key belongs to different waypoints." : "Preview status is unavailable; retry with the same key.",
-      code: conflict ? "IDEMPOTENCY_KEY_REUSED" : error instanceof OperationsUnavailable ? "SERVER_DRAINING" : "OPERATION_UNAVAILABLE" });
+      code: conflict ? "IDEMPOTENCY_KEY_REUSED" : "OPERATION_UNAVAILABLE" });
   }
 });
+routeGeometryPreviewsRouter.post("/:operationId/recovery", privateResponse, requireAdmin, operationRecovery("_route_geometry_previews"));
+routeGeometryPreviewsRouter.get("/recovery", privateResponse, requireAdmin, operationRecoveryList("_route_geometry_previews"));
 routeGeometryPreviewsRouter.get("/:operationId", privateResponse, requireAdmin, async (req: Request, res: Response) => {
   const id = singleRouteParam(req.params.operationId);
   if (!id || !OPERATION_ID.test(id)) { res.status(400).json({ error: "Invalid operation ID.", code: "INVALID_OPERATION_ID" }); return; }
@@ -954,7 +959,7 @@ routeGeometryPreviewsRouter.get("/:operationId", privateResponse, requireAdmin, 
     if (!snapshot) { res.status(404).json({ error: "Preview not found.", code: "OPERATION_NOT_FOUND" }); return; }
     if (snapshot.status === "processing") res.set("Retry-After", "1");
     res.json(snapshot);
-  } catch { res.status(503).json({ error: "Preview status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
+  } catch { res.set("Retry-After", "1").status(503).json({ error: "Preview status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
 });
 
 export default router;

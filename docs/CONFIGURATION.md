@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -216,3 +216,10 @@ waiting and 8 active/32 waiting pipelines per process (1 waiting/device).
 Replicas multiply these execution ceilings. See
 [telemetry deadlines](operations/TELEMETRY_DEADLINES.md); these limits do not
 replace body/header receipt timeouts or the shared per-device quota.
+
+Preview/fleet operation bounds are fixed software defaults: 2 active executors,
+8 queued, 2-second queue age; admission and control pools each allow 16 raw
+fills, 32 coalesced waiters/fill and 3-second response budgets. Fleet locks and
+recovery use unique process UUIDs independent of `WORKER_INSTANCE_ID`.
+See [operation resources](api/OPERATION_RESOURCES.md) before recovering an
+unknown claim; retention includes terminal claims and audited lock recoveries.

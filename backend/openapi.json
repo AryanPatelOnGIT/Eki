@@ -8074,6 +8074,15 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
             }
           },
           "400": {
@@ -8151,8 +8160,8 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "10-second upstream abort per parallel preview chunk (maximum 4 calls).",
-        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. 10-second upstream abort per parallel preview chunk (maximum 4 calls).",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [
           {
@@ -8214,8 +8223,8 @@
         "tags": [
           "Routes"
         ],
-        "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "summary": "Read durable operation progress and outcome",
+        "description": "Read durable state without repeating Google or Auth work. Expired nonlocal status reads persist recovery_required; status remains processing until an operator abandons the unknown outcome.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8276,6 +8285,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
                 }
               }
             }
@@ -8324,8 +8342,8 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. geometry preview status skips billable computation limiter.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "10-second upstream abort per parallel preview chunk (maximum 4 calls).",
-        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. 10-second upstream abort per parallel preview chunk (maximum 4 calls).",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [
           {
@@ -8347,7 +8365,7 @@
           "Fleet"
         ],
         "summary": "Rebuild driver claims and assignment mirrors",
-        "description": "Rebuilds Firebase Auth claims and RTDB mirrors from Firestore; 207 denotes per-record failures. Audit start must persist before mutation (503 if unavailable). Audit fingerprint is not an idempotency replay guarantee.",
+        "description": "Submit a bounded durable admin reconciliation job. Per-record failures are retained in its failed terminal operation result (200 on replay); 202 while processing. The singleton also coordinates legacy and periodic reconciliation. No automatic recovery replay.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8408,6 +8426,15 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
                 }
               }
             }
@@ -8487,8 +8514,8 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
-        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [
           {
@@ -8520,8 +8547,8 @@
         "tags": [
           "Fleet"
         ],
-        "summary": "Rebuild driver claims and assignment mirrors",
-        "description": "Rebuilds Firebase Auth claims and RTDB mirrors from Firestore; 207 denotes per-record failures. Audit start must persist before mutation (503 if unavailable). Audit fingerprint is not an idempotency replay guarantee.",
+        "summary": "Read durable operation progress and outcome",
+        "description": "Read durable state without repeating Google or Auth work. Expired nonlocal status reads persist recovery_required; status remains processing until an operator abandons the unknown outcome.",
         "security": [
           {
             "FirebaseBearer": []
@@ -8584,6 +8611,15 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
             }
           },
           "400": {
@@ -8630,8 +8666,8 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
-        "x-retry-policy": "Poll Location; retry submission with the same key and normalized payload. Terminal outcomes are replayed. Past deadline reports outcomeUnknown.",
+        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. Stop launching batches at 30 seconds; await outstanding SDK writes. Maximum 500 drivers, concurrency 10.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [
           {
@@ -8641,6 +8677,840 @@
             "schema": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v2/route-geometry-previews/{operationId}/recovery": {
+      "post": {
+        "operationId": "recoverGeometryPreviewOperation",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Abandon an expired operation after executor termination",
+        "description": "Admin must verify the previous executor has stopped and audit unknown external effects. Compare executor/generation atomically; local unsettled work and changed/ineligible records return 409. Does not repeat Google or Auth work.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeometryPreviewOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. Verified UID mutation budget: 30/minute. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Existing route computation mount also applies 10 requests/verified UID/minute.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. A dispatched transaction keeps its slot until true settlement.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Exact owner/executor/generation comparison. Read durable status after an uncertain acknowledgement; no external effect is replayed.",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationRecoveryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs/{operationId}/recovery": {
+      "post": {
+        "operationId": "recoverFleetReconciliationOperation",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Abandon an expired operation after executor termination",
+        "description": "Admin must verify the previous executor has stopped and audit unknown external effects. Compare executor/generation atomically; local unsettled work and changed/ineligible records return 409. Does not repeat Google or Auth work.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetReconciliationOperation"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. Verified UID mutation budget: 30/minute. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. A dispatched transaction keeps its slot until true settlement.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Exact owner/executor/generation comparison. Read durable status after an uncertain acknowledgement; no external effect is replayed.",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationRecoveryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs/lock": {
+      "get": {
+        "operationId": "getFleetReconciliationLock",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Inspect fleet singleton lock",
+        "description": "Admin-only owner identity; no expiry takeover. Legacy/periodic locks may have no linked operation.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLock"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. Discovery reads at most 25 documents in one query.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Read durable ownership/recovery state; no Google or Auth execution."
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs/lock/recovery": {
+      "post": {
+        "operationId": "recoverFleetReconciliationLock",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Audit and release a stranded fleet lock",
+        "description": "Requires prior executor termination and current owner. Linked operations must first be terminal. A transaction writes the recovery audit and deletes only the matching singleton; local unsettled work is refused.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLockRecovered"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. Verified UID mutation budget: 30/minute. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. A dispatched transaction keeps its slot until true settlement.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Exact owner/executor/generation comparison. Read durable status after an uncertain acknowledgement; no external effect is replayed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetLockRecoveryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/route-geometry-previews/recovery": {
+      "get": {
+        "operationId": "listGeometryPreviewOperationRecovery",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "Discover unresolved operations in bounded pages",
+        "description": "Lists processing claims by document ID, including still-active claims. Expired claims include recovery identity; selected status reads persist recovery_required after restart. Follow nextCursor until null; no external operation is replayed.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeometryPreviewOperationRecoveryPage"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. geometry preview status skips billable computation limiter.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. Discovery reads at most 25 documents in one query.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Read durable ownership/recovery state; no Google or Auth execution.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v2/fleet-reconciliation-jobs/recovery": {
+      "get": {
+        "operationId": "listFleetReconciliationOperationRecovery",
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Discover unresolved operations in bounded pages",
+        "description": "Lists processing claims by document ID, including still-active claims. Expired claims include recovery identity; selected status reads persist recovery_required after restart. Follow nextCursor until null; no external operation is replayed.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetReconciliationOperationRecoveryPage"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller response budget, 16 raw control fills, 32 waiters/fill. Discovery reads at most 25 documents in one query.",
+        "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
+        "x-idempotency": "Read durable ownership/recovery state; no Google or Auth execution.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
             }
           }
         ]
@@ -11286,6 +12156,12 @@
           },
           "outcomeUnknown": {
             "type": "boolean"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/OperationProgress"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/OperationRecoveryIdentity"
           }
         },
         "required": [
@@ -11352,6 +12228,12 @@
           },
           "outcomeUnknown": {
             "type": "boolean"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/OperationProgress"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/OperationRecoveryIdentity"
           }
         },
         "required": [
@@ -11569,6 +12451,194 @@
               "unknown"
             ],
             "description": "Unknown means a telemetry write was dispatched or its outcome cannot be established. A 503 is not proof that it failed to commit; preserve timestamp/sequence retry ordering."
+          }
+        }
+      },
+      "OperationProgress": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "claimed",
+              "executing",
+              "locking",
+              "authorizing"
+            ]
+          },
+          "checked": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "repaired": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "batchDriverIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        }
+      },
+      "OperationRecoveryIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "executorId",
+          "generation",
+          "requiresStoppedExecutor"
+        ],
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "const": true
+          },
+          "executorId": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requiresStoppedExecutor": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "OperationRecoveryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expectedExecutorId",
+          "expectedGeneration",
+          "executorStopped"
+        ],
+        "properties": {
+          "expectedExecutorId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "expectedGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "executorStopped": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "FleetLock": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "owner",
+          "executorId",
+          "operationId"
+        ],
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "executorId": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FleetLockRecoveryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expectedOwner",
+          "executorStopped"
+        ],
+        "properties": {
+          "expectedOwner": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "executorStopped": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "FleetLockRecovered": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "recovered"
+        ],
+        "properties": {
+          "recovered": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "GeometryPreviewOperationRecoveryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operations",
+          "nextCursor"
+        ],
+        "properties": {
+          "operations": {
+            "type": "array",
+            "maxItems": 25,
+            "items": {
+              "$ref": "#/components/schemas/GeometryPreviewOperation"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FleetReconciliationOperationRecoveryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operations",
+          "nextCursor"
+        ],
+        "properties": {
+          "operations": {
+            "type": "array",
+            "maxItems": 25,
+            "items": {
+              "$ref": "#/components/schemas/FleetReconciliationOperation"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

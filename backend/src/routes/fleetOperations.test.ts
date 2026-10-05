@@ -32,7 +32,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     return { path,
       get: async () => snapshot(path),
       set: async (data: Record<string, unknown>, options?: { merge: boolean }) => {
-        if (state.failFinalWrite && path.startsWith("_fleet_reconciliation_jobs/") && data.status !== "processing") {
+        if (state.failFinalWrite && path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
           state.failFinalWrite = false; throw new Error("ambiguous outcome write");
         }
         state.docs.set(path, options?.merge ? { ...state.docs.get(path), ...data } : data);
@@ -50,18 +50,28 @@ vi.mock("../lib/firebaseAdmin", () => {
     },
     db: {
       collection: (name: string) => ({ doc: (id = `audit_${++state.sequence}`) => document(`${name}/${id}`),
+        where: (field: string, _op: string, value: unknown) => ({ orderBy: () => ({ limit: (limit: number) => ({ get: async () => {
+          const docs = [...state.docs.entries()].filter(([path, data]) => path.startsWith(`${name}/`) && data[field] === value).slice(0, limit).map(([path]) => snapshot(path));
+          return { docs, size: docs.length };
+        } }) }) }),
         limit: (limit: number) => ({ get: async () => {
           const docs = [...state.docs.keys()].filter(path => path.startsWith(`${name}/`)).slice(0, limit).map(snapshot);
           return { docs, size: docs.length, empty: !docs.length };
         } }),
       }),
       runTransaction: (callback: (transaction: { get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
-        create: (ref: Ref, data: Record<string, unknown>) => void; delete: (ref: Ref) => void }) => Promise<unknown>) => {
+        create: (ref: Ref, data: Record<string, unknown>) => void; set: (ref: Ref, data: Record<string, unknown>, options?: { merge: boolean }) => void; delete: (ref: Ref) => void }) => Promise<unknown>) => {
         const operation = state.tail.then(async () => {
           if (state.admissionGate) { state.admissionStarted = true; await state.admissionGate; state.admissionGate = null; }
           const writes: (() => void)[] = [];
           const result = await callback({ get: async ref => snapshot(ref.path),
             create: (ref, data) => { if (state.docs.has(ref.path)) throw new Error("Already exists"); writes.push(() => state.docs.set(ref.path, data)); },
+            set: (ref, data, options) => {
+              if (state.failFinalWrite && ref.path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
+                state.failFinalWrite = false; throw new Error("ambiguous outcome write");
+              }
+              writes.push(() => state.docs.set(ref.path, options?.merge ? { ...state.docs.get(ref.path), ...data } : data));
+            },
             delete: ref => { writes.push(() => state.docs.delete(ref.path)); } });
           writes.forEach(write => write()); return result;
         });
@@ -177,6 +187,34 @@ describe("fleet operation resources", () => {
     expect(body).toMatchObject({ status: "failed", result: { records: [{ code: "RECONCILIATION_RECORD_FAILED" }] } });
     expect(JSON.stringify(body)).not.toContain("private upstream");
     expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
+  });
+  it("discovers crashed jobs and requires ordered, audited operation and lock recovery", async () => {
+    state.docs.set(`_fleet_reconciliation_jobs/${key}`, { status: "processing", deadlineAt: Date.now() - 1, executorId: "stopped-process", generation: 1, progress: { phase: "authorizing", batchDriverIds: ["driver_1"] } });
+    state.docs.set("_fleet_reconciliation_locks/singleton", { owner: "old-owner", operationId: key, executorId: "stopped-process" });
+    const recoverLock = (expectedOwner = "old-owner") => contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/lock/recovery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedOwner, executorStopped: true }) });
+    const page = await contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/recovery`);
+    expect(await page.json()).toMatchObject({ operations: [{ operationId: key, recovery: { required: true } }], nextCursor: null });
+    expect(await (await contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/lock`)).json()).toEqual({ owner: "old-owner", executorId: "stopped-process", operationId: key });
+    expect((await recoverLock()).status).toBe(409);
+    const recovered = await contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/${key}/recovery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedExecutorId: "stopped-process", expectedGeneration: 1, executorStopped: true }) });
+    expect(recovered.status).toBe(200); expect(await recovered.json()).toMatchObject({ status: "failed", error: { outcomeUnknown: true } });
+    expect((await recoverLock("changed-owner")).status).toBe(409); expect((await recoverLock()).status).toBe(200);
+    expect((await contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/lock`)).status).toBe(404);
+    expect(state.writes).toBe(0); expect(state.revocations).toBe(0);
+    expect([...state.docs.entries()].find(([path]) => path.startsWith("_fleet_lock_recoveries/"))?.[1]).toMatchObject({ recoveredBy: "admin", owner: "old-owner" });
+    await post("deliberate_new_key"); await waitTerminal("deliberate_new_key"); expect(state.writes).toBe(1);
+  });
+  it("rejects unsafe recovery payloads, unauthorized access and live lock takeover", async () => {
+    const url = `${base}/api/v2/fleet-reconciliation-jobs/lock/recovery`;
+    const request = (body: unknown) => contractFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    expect((await request({ expectedOwner: "old", executorStopped: false })).status).toBe(400);
+    state.admin = false; expect((await request({ expectedOwner: "old", executorStopped: true })).status).toBe(403);
+    expect((await contractFetch(`${base}/api/v2/fleet-reconciliation-jobs/recovery`)).status).toBe(403); state.admin = true;
+    let release!: () => void; state.gate = new Promise<void>(done => { release = done; }); await post();
+    await vi.waitFor(() => expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(true));
+    const owner = state.docs.get("_fleet_reconciliation_locks/singleton")!.owner;
+    try { expect((await request({ expectedOwner: owner, executorStopped: true })).status).toBe(409); }
+    finally { release(); await waitTerminal(); }
   });
   it("drains accepted work and rejects new admissions during shutdown", async () => {
     let admit!: () => void; state.admissionGate = new Promise<void>(resolve => { admit = resolve; });

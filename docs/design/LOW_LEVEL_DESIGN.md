@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -193,3 +193,13 @@ raw SDK permits/order occupied; every quota/telemetry retry callback rechecks
 the captured deadline. Capture timestamp/sequence ordering remains transactional.
 [Telemetry deadlines](../operations/TELEMETRY_DEADLINES.md) define uncertain
 commit responses and the distinction from HTTP request receipt timeouts.
+
+Preview/fleet HTTP operations use 2 active/8 queued executor slots and a
+2-second monotonic queue age; durable admission/control fills each cap at
+16 with 32 coalesced callers and 3-second response budgets. Raw dispatched
+work keeps slots through settlement. Firestore checkpoints and terminal writes
+compare process UUID/generation. Admin discovery scans 25-document pages and
+exposes expired claims after restart; selected status reads persist classification; explicit recovery audits abandonment
+and conditional fleet-lock release after verified executor termination.
+[Operation resources](../api/OPERATION_RESOURCES.md) defines the external
+Auth/Google fencing boundary and staging gates.

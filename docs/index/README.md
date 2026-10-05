@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 12:20 IST (UTC+05:30).
 
 ## New to the project
 
@@ -21,7 +21,7 @@ Deployment availability must be checked separately.
 | Document | Covers |
 |---|---|
 | [HTTP contract and compatibility checks](../api/HTTP_CONTRACT.md) | OpenAPI validation and compatibility |
-| [Operation resources (#194)](../api/OPERATION_RESOURCES.md) | Durable admin operation states and retries |
+| [Operation resources (#194)](../api/OPERATION_RESOURCES.md) | Bounded execution, progress, paginated discovery and audited operator recovery |
 | [Ride-session migration (#193)](../api/RIDE_SESSION_CONTRACT.md) | Versioned ride-session lifecycle and idempotency |
 | [Firebase Firestore and RTDB data model](../data/FIREBASE_DATA_MODEL.md) | Firestore/RTDB fields, access and relationships |
 | [Storage architecture summary](../data/STORAGE_ARCHITECTURE.md) | Storage responsibilities and retention overview |

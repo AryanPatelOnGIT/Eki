@@ -96,7 +96,7 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
   const tripDays = readDays(process.env.COMPLETED_TRIP_RETENTION_DAYS, 180);
   const operationDays = readDays(process.env.OPERATION_LOG_RETENTION_DAYS, 90);
 
-  const [sessions, feedback, trips, fleetOperations, routeSaveOperations, previews, reconciliationJobs] = await Promise.all([
+  const [sessions, feedback, trips, fleetOperations, routeSaveOperations, previews, reconciliationJobs, lockRecoveries] = await Promise.all([
     deleteDocuments(
       db.collection("ride_sessions")
         .where("status", "in", ["completed", "failed", "interrupted"])
@@ -139,6 +139,11 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
         .where("completedAt", "<", Timestamp.fromMillis(now - operationDays * DAY_MS))
         .orderBy("completedAt").orderBy(FieldPath.documentId()),
     ),
+    deleteDocuments(
+      db.collection("_fleet_lock_recoveries")
+        .where("recoveredAt", "<", Timestamp.fromMillis(now - operationDays * DAY_MS))
+        .orderBy("recoveredAt").orderBy(FieldPath.documentId()),
+    ),
   ]);
   console.log("[Retention] Sweep complete", {
     resumedRideDeletions,
@@ -147,7 +152,7 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
     feedback,
     trips,
     fleetOperations,
-    routeSaveOperations, previews, reconciliationJobs,
+    routeSaveOperations, previews, reconciliationJobs, lockRecoveries,
   });
   const rtdbSummary = await runRtdbRetentionSweep(firebaseRtdbRetentionStore(), {
     now,
