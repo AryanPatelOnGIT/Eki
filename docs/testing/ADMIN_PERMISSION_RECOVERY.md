@@ -1,6 +1,6 @@
 # Local admin permission recovery evidence
 
-Last updated: 2026-10-05 17:46 IST (UTC+05:30).
+Last updated: 2026-10-06 00:20 IST (UTC+05:30).
 
 This record extends #204's earlier verified-readiness fix for a second
 administrator using localhost. It documents software recovery, not a witnessed
@@ -64,6 +64,27 @@ then sign in as the affected administrator and open Fleet and Routes. If a
 read fails, exercise **Retry** and record the redacted outcome. Backend reachability
 is additionally required for feedback/settings writes. See
 [configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+
+## Route editor interaction coverage
+
+`frontend/src/components/admin/RouteManagementPanel.map.test.tsx` exercises
+the production editor through user clicks and input. Four cases verify:
+
+- Map clicks add nothing until **Pick on Map** is armed, each accepted pick
+  resets the mode, and selected/dragged coordinates reach the save payload.
+- A generated route ID follows the display name; a manually selected ID
+  survives a rename. Renamed/reordered stops retain their intended order.
+- Dragging an existing stop discards stored geometry, preserves stable stop
+  IDs, and saves with the existing configuration version.
+- Places requests carry Auth credentials, permission errors retain map
+  picking, and a selected result supplies its own coordinates.
+
+The map SDK, Places HTTP response, and save transport in these component
+cases are synthetic. They verify editor interaction and payload contracts;
+they do not establish Google Maps loading, provider routing correctness,
+cloud persistence, or the affected administrator's actual browser access.
+Actual localhost acceptance must additionally create a disposable route,
+reload its saved stop coordinates/order, and clean it up after verification.
 
 #204 and #245 stay open until their real-browser/environment requirements are
 observed. Neither a synthetic browser nor unit tests certify enrollment,
