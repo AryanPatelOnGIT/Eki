@@ -107,3 +107,7 @@ pools; rejected lifecycle events trigger bounded authoritative-state replay.
 Admin health exposes anonymous queue counters. See
 [work admission](../docs/operations/WORK_ADMISSION.md) for limits, recovery,
 uncertain-commit safety and the synthetic memory acceptance command.
+
+[Telemetry deadlines](../docs/operations/TELEMETRY_DEADLINES.md) define bounded
+service responses/dependency stages, per-device execution and unknown-commit
+retry behavior. A timed-out dispatched SDK call keeps its slot until settlement.

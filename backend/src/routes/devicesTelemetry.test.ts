@@ -11,6 +11,7 @@ type IngestResult =
 const harness = vi.hoisted(() => ({
   result: { ok: true, duplicate: false } as IngestResult,
   diagnosticsAccepted: true,
+  failure: undefined as Error | undefined,
 }));
 
 vi.mock("../middleware/requireAdmin", () => ({
@@ -37,7 +38,7 @@ vi.mock("../services/telemetryPayload", () => ({
 
 vi.mock("../services/deviceTelemetryService", () => ({
   authenticateDeviceCredentials: async () => null,
-  ingestDeviceTelemetry: async () => harness.result,
+  ingestDeviceTelemetry: async () => { if (harness.failure) throw harness.failure; return harness.result; },
   invalidateDeviceCredentialCache: () => undefined,
   publishDeviceCredentialInvalidation: async () => undefined,
   parseDeviceAuthorization: (header: string | undefined) =>
@@ -54,6 +55,7 @@ vi.mock("../services/deviceDiagnostics", async (importOriginal) => {
 });
 
 import devicesRouter, { createTelemetryIngressLimiter } from "./devices";
+import { ExecutionDeadlineError } from "../lib/executionDeadline";
 
 let server: Server;
 let baseUrl = "";
@@ -81,6 +83,7 @@ afterAll(async () => {
 beforeEach(() => {
   harness.result = { ok: true, duplicate: false };
   harness.diagnosticsAccepted = true;
+  harness.failure = undefined;
 });
 
 function sendTelemetry() {
@@ -125,6 +128,13 @@ function sendDiagnostics() {
 }
 
 describe("device telemetry HTTP responses", () => {
+  it.each([false, true])("reports deadline commit uncertainty accurately: %s", async dispatched => {
+    harness.failure = new ExecutionDeadlineError("dependency", dispatched);
+    const response = await sendTelemetry();
+    expect(response.status).toBe(503); expect(response.headers.get("retry-after")).toBe("1");
+    await expect(response.json()).resolves.toEqual({ error: "Telemetry service unavailable.", retryAfterMs: 1_000,
+      commitState: dispatched ? "unknown" : "not_dispatched" });
+  });
   it("returns the accepted and duplicate statuses in the firmware contract", async () => {
     const accepted = await sendTelemetry();
     expect(accepted.status).toBe(202);
