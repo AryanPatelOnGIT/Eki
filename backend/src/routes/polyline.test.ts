@@ -288,9 +288,10 @@ describe("read-only passenger geometry", () => {
 it("bounds all admin geometry computation to two raw pipelines and eight waiting, retaining stalled permits", async () => {
   let release!: () => void; const gate = new Promise<void>(done => { release = done; }); const upstream = mockRoutesApi(gate);
   const compute = () => networkFetch(`${baseUrl}/api/routes/compute-polyline`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ waypoints: stops }) });
-  const requests = Array.from({ length: 12 }, compute);
+  const requests = [compute(), compute()];
   try {
     await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(2));
+    requests.push(...Array.from({ length: 10 }, compute));
     // The last ten never dispatch: two refuse capacity and eight age out.
     const refused = await Promise.all(requests.slice(2));
     expect(refused.every(response => response.status === 503 && response.headers.get("retry-after") === "1")).toBe(true);
