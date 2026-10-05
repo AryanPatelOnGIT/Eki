@@ -1,16 +1,18 @@
-import { assertWorkerLeadership, workerTransaction } from "../lib/workerFence";
+import { withFleetLock, FleetReconciliationBusy } from "../services/fleetMutationLock";
+import { assertWorkerLeadership } from "../lib/workerFence";
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { auth, db, rtdb } from "../lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { singleRouteParam } from "../lib/requestParams";
-import { OPERATION_EXECUTOR_ID, OPERATION_ID, OperationConflict, OperationRecoveryConflict, readFleetLock, recoverFleetLock, trackFleetLock, readOperation, submitOperation, type OperationExecutionContext } from "../services/httpOperations";
+import { OPERATION_ID, OperationConflict, OperationRecoveryConflict, readFleetLock, recoverFleetLock, readOperation, submitOperation, type OperationExecutionContext } from "../services/httpOperations";
 import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
 import { reconciliationPage, reconciliationPages, forEachBounded, settleTogether } from "../lib/reconciliationPages";
 import { FleetReconciliationCache } from "../services/fleetReconciliationCache";
 
 import { operationRecovery, operationRecoveryList } from "./operationRecovery";
+export { withFleetLock, FleetReconciliationBusy } from "../services/fleetMutationLock";
 
 const router = Router();
 export const fleetReconciliationJobsRouter = Router();
@@ -152,30 +154,7 @@ async function settleAuthorizationUpdates(updates: Promise<unknown>[]): Promise<
   if (failure?.status === "rejected") throw failure.reason;
 }
 
-export class FleetReconciliationBusy extends Error {}
 type FleetRecord = { driverId: string; outcome: "repaired" | "unchanged" | "failed"; code?: string };
-
-/** No expiry takeover; every fleet Auth-changing path shares the same durable mutex. */
-async function withFleetLock<T>(operationId: string | null, work: () => Promise<T>, context?: OperationExecutionContext, auditOperationId: string | null = null): Promise<T> {
-  const lockRef = db.collection("_fleet_reconciliation_locks").doc("singleton");
-  const owner = randomUUID(); const untrack = trackFleetLock(owner);
-  try {
-    await context?.checkpoint({ phase: "locking" });
-    await workerTransaction(db, async transaction => {
-      context?.assertActive(); const lock = await transaction.get(lockRef);
-      if (lock.exists) throw new FleetReconciliationBusy("Fleet authorization is running or awaiting stopped-executor recovery.");
-      context?.assertActive();
-      transaction.create(lockRef, { owner, operationId, auditOperationId, executorId: OPERATION_EXECUTOR_ID, createdAt: FieldValue.serverTimestamp() });
-    });
-    try { return await work(); }
-    finally {
-      await db.runTransaction(async transaction => {
-        const lock = await transaction.get(lockRef);
-        if (lock.data()?.owner === owner) transaction.delete(lockRef);
-      });
-    }
-  } finally { untrack(); }
-}
 
 export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_000, operationId: string | null = null, context?: OperationExecutionContext, cursor?: string): Promise<{
   checked: number; repaired: number; failed: number; records: FleetRecord[]; nextCursor: string | null; timeBudgetExceeded: boolean;

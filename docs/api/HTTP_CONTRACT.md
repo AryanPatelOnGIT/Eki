@@ -1,6 +1,6 @@
 # HTTP contract and compatibility checks
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
@@ -189,3 +189,5 @@ policy; detailed health adds `workQueues.ingestion`. See
 [telemetry deadlines](../operations/TELEMETRY_DEADLINES.md).
 
 Fleet continuation: v2 reconciliation jobs accept optional cursor and return bounded nextCursor/timeBudgetExceeded; each settled page uses a new key. Legacy reconciliation accepts query cursor with CORS-exposed X-Reconciliation-Complete/X-Next-Cursor headers and unchanged aggregate body. Fleet mutations can return retryable 409 while the shared durable mutex is held or 503 on bounded admission/audit failure. See [reconciliation](../operations/RECONCILIATION.md).
+
+Privacy admission has a three-second response budget and per-UID transactional resubmission preserving retry state. Admin GET `/api/v2/privacy-deletion-requests` pages twenty records; POST `/{uid}/recovery` compares executor/generation and audits deliberate retry. Current Auth plus durable membership checks protect claim-less passenger requests. See [privacy recovery](../operations/PRIVACY_DELETION.md).

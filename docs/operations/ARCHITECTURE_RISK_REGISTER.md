@@ -1,6 +1,6 @@
 # Architecture risk register
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 16:02 IST (UTC+05:30).
 
 Source reviewed: `testing` at `abd45a6` (4 October 2026). Earlier closure evidence
 retains its original commits and dates; physical/deployment gates remain separate.
@@ -163,3 +163,5 @@ The current source/docs verification confirms the software-side mitigations and
 does not close the external firmware, deployment, privacy, backup, monitoring,
 or institutional acceptance gates. Keep those gates open until evidence is
 recorded in the deployment checklist and release evidence package.
+
+Privacy queue source mitigations now preserve retry history, bound fair work and provide audited stopped-executor recovery. See [privacy deletion](PRIVACY_DELETION.md). Suitable staging Auth/index/supervisor and concurrent-client quiescence remain external acceptance; no retention/product policy or institutional sign-off is inferred from emulator checks.

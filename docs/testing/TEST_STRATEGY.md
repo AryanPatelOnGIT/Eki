@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -217,3 +217,7 @@ Use a staging project/runtime near production topology. Ramp realistic devices a
 ## Release evidence
 
 Archive commit/branch, environment class (no secrets), `npm run verify` log, firmware build/size/hash, emulator output, dependency/SAST results, route/device IDs, latency percentiles, failure-injection results, screenshots/serial extracts, known risks, rollback plan and approver/date. Physical tests and skipped emulator cases must never be described as passed unless actually run.
+
+### Privacy deletion recovery (R10)
+
+Run privacy route, manifest and queue regressions plus `privacyDeletion.integration.test.ts` through the loopback rules-integration command. Verify resubmission preserves failure history; twenty poison/backoff records do not starve later users; 1001-record histories continue in bounded turns; operators/recreated identities are refused; held raw Auth retains the mutex/permit; and stopped-executor claim recovery precedes lock recovery. The child-process crash uses actual Firestore and synthetic Auth. Live Auth/index/supervisor/quiescence acceptance remains #245.

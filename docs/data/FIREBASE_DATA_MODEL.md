@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 recorded in [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -241,7 +241,7 @@ The coordinator uses `_worker_leases/trip-state-worker`: unique process `ownerId
 
 ### `_privacy_deletion_requests/{uid}`
 
-Fields: `status` (`pending` plus worker terminal/retry states), `attempts`, `requestedAt`, `updatedAt`, and worker error/claim markers as applicable. Passenger API queues; leader worker claims, deletes personal collection-group/session fields/profile/cooldown/request/auth user in pages, and records retry state on failure.
+Server-only `status` (`pending|processing|failed`), lifetime `attempts`, consecutive `failures`, `nextAttemptAt`, `generation`, `executorId`, `deadlineAt`, `phase` (`cleaning|auth_deletion_dispatched`), original `requestedAt`, `updatedAt`, last attempt/error timestamps and fixed `lastErrorCode`. `targetCreatedAt` binds the current Auth account identity. Resubmission adds `resubmittedAt/resubmissions` without clearing history; admin recovery adds `recoveredBy/recoveredAt/recoveries/executorStopped`, increments generation and resets only the failure cycle. Successful cleanup removes the record. The privacy worker cursor is `_reconciliation_cursors/privacy-deletions`. Shared fleet mutex records can carry `privacyRequestId`, and lock recovery audits its linked status. See [privacy deletion](../operations/PRIVACY_DELETION.md) for bounds and limits.
 
 ### `_retention_deletion_jobs/{sessionId}`
 

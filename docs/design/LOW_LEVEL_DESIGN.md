@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-05 15:56 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -48,7 +48,9 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `services/workerCoordinator.ts` | Firestore lease acquisition/renewal and leader job ownership |
 | `services/abandonedRideReconciler.ts` | Rechecks and interrupts stale non-terminal sessions |
 | `services/abandonedRideReconciliationLogic.ts` | Pure timestamp/session decision logic |
-| `services/privacyDeletionWorker.ts` | Paged deletion of a queued passenger's personal documents/auth account |
+| `services/privacyDeletionWorker.ts` | Fair twenty-record queue traversal, bounded chunks, claim/lease fencing and backoff/dead-letter state |
+| `services/privacyDeletionRequests.ts` | Current passenger eligibility, transactional resubmission, admin monitoring and audited recovery |
+| `services/fleetMutationLock.ts` | Shared non-expiring fleet/privacy Auth mutation mutex and raw-settlement ownership |
 | `services/retentionSweeper.ts` | Production-required, paged time-based terminal-data removal |
 | `services/rtdbRetention.ts`, `firebaseRtdbRetention.ts`, `rtdbRetentionCli.ts` | Dry-run/apply RTDB inventory, age/fingerprint guards, legacy opt-in and current-geometry protection |
 | `services/rideHistoryDeletion.ts` | Terminal-only recursive session/completed-trip deletion |

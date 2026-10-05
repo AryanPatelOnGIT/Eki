@@ -57,6 +57,7 @@ import usersRoutes from "./routes/users";
 import settingsRoutes, { settingsV2Router } from "./routes/settings";
 import fleetRoutes, { drainFleetMutations, fleetReconciliationJobsRouter } from "./routes/fleet";
 import privacyRoutes, { privacyDeletionRequestsRouter } from "./routes/privacy";
+import { drainPrivacyDeletions } from "./services/privacyDeletionWorker";
 
 const PORT = process.env.PORT || 4000;
 // Expected replica count behind the load balancer. Every in-memory limiter
@@ -349,7 +350,7 @@ async function shutdown(signal: string) {
     httpServer.close((error) => error ? reject(error) : resolve());
     httpServer.closeIdleConnections();
   });
-  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations(), drainFleetMutations()]);
+  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations(), drainFleetMutations(), drainPrivacyDeletions()]);
   const [serverResult, workerResult] = await Promise.allSettled([
     closeServer,
     stopBackgroundWorkers,

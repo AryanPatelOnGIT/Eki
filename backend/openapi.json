@@ -739,7 +739,7 @@
         },
         "x-auth-class": "device",
         "x-body-limit-bytes": 512,
-        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
+        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 \u00c3\u2014 HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 \u00c3\u2014 configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
         "x-timeout-policy": "Request-body receipt is bounded by 15000 ms and headers by 70000 ms. Valid telemetry service admission starts an 8000 ms monotonic response budget; waiting execution age is 2000 ms, each credential/rate-limit/telemetry dependency stage at most 5000 ms within the remaining response budget. Eight dispatched pipelines and 32 waiting jobs per process, at most one dispatched and one waiting per device. Caller expiry does not free unsettled dependency permits. Credential fills retain their independent 16-fill, 64-caller/digest, 5000 ms bounds.",
         "x-retry-policy": "503 includes Retry-After: 1 and commitState not_dispatched or unknown. An unknown response may have committed; preserve sample timestamp/sequence or send a newer valid fix. Retries cannot dispatch another per-device pipeline until the unsettled predecessor finishes. Expired callbacks abort; compare current timestamps/sequences on every SDK retry. Repeated stale samples are idempotent duplicates.",
@@ -862,7 +862,7 @@
         },
         "x-auth-class": "device",
         "x-body-limit-bytes": 1024,
-        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
+        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 \u00c3\u2014 HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 \u00c3\u2014 configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
@@ -1118,7 +1118,7 @@
         },
         "x-auth-class": "device",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
+        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 \u00c3\u2014 HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 \u00c3\u2014 configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
@@ -2399,7 +2399,7 @@
           "Routes"
         ],
         "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
         "security": [
           {
             "FirebaseBearer": []
@@ -3758,7 +3758,7 @@
           "Places"
         ],
         "summary": "Search bounded place candidates using the server key",
-        "description": "Trims query to 3â€“200 characters; server-key Places field mask returns at most five normalized candidates. Empty results are valid. Redacted structured errors include code/phase; upstream 429 maps to 503.",
+        "description": "Trims query to 3\u00e2\u20ac\u201c200 characters; server-key Places field mask returns at most five normalized candidates. Empty results are valid. Redacted structured errors include code/phase; upstream 429 maps to 503.",
         "security": [
           {
             "FirebaseBearer": []
@@ -5056,7 +5056,7 @@
           "Feedback"
         ],
         "summary": "Submit authorized feedback with cooldown and replay protection",
-        "description": "General feedback requires nonempty comment; ride feedback requires completed session membership and matching bus/driver, plus rating 1â€“5 or nonempty comment. Comments <=200 words and <=2000 trimmed characters. Identity/name derived from token/profile. General feedback ignores rating/ride identifiers after type checks.",
+        "description": "General feedback requires nonempty comment; ride feedback requires completed session membership and matching bus/driver, plus rating 1\u00e2\u20ac\u201c5 or nonempty comment. Comments <=200 words and <=2000 trimmed characters. Identity/name derived from token/profile. General feedback ignores rating/ride identifiers after type checks.",
         "security": [
           {
             "FirebaseBearer": []
@@ -6233,7 +6233,7 @@
           "Privacy"
         ],
         "summary": "Queue the authenticated passenger deletion request",
-        "description": "Queues _privacy_deletion_requests/{uid} from token identity, not body identity. Driver/admin accounts must be offboarded by IT and return 409. 202 means queued, not deleted.",
+        "description": "Token-derived passenger UID; current Auth and durable membership must exclude operators, including claim-less accounts. Resubmission preserves attempts, failure history, status and backoff. 202 acknowledges the request, not completed deletion.",
         "security": [
           {
             "FirebaseBearer": []
@@ -6344,9 +6344,9 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "3-second caller budget, eight raw fills and 16 waiters/fill; dispatched work holds capacity until settlement. Unknown acknowledgement permits same-UID resubmission.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
-        "x-idempotency": "Per-UID queue upsert; repeated requests refresh server requestedAt.",
+        "x-idempotency": "Per-UID transactional creation or resubmission metadata update; no reset or automatic restart of failed/processing claims.",
         "x-compatibility-alias-of": "POST /api/v2/privacy-deletion-requests"
       }
     },
@@ -6357,7 +6357,7 @@
           "Privacy"
         ],
         "summary": "Create the authenticated passenger deletion request",
-        "description": "Same per-UID queue operation as legacy path, accepts no body or {} only. Driver/admin accounts return 409; token identity is authoritative. 202 means queued, not deleted.",
+        "description": "Token-derived passenger UID; current Auth and durable membership must exclude operators, including claim-less accounts. Resubmission preserves attempts, failure history, status and backoff. 202 acknowledges the request, not completed deletion.",
         "security": [
           {
             "FirebaseBearer": []
@@ -6468,9 +6468,140 @@
         "x-body-limit-bytes": 16384,
         "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
+        "x-timeout-policy": "3-second caller budget, eight raw fills and 16 waiters/fill; dispatched work holds capacity until settlement. Unknown acknowledgement permits same-UID resubmission.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
-        "x-idempotency": "Per-UID queue upsert, refreshes request time on repeats; no generic replay key."
+        "x-idempotency": "Per-UID transactional creation or resubmission metadata update; no reset or automatic restart of failed/processing claims."
+      },
+      "get": {
+        "operationId": "listPrivacyDeletionRequests",
+        "tags": [
+          "Privacy"
+        ],
+        "summary": "Monitor passenger deletion requests in bounded pages",
+        "description": "Admin-only 20-record document-ID pages; shows failed and expired processing identities. No deletion is dispatched by a status read.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyDeletionPage"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller budget, eight raw control fills and 16 waiters/fill; one 20-record page.",
+        "x-retry-policy": "Retry transient status errors with bounded backoff; do not restart failed work through passenger resubmission.",
+        "x-idempotency": "Read-only monitoring; follow nextCursor to null.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/]+$"
+            }
+          }
+        ]
       }
     },
     "/api/v2/ride-sessions": {
@@ -8057,7 +8188,7 @@
           "Routes"
         ],
         "summary": "Compute bounded directional geometry preview",
-        "description": "Billable server-side Google Routes request using field masks; accepts 2â€“100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
+        "description": "Billable server-side Google Routes request using field masks; accepts 2\u00e2\u20ac\u201c100 coordinates, retains order, computes both directions. Do not introduce this call into runtime route-segment reads.",
         "security": [
           {
             "FirebaseBearer": []
@@ -9694,7 +9825,7 @@
         },
         "x-auth-class": "device",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 Ã— HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 Ã— configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
+        "x-rate-limit": "Bypasses global/write limiters. Pre-auth IP budget per 10s: telemetry 15 \u00c3\u2014 HTTPS_INGRESS_DEVICES_PER_IP (default 100), diagnostics/firmware separate pools 2 \u00c3\u2014 configured devices; divided by replica shard factor. Telemetry additionally uses authenticated device budget HTTPS_DEVICE_RATE_PER_MINUTE (default 90) via distributed RTDB token leases. Local mode requires one replica.",
         "x-cache-policy": "Handler emits Cache-Control: no-store. Earlier middleware/parser rejections may occur before that header. Server-only credential cache uses device ID plus secret digest: positive TTL at most 60 seconds, negative 5 seconds, anchored to fill start with monotonic expiry. Single-flight invalidation fences all in-flight digests of the device; failed fills clear for retry. Invalidation listener failure clears authorization.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Credential cache-miss responses have a 5-second monotonic budget, at most 16 unsettled fills and 64 waiting callers per digest. Timed-out fills keep their slots until actual settlement; retries cannot multiply underlying DB/KDF fills.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
@@ -9717,6 +9848,159 @@
                   "action"
                 ],
                 "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/privacy-deletion-requests/{uid}/recovery": {
+      "post": {
+        "operationId": "recoverPrivacyDeletionRequest",
+        "tags": [
+          "Privacy"
+        ],
+        "summary": "Audit and deliberately resume a failed or interrupted passenger deletion",
+        "description": "Compares exact executor and generation. Failed requests start a fresh bounded failure cycle with lifetime attempts/error history preserved. Expired processing also requires executorStopped:true; refuses any locally unsettled execution. Audit prior effects, recover this claim then its linked fleet lock. Revalidates current passenger eligibility on actual execution.",
+        "security": [
+          {
+            "FirebaseBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, revoked, disabled, or malformed credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; obey Retry-After when supplied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retry when emitted by the rejecting limiter; not supplied by every upstream failure.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before a status/same-key retry",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Durable operation snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetLockRecovered"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 while processing",
+                "schema": {
+                  "type": "string",
+                  "const": "1"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid request, missing operation, key conflict or unavailable storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-auth-class": "admin",
+        "x-body-limit-bytes": 16384,
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. Verified UID mutation budget: 30/minute. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap.",
+        "x-cache-policy": "Cache-Control: no-store",
+        "x-timeout-policy": "3-second caller budget, eight raw control fills and 16 waiters/fill; one 20-record page.",
+        "x-retry-policy": "Inspect durable state after uncertain acknowledgements; stop and audit prior executor before recovering interrupted work.",
+        "x-idempotency": "Exact owner/generation CAS; changed generation rejects a duplicate recovery. Inspect status after unknown acknowledgement.",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrivacyRecoveryRequest"
               }
             }
           }
@@ -10749,7 +11033,7 @@
               "number",
               "null"
             ],
-            "description": "Ride feedback: integer 1â€“5 or null; general feedback: numeric type is checked but value is ignored."
+            "description": "Ride feedback: integer 1\u00e2\u20ac\u201c5 or null; general feedback: numeric type is checked but value is ignored."
           },
           "sessionId": {
             "type": "string",
@@ -11160,7 +11444,7 @@
             "type": "string",
             "maxLength": 2000,
             "minLength": 1,
-            "description": "Raw input <=2000 UTF-16 code units. After Unicode normalization it must contain 1â€“500 Unicode code points; unsafe formatting is removed and profanity censored."
+            "description": "Raw input <=2000 UTF-16 code units. After Unicode normalization it must contain 1\u00e2\u20ac\u201c500 Unicode code points; unsafe formatting is removed and profanity censored."
           },
           "requestId": {
             "type": "string",
@@ -12635,6 +12919,10 @@
           "auditOperationId": {
             "type": "string",
             "description": "Optional legacy/admin mutation audit identity; no automatic replay."
+          },
+          "privacyRequestId": {
+            "type": "string",
+            "description": "Privacy deletion linked to this stopped-executor lock; recover its processing claim first."
           }
         }
       },
@@ -12712,6 +13000,116 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PrivacyDeletionSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uid",
+          "status",
+          "attempts",
+          "failures",
+          "generation",
+          "executorId",
+          "recoveryRequired"
+        ],
+        "properties": {
+          "uid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^/]+$"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "processing",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failures": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "executorId": {
+            "type": "string"
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "lastErrorCode": {
+            "type": "string",
+            "pattern": "^[A-Z_]{1,64}$"
+          },
+          "nextAttemptAt": {
+            "type": "number"
+          },
+          "lastErrorAt": {
+            "type": "string"
+          },
+          "deadlineAt": {
+            "type": "number"
+          },
+          "phase": {
+            "enum": [
+              "cleaning",
+              "auth_deletion_dispatched"
+            ]
+          }
+        }
+      },
+      "PrivacyDeletionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requests",
+          "nextCursor"
+        ],
+        "properties": {
+          "requests": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/PrivacyDeletionSnapshot"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PrivacyRecoveryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expectedExecutorId",
+          "expectedGeneration"
+        ],
+        "properties": {
+          "expectedExecutorId": {
+            "type": "string",
+            "pattern": "^(legacy|[0-9a-f-]{36})$"
+          },
+          "expectedGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "executorStopped": {
+            "type": "boolean",
+            "const": true
           }
         }
       }
