@@ -1,6 +1,6 @@
 # Eki frontend
 
-Last updated: 2026-10-05 17:46 IST (UTC+05:30).
+Last updated: 2026-10-06 00:31 IST (UTC+05:30).
 
 Next.js 16 App Router application with React 19, Firebase Auth and a static-export PWA. Passenger and administrator workspaces are protected; `/feedback` is an admin review view sharing the same panel as the Admin Feedback tab.
 
@@ -23,6 +23,7 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 
 - Passenger: select a route, bus and destination; track live position; join an armed/active ride using the boarding code; view the timeline, messages, account and feedback.
 - Passenger selectors: destination and bus controls stay inside the web app. Destination order follows the ride direction, falls back to the terminal stop, and carries into boarding as `alightingStopId`. Device-only presence supports planning but cannot grant boarding eligibility.
+- Passenger boarding: Auth-token and location preparation each have a ten-second deadline, followed by a separate full ten-second API budget. Location denial, unavailable position and acquisition timeout are distinct; session changes and unmount cancel old work. Existing members may still correct stops without another location prompt. See [boarding request checks](../docs/testing/BOARDING_REQUEST_BUDGETS.md).
 - Administrator: use Live Ops, routes, fleet/personnel, history, feedback and settings. Only the active tab is mounted to limit listeners/maps/timers.
 - Feedback review: load up to the latest 200 records through `GET /api/v2/feedback`; validate responses and acknowledge a status PATCH before updating the displayed list. Requests and results are tied to the current verified auth generation.
 
