@@ -30,6 +30,7 @@ import {
 import { createLatestPendingScheduler } from "../lib/latestPendingScheduler";
 import { LruCache } from "../lib/lruCache";
 import { settleTogether } from "../lib/reconciliationPages";
+import { invalidateRouteGeometryRead } from "./routeGeometryReads";
 import { routeGeometrySignature } from "../lib/routeGeometrySignature";
 import { routeDocumentVersion, routeGeometryVersion } from "../lib/routeSaveContract";
 import type { DeviceAssignment } from "./deviceTelemetryService";
@@ -176,6 +177,7 @@ async function loadStoredRoute(routeId: string): Promise<StoredRoute | null> {
 
 /** Invalidate matcher data and make already-running work fail its version guard. */
 export function invalidateTelemetryRoute(routeId: string): void {
+  invalidateRouteGeometryRead(routeId);
   routeCacheGenerations.set(routeId, ++generationSequence);
   routeCache.delete(routeId);
   routeLoads.delete(routeId);
@@ -201,6 +203,7 @@ export function startTelemetryRouteWatcher(): () => void {
   let reconnectDelayMs = initialDelayMs;
   let watcherGeneration = 0;
   const invalidateCatalog = () => {
+    invalidateRouteGeometryRead();
     for (const id of new Set([...routeCache].map(([key]) => key).concat([...routeLoads.keys()]))) invalidateTelemetryRoute(id);
   };
 

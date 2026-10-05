@@ -11,6 +11,7 @@ vi.mock("./lib/firebaseAdmin", () => ({ db: { collection: (name: string) => {
 }, runTransaction: async (work: any) => { const loseAck = state.failAck; state.failAck = false; const result = await state.firestore!.runTransaction(work); if (loseAck) throw Error("Synthetic lost acknowledgement after actual commit"); return result; } }, rtdb: { ref: (path: string) => state.realtime!.ref(path) } }));
 vi.mock("./lib/googleMaps", () => ({ computeRouteGeometry: state.compute, LIVE_REROUTE_TIMEOUT_MS: 3500 }));
 import { startTelemetryRouteWatcher, scheduleTelemetryRouteProcessing, drainTelemetryRouteProcessing } from "./services/telemetryRouteService";
+import { readRouteGeometryDocument, invalidateRouteGeometryRead } from "./services/routeGeometryReads";
 const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describe.skip;
 integration("versioned telemetry catalog against actual Firebase emulators", () => {
   let app: App, stop: (() => void) | undefined;
@@ -20,6 +21,7 @@ integration("versioned telemetry catalog against actual Firebase emulators", () 
     state.firestore = new Firestore({ projectId: "eki-catalog-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false }); state.realtime = getDatabase(app);
   });
   beforeEach(async () => {
+    invalidateRouteGeometryRead();
     state.reads = 0; state.snapshots = 0; state.version = 0; state.paused = false; state.pending = []; state.failAck = false; state.compute.mockReset();
     for (const name of ["routes", "ride_sessions", "_active_bus_locks"]) {
       const docs = await state.firestore!.collection(name).get(); const batch = state.firestore!.batch(); docs.docs.forEach(doc => batch.delete(doc.ref)); await batch.commit();
@@ -28,6 +30,17 @@ integration("versioned telemetry catalog against actual Firebase emulators", () 
   });
   afterEach(async () => { stop?.(); stop = undefined; await drainTelemetryRouteProcessing(); });
   afterAll(async () => { await state.firestore?.terminate(); if (app) await deleteApp(app); });
+  it("coalesces passenger document reads and invalidates them on actual streamed edits/deletions", async () => {
+    const ref = state.firestore!.collection("routes").doc("route"); await ref.set({ geometryVersion: 1 });
+    stop = startTelemetryRouteWatcher(); await vi.waitFor(() => expect(state.version).toBe(1));
+    const reads = await Promise.all(Array.from({ length: 32 }, () => readRouteGeometryDocument("route")));
+    expect(reads.every(row => row.data?.geometryVersion === 1)).toBe(true); expect(state.reads).toBe(1);
+    await ref.set({ geometryVersion: 2 }); await vi.waitFor(() => expect(state.version).toBe(2));
+    expect((await readRouteGeometryDocument("route")).data?.geometryVersion).toBe(2); expect(state.reads).toBe(2);
+    await ref.delete(); await vi.waitFor(() => expect(state.version).toBe(0));
+    expect((await readRouteGeometryDocument("route")).exists).toBe(false); expect(state.reads).toBe(3);
+    expect(state.compute).not.toHaveBeenCalled();
+  }, 30000);
   it("uses streamed route data for sixty pending fixes, then observes edited/deleted endpoints without Google", async () => {
     const id = "route", ref = state.firestore!.collection("routes").doc(id);
     const stops = [{ id: "A", lat: 23, lng: 72 }, { id: "B", lat: 23.1, lng: 72.1 }];

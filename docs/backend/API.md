@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../api/HTTP_CONTRACT.md) for schema
@@ -386,11 +386,11 @@ Returns `{totalBuses,activeBuses,idleBuses,signalLostBuses,ongoingTrips,passenge
 
 ### `POST /api/routes/compute-polyline` — admin
 
-Validates route control points, calls server-key Google Routes API and returns road-snapped encoded geometry/distance/duration. Dedicated 10/minute limit. Upstream timeout/config/errors map to safe error responses.
+Validates route control points, calls server-key Google Routes API and returns road-snapped encoded geometry/distance/duration. Dedicated verified-UID 10/minute mutation limit. All admin geometry computations share two raw directional pipelines, eight waiting and a two-second queue age; each pipeline has at most four ordered chunks. Dispatched work retains its permit until actual settlement. Capacity/expiry returns 503 with Retry-After: 1; upstream timeout/config/errors map to safe error responses.
 
 ### `GET /api/routes/:routeId/geometry` — authenticated
 
-Returns cached independently routed `forwardPolyline` and `reversePolyline` geometry (plus forward-compatible `polyline`, distance and duration fields). Legacy route documents are repaired once through the server-key Routes API; browsers cannot submit arbitrary billable coordinates.
+Returns cached independently routed `forwardPolyline` and `reversePolyline` geometry (plus forward-compatible `polyline`, distance and duration fields). The GET is read-only for every caller and never invokes Google or writes Firestore. Stored/negative documents use a 100-entry, sixty-second monotonic cache with watcher/local-save invalidation, sixteen raw fills, thirty-two callers/fill and a three-second response deadline. Legacy/invalid geometry returns 409 `GEOMETRY_REPAIR_REQUIRED`; authorized versioned admin saves perform repair. GET/HEAD skip the dedicated ten/minute computation limiter and retain the independent verified-UID read quota. Responses are private/no-store. See [read/repair contract](../operations/ROUTE_GEOMETRY_READS.md).
 
 ### `PUT /api/routes/:routeId` — admin
 
@@ -506,4 +506,4 @@ replica and receipt-timeout boundaries. Admin health adds anonymous
 
 Fleet reconciliation returns one 100-record page. Legacy POST /api/fleet/reconcile accepts optional cursor and exposes X-Reconciliation-Complete / X-Next-Cursor through CORS while retaining its aggregate JSON body. Follow every page; new jobs use a new key per settled cursor. Bus guards and repairs page all bound rides/devices/drivers; no first-250/500 truncation remains. See [bounded reconciliation](../operations/RECONCILIATION.md) for bounds, partial mutations, audit checkpoints and recovery.
 
-Telemetry configured-route reads now use the watcher-populated catalog for both pending and resolved directions. Missing legacy geometry is read-only on this live path and requires an authorized route save/repair; accepted raw fixes/lifecycle remain available. See [route catalog](../operations/ROUTE_CATALOG.md). The passenger geometry GET adapter remains a separate R13 migration item.
+Telemetry configured-route reads now use the watcher-populated catalog for both pending and resolved directions. Missing legacy geometry is read-only on this live path and requires an authorized route save/repair; accepted raw fixes/lifecycle remain available. See [route catalog](../operations/ROUTE_CATALOG.md). Passenger geometry GET is also cached/read-only; legacy repair requires an authorized versioned admin save. See [geometry reads](../operations/ROUTE_GEOMETRY_READS.md).

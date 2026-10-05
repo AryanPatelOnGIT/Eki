@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 ## New to the project
 
@@ -87,3 +87,5 @@ owns current commands; historical test counts apply only to their recorded run.
   commit references and measurements intact. See [contributing](../../CONTRIBUTING.md).
 
 - [Bounded reconciliation and continuation](../operations/RECONCILIATION.md): durable page cursors, all-record fleet/device guards, bounded Auth/session work and stranded mutation recovery.
+
+- [Read-only passenger geometry and bounded admin repair](../operations/ROUTE_GEOMETRY_READS.md) — cache, independent quotas and explicit versioned repair.

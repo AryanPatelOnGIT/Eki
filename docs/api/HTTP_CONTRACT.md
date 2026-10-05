@@ -1,6 +1,6 @@
 # HTTP contract and compatibility checks
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
@@ -80,7 +80,7 @@ Verified-UID quotas separately allow 200 reads/minute and 30 mutations/minute;
 GET/HEAD polling never consumes mutation tokens. Public GET/HEAD probes and
 exact device ingress paths are exempt from browser ingress; detailed admin
 health stays authenticated and exempt from the user read quota. `/api/routes` applies the 10/UID/minute
-compute budget to geometry reads and deletion too; save-operation reads skip
+compute budget to mutations including deletion; geometry and save-operation reads skip
 that budget. Segment planning uses 30/verified UID/minute. Places uses a replica-sharded
 20/verified UID/minute limiter. Device ingress has separate pre-auth IP pools and an
 authenticated telemetry budget. Read the per-operation policies before
@@ -191,3 +191,5 @@ policy; detailed health adds `workQueues.ingestion`. See
 Fleet continuation: v2 reconciliation jobs accept optional cursor and return bounded nextCursor/timeBudgetExceeded; each settled page uses a new key. Legacy reconciliation accepts query cursor with CORS-exposed X-Reconciliation-Complete/X-Next-Cursor headers and unchanged aggregate body. Fleet mutations can return retryable 409 while the shared durable mutex is held or 503 on bounded admission/audit failure. See [reconciliation](../operations/RECONCILIATION.md).
 
 Privacy admission has a three-second response budget and per-UID transactional resubmission preserving retry state. Admin GET `/api/v2/privacy-deletion-requests` pages twenty records; POST `/{uid}/recovery` compares executor/generation and audits deliberate retry. Current Auth plus durable membership checks protect claim-less passenger requests. See [privacy recovery](../operations/PRIVACY_DELETION.md).
+
+Stored geometry GET is read-only and private/no-store. Legacy/invalid geometry returns 409 GEOMETRY_REPAIR_REQUIRED; use an authorized versioned admin save. Read/negative caching is bounded to 100 documents/60 monotonic seconds, raw fills 16, waiters 32 and response 3 seconds. Shared admin computations admit two raw pipelines/eight waiting/two-second queue age (up to four ordered chunks per pipeline). Capacity/expiry responds 503 with Retry-After: 1. See [read/repair procedure](../operations/ROUTE_GEOMETRY_READS.md).

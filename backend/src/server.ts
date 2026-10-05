@@ -12,6 +12,7 @@
  */
 
 import "dotenv/config";
+import { createRouteComputeLimiter } from "./lib/routeComputeLimiter";
 
 import express from "express";
 import http from "http";
@@ -127,21 +128,7 @@ app.use((req, res, next) => {
 // Route computation calls a billable upstream API. The admin-only route editor
 // normally sends one request per save, so this guard leaves normal use ample
 // headroom while limiting accidental loops and compromised admin sessions.
-const routeComputeLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: shardedLimit(10, RATE_LIMIT_SHARD_FACTOR),
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: verifiedUserKeyGenerator,
-  message: { error: "Route computation rate limit exceeded." },
-  // Reconciliation is a cheap Firestore read and may poll while a save lease
-  // is active. It remains under the global limiter but must not consume the
-  // scarce billable-routing budget.
-  skip: (req) => req.method === "GET" && (
-    /\/save-operations\//.test(req.originalUrl) ||
-    req.originalUrl.startsWith("/api/v2/route-geometry-previews/")
-  ),
-});
+const routeComputeLimiter = createRouteComputeLimiter(RATE_LIMIT_SHARD_FACTOR);
 const routePlanLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: shardedLimit(30, RATE_LIMIT_SHARD_FACTOR),
