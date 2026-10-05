@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -40,7 +40,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `services/deviceTelemetryService.ts` | Bounded device/digest credential fills, monotonic positive/negative cache TTL, invalidation fences, scrypt, ordered live-node transaction, recovery and rolling metrics |
 | `services/durableRideRecovery.ts`, `durableRideRecoveryPolicy.ts` | Single-flight recovery of a lock-owned non-terminal session; completed-predecessor/claim guards, new-claim miss-cache bypass, telemetry/delay preservation and shutdown drain |
 | `services/routeMatching.ts` | Pure projection, direction/heading/continuity scoring and off-route hysteresis |
-| `services/telemetryRouteService.ts` | Per-node bounded latest-pending matching, cross-replica route invalidation, directional-geometry repair, reroute orchestration and stale-result guards |
+| `services/telemetryRouteService.ts` | Per-node bounded latest-pending matching, versioned route catalog invalidation, reroute orchestration and stale-result guards |
 | `services/authTokenVerifier.ts` | SHA-256 keyed bounded token verification coalescing/cache |
 | `services/tripStateReducer.ts` | Pure ordered geofence state transition and segment crossing |
 | `services/tripStateLifecycle.ts` | Identifier/live-record normalization and dynamic shutdown draining |
@@ -96,7 +96,7 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `components/Providers.tsx` | Auth/App Check and top-level client providers |
 | `components/MapProviders.tsx` | Single Maps API provider/load per workspace |
 | `components/ServiceWorkerRegistrar.tsx` | SW registration/update check and controlled one-time reload |
-| `components/maps/DirectionsRoute.tsx` | Draw active direction/version geometry and repair legacy cached geometry |
+| `components/maps/DirectionsRoute.tsx` | Draw active direction/version stored geometry; missing legacy geometry requires admin repair |
 | `components/maps/PassengerMap.tsx` | RTDB route filtering, matched/raw marker policy, dynamic route overlay and heuristic ETA |
 | `components/admin/DashboardPanel.tsx` | Live Ops matched markers, per-bus route overlays and raw/match/version diagnostics |
 | `components/maps/PassengerTrackingMap.tsx` | Passenger tracking composition |
@@ -207,3 +207,5 @@ and conditional fleet-lock release after verified executor termination.
 Auth/Google fencing boundary and staging gates.
 
 Reconciliation bounds queries/results/caches to 100 records and uses four per-session or ten fleet Auth pipelines. Hourly session and ten-minute fleet scans persist document-ID checkpoints through the worker lease transaction; a held SDK call retains scan ownership across leadership changes. Admin jobs expose continuation, while per-bus device/driver guards visit every page. All fleet Auth mutations share the no-takeover mutex and record bounded audit progress. See [reconciliation](../operations/RECONCILIATION.md) for partial mutation and cross-store limits.
+
+Passenger geometry GET uses bounded cached read-only documents; watcher edits and local saves/deletions invalidate it. All admin geometry pipelines share two raw slots/eight waiting with undispatched queue expiry; no passenger GET invokes Google. See [geometry read/repair contract](../operations/ROUTE_GEOMETRY_READS.md).

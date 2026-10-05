@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -225,3 +225,7 @@ Run privacy route, manifest and queue regressions plus `privacyDeletion.integrat
 ### Versioned telemetry route catalog (R12)
 
 Run `telemetryRouteCatalog.test.ts`, route service/live-routing cases and `telemetryCatalog.integration.test.ts` in the rules-integration command. Check sixty unchanged pending fixes do not reread a watched route, shared expired fills, observed edit/deletion and delayed subscription/RTDB callbacks, read-only missing geometry, armed direction transaction binding, definitive stale refusal and actual committed direction with lost acknowledgement. Physical/provider/replica edit timing stays #245.
+
+### Read-only passenger geometry (R13)
+
+Run route geometry reads, route compute limiter and polyline HTTP suites. Check legacy enumeration and administrator GET invoke no Google/write, sixty stored reads share one document read, authorized versioned saves refresh the cache, bounded raw/waiting computation survives stalled dependencies, and read quotas do not spend computation tokens. The catalog emulator suite additionally verifies actual watcher cache invalidation. Live provider/replica/road acceptance remains #245.

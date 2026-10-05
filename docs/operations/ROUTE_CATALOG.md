@@ -1,6 +1,6 @@
 # Versioned telemetry route catalog
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 Telemetry matching and pending-direction inference use the same read-only route
 catalog on every API replica. The existing Firestore watcher publishes decoded
@@ -48,8 +48,7 @@ Loading configured route data never invokes Google or persists legacy geometry r
 A route missing valid forward/reverse geometry is negatively cached and leaves
 accepted raw telemetry/lifecycle data intact, with matching/direction unavailable
 until authorized administration repairs it. Existing authenticated route save
-already computes missing directional geometry. Passenger geometry GET repair is
-a separate R13 item; this R12 change does not claim that adapter is read-only.
+already computes missing directional geometry. Passenger geometry GET is now cached/read-only; see the [bounded admin repair procedure](ROUTE_GEOMETRY_READS.md).
 No provider request that was already dispatched can be recalled.
 
 ## Evidence and live limits

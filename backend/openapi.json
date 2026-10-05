@@ -2528,9 +2528,9 @@
         },
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms. Admin geometry pool: two raw directional pipelines, eight waiting, two-second queue age; up to four chunks per pipeline. Actual settlement retains raw permits.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "No preview replay key; repeated requests can incur repeated upstream calls."
       }
@@ -2541,8 +2541,8 @@
         "tags": [
           "Routes"
         ],
-        "summary": "Read or repair stored directional route geometry",
-        "description": "Returns stored geometry when valid. Legacy geometry may be repaired through server-key routing and version recheck; concurrent in-process computations are shared. Valid geometry is reused. Authenticated GET can repair stored data; it is not a promise of zero upstream cost.",
+        "summary": "Read stored directional route geometry",
+        "description": "Read-only for all authenticated callers: never Google, repair or Firestore mutation. Legacy/invalid directional geometry returns 409 GEOMETRY_REPAIR_REQUIRED; authorized versioned admin saves perform repair. Fixed monotonic cache and watcher/local-write invalidation.",
         "security": [
           {
             "FirebaseBearer": []
@@ -2601,7 +2601,7 @@
             }
           },
           "409": {
-            "description": "Lifecycle, version, assignment, or idempotency conflict; reconcile before retry.",
+            "description": "GEOMETRY_REPAIR_REQUIRED: authorized versioned admin save required; GET does not repair.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2691,9 +2691,9 @@
         },
         "x-auth-class": "user",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
-        "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID read budget: 200/minute; does not consume mutation tokens. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
+        "x-cache-policy": "Cache-Control: private, no-store. Private process cache: 100 documents including negatives, sixty-second monotonic freshness; observed watcher edits/deletion/error and local successful save/delete invalidate. Raw fills 16; callers per fill 32.",
+        "x-timeout-policy": "Three-second read response deadline; raw reads retain capacity until settlement and late/invalidated reads cannot populate cache. 503 GEOMETRY_READ_UNAVAILABLE with Retry-After: 1.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Safe snapshot/read; no mutation replay key."
       }
@@ -2897,9 +2897,9 @@
         },
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms. Admin geometry pool: two raw directional pipelines, eight waiting, two-second queue age; up to four chunks per pipeline. Actual settlement retains raw permits.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Stable saveId binds the normalized route ID, mode, expectedVersion, metadata and ordered stops. Same key/payload replays stored result or failure. Changed payload conflicts. Unknown outcome/202: GET the same save-operation resource, then retry the exact same payload/key if appropriate."
       },
@@ -3038,7 +3038,7 @@
         },
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
         "x-cache-policy": "No explicit Cache-Control header from this handler. Authenticated clients must not use shared response caches. This does not imply private server-side caches are absent.",
         "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
@@ -8031,9 +8031,9 @@
         },
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms.",
+        "x-timeout-policy": "HTTP request-body receipt timeout 15000 ms (not a handler execution deadline); header timeout 70000 ms. No general handler deadline; clients use bounded timeouts and reconcile uncertain writes. Each Google Routes chunk has a 10000 ms deadline. Up to 100 ordered points are chunked into forward and reverse routing calls; no whole-handler deadline. Browser save/reconciliation budget is 30000 ms; durable save lease is 30000 ms. Admin geometry pool: two raw directional pipelines, eight waiting, two-second queue age; up to four chunks per pipeline. Actual settlement retains raw permits.",
         "x-retry-policy": "Do not blindly retry 400/401/403/409/422. On 429 obey Retry-After when present. Retry transient failures with bounded exponential backoff and jitter only when the operation idempotency policy permits.",
         "x-idempotency": "Stable saveId binds the normalized route ID, mode, expectedVersion, metadata and ordered stops. Same key/payload replays stored result or failure. Changed payload conflicts. Unknown outcome/202: GET the same save-operation resource, then retry the exact same payload/key if appropriate.",
         "x-compatibility-alias-of": "PUT /api/routes/{routeId}"
@@ -8335,9 +8335,9 @@
         },
         "x-auth-class": "admin",
         "x-body-limit-bytes": 16384,
-        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route mount: 10 requests/verified UID/minute divided by shard factor, including geometry reads and deletes. GET save-operation reconciliation skips this dedicated limiter.",
+        "x-rate-limit": "Pre-auth browser ingress: 1000 requests/normalized IP/minute. CORS/preflight runs first. Verified UID mutation budget: 30/minute; GET/HEAD uses the separate 200/minute read budget. Process budgets divided by RATE_LIMIT_SHARD_FACTOR; edge WAF/LB enforces the fleet cap. Route computation mutations: 10/verified UID/minute divided by shard factor; read-only geometry GET/HEAD and operation polls skip this budget and retain their independent read quota.",
         "x-cache-policy": "Cache-Control: no-store",
-        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. 10-second upstream abort per parallel preview chunk (maximum 4 calls).",
+        "x-timeout-policy": "Admission/status response 3 seconds, raw fills 16, waiters per fill 32; executors 2, waiting 8, queue age 2 seconds. External work retains slots until actual settlement. 10-second upstream abort per parallel preview chunk (maximum 4 calls). Admin geometry pool: two raw directional pipelines, eight waiting, two-second queue age; up to four chunks per pipeline. Actual settlement retains raw permits.",
         "x-retry-policy": "Same-key submission reads durable state without replay. Expired processing exposes recovery identity. Confirm prior executor termination, audit unknown effects, explicitly abandon, then deliberately submit a new key.",
         "x-idempotency": "Durable global admin operation key and normalized payload. No automatic expired-operation takeover. Polls never launch work.",
         "parameters": [

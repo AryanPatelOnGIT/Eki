@@ -1,6 +1,6 @@
 # Eki backend
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 The TypeScript/Express backend is the authority for hardware ingestion, fleet/route/device commands and ordered ride lifecycle. It uses Firebase Admin with service-account JSON or Application Default Credentials, writes current data to RTDB and durable state to Firestore, and elects one background worker with a Firestore lease.
 
@@ -123,3 +123,5 @@ Reconciliation and per-bus guards/repairs visit all document-ID pages of 100 wit
 Passenger deletion now preserves resubmission history, uses bounded fair chunks and backoff, and exposes admin recovery for failed/interrupted claims. See [privacy deletion](../docs/operations/PRIVACY_DELETION.md); live Auth, staging indexes and concurrent-client quiescence remain acceptance gates.
 
 Live matching and pending directions share a watcher-populated, versioned read-only route catalog, with bounded LRU entries and coalesced monotonic freshness reads. Telemetry never repairs missing configured geometry through Google. See [route catalog](../docs/operations/ROUTE_CATALOG.md) for edit/deletion fences, uncertain direction commits and staging limits.
+
+Passenger geometry reads are cached and read-only; explicit versioned admin saves perform legacy repair through bounded computation. See [geometry read/repair contract](../docs/operations/ROUTE_GEOMETRY_READS.md) for fixed bounds, independent quotas and staging limits.

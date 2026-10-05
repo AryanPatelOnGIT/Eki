@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 16:32 IST (UTC+05:30).
+Last updated: 2026-10-05 17:01 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -229,3 +229,5 @@ Reconciliation uses fixed software bounds: 100-record pages, four abandoned-sess
 Privacy queue software bounds are fixed: twenty-record pages every minute, one raw execution/twenty waiting, two-second queue age, thirty-second dispatch budget and five consecutive failures with exponential jittered retry capped at one hour. No new environment variable or retention policy is introduced. See [privacy deletion](operations/PRIVACY_DELETION.md).
 
 The telemetry route catalog uses fixed 1000-entry LRU data/generation bounds and five-minute monotonic positive/negative freshness. Pending directions share per-route fills; watcher failure invalidates data, with existing 1–30 second reconnect backoff. No new environment variable/provider policy is introduced. See [route catalog](operations/ROUTE_CATALOG.md).
+
+Passenger geometry reads are cached and read-only; explicit versioned admin saves perform legacy repair through bounded computation. See [geometry read/repair contract](../operations/ROUTE_GEOMETRY_READS.md) for fixed bounds, independent quotas and staging limits.

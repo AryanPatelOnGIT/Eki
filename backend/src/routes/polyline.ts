@@ -1,6 +1,6 @@
 import { operationRecovery, operationRecoveryList } from "./operationRecovery";
 import { computeOrderedRouteGeometry, MAX_ROUTE_STOPS } from "../lib/orderedRouteGeometry";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
@@ -18,6 +18,8 @@ import {
 import { OPERATION_ID, OperationConflict, readOperation, submitOperation } from "../services/httpOperations";
 import { invalidateTelemetryRoute } from "../services/telemetryRouteService";
 import { invalidatePlanRoute } from "./plan";
+import { invalidateRouteGeometryRead, readRouteGeometryDocument } from "../services/routeGeometryReads";
+import { BoundedKeyedExecutor, WorkCapacityError, WorkQueueExpired } from "../lib/boundedKeyedExecutor";
 
 const router = Router();
 export const routeSaveResourcesRouter = Router();
@@ -39,10 +41,7 @@ interface DirectionalRouteGeometry {
   reverseDuration: string;
   polylineQuality: typeof STORED_POLYLINE_QUALITY;
 }
-const geometryComputations = new Map<
-  string,
-  Promise<DirectionalRouteGeometry>
->();
+const geometryExecutor = new BoundedKeyedExecutor<string>({ maxConcurrent: 2, maxPending: 8, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 
 interface LatLng {
   lat: number;
@@ -73,6 +72,7 @@ class RouteApiError extends Error {
 }
 
 function sendRouteError(res: Response, error: RouteApiError): void {
+  if (error.status === 503) res.set("Retry-After", "1");
   res.status(error.status).json(error.payload);
 }
 
@@ -161,8 +161,17 @@ function validEncodedPolyline(value: unknown): value is string {
 }
 
 async function computePolyline(waypoints: LatLng[]) {
-  const geometry = await computeOrderedRouteGeometry(waypoints, computePolylineChunk);
-  return { ...geometry, polylineQuality: STORED_POLYLINE_QUALITY };
+  try {
+    return await geometryExecutor.run(randomUUID(), async () => {
+      const geometry = await computeOrderedRouteGeometry(waypoints, computePolylineChunk);
+      return { ...geometry, polylineQuality: STORED_POLYLINE_QUALITY };
+    });
+  } catch (error) {
+    if (error instanceof WorkCapacityError || error instanceof WorkQueueExpired) {
+      throw routeError(503, "ROUTING_CAPACITY_EXHAUSTED", "routing", "Route computation is busy. Retry after checking the same operation.");
+    }
+    throw error;
+  }
 }
 
 async function computePolylineChunk(waypoints: LatLng[]) {
@@ -296,19 +305,6 @@ async function computeDirectionalPolylines(
   };
 }
 
-function computePolylineOnce(routeId: string, waypoints: LatLng[]) {
-  const key = `${routeId}:${JSON.stringify(waypoints)}`;
-  const existing = geometryComputations.get(key);
-  if (existing) return existing;
-  const computation = computeDirectionalPolylines(waypoints).finally(() => {
-    if (geometryComputations.get(key) === computation) {
-      geometryComputations.delete(key);
-    }
-  });
-  geometryComputations.set(key, computation);
-  return computation;
-}
-
 function geometryError(res: Response): void {
   sendRouteError(
     res,
@@ -380,12 +376,7 @@ router.post("/compute-polyline", requireAdmin, async (req: Request, res: Respons
   }
 });
 
-/**
- * Returns cached road geometry for a saved route, repairing legacy route
- * documents through Routes API when their encoded polyline is absent/invalid.
- * Any signed-in map viewer may read it; callers cannot supply arbitrary
- * billable waypoints because coordinates are loaded from Firestore by ID.
- */
+/** Read-only stored geometry. Repair requires an authorized, versioned admin save. */
 router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response) => {
   const routeId = singleRouteParam(req.params.routeId);
   if (routeId === null || !SAFE_ID.test(routeId)) {
@@ -394,13 +385,13 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
   }
 
   try {
-    const routeRef = db.collection("routes").doc(routeId);
-    const snapshot = await routeRef.get();
+    res.set("Cache-Control", "private, no-store");
+    const snapshot = await readRouteGeometryDocument(routeId);
     if (!snapshot.exists) {
       res.status(404).json({ error: "Route not found." });
       return;
     }
-    const route = snapshot.data() as Record<string, unknown>;
+    const route = snapshot.data!;
     if (
       route.polylineQuality === STORED_POLYLINE_QUALITY &&
       validEncodedPolyline(route.forwardPolyline) &&
@@ -429,47 +420,12 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
       res.status(422).json({ error: "Route has no valid coordinates." });
       return;
     }
-    const expectedVersion = routeDocumentVersion(route);
-    const geometrySignature = routeGeometrySignature(waypoints);
-    const geometry = await computePolylineOnce(routeId, waypoints);
-    const geometryVersion = routeGeometryVersion(route) + 1;
-    await db.runTransaction(async (transaction) => {
-      const current = await transaction.get(routeRef);
-      const currentData = current.data() as Record<string, unknown> | undefined;
-      const currentWaypoints = currentData ? routeWaypoints(currentData) : null;
-      if (
-        !current.exists ||
-        routeDocumentVersion(currentData) !== expectedVersion ||
-        !currentWaypoints ||
-        routeGeometrySignature(currentWaypoints) !== geometrySignature
-      ) {
-        throw routeError(
-          409,
-          "STALE_ROUTE_VERSION",
-          "persistence",
-          "The route changed while legacy geometry was being repaired. Retry the request.",
-          { currentVersion: routeDocumentVersion(currentData) },
-        );
-      }
-      transaction.set(routeRef, {
-        ...geometry,
-        geometrySignature,
-        geometryVersion,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
-    invalidatePlanRoute(routeId);
-    invalidateTelemetryRoute(routeId);
-    res.json({
-      ...geometry,
-      configVersion: expectedVersion,
-      geometryVersion,
-      cached: false,
-    });
+    sendRouteError(res, routeError(409, "GEOMETRY_REPAIR_REQUIRED", "validation",
+      "Stored directional geometry needs repair. An administrator must save the current route with its expected version."));
   } catch (error) {
     console.error("[Routes] Failed to load route geometry:", error);
     if (error instanceof RouteApiError) sendRouteError(res, error);
-    else geometryError(res);
+    else { res.set("Retry-After", "1"); sendRouteError(res, routeError(503, "GEOMETRY_READ_UNAVAILABLE", "persistence", "Stored geometry is temporarily unavailable. Retry the read.")); }
   }
 });
 
@@ -786,6 +742,7 @@ async function saveRoute(req: Request, res: Response) {
     });
     invalidatePlanRoute(routeId);
     invalidateTelemetryRoute(routeId);
+    invalidateRouteGeometryRead(routeId);
     res.json(result);
   } catch (error) {
     console.error("[Routes] Failed to save validated route:", error);
@@ -856,6 +813,7 @@ router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => 
     }
     invalidatePlanRoute(routeId);
     invalidateTelemetryRoute(routeId);
+    invalidateRouteGeometryRead(routeId);
     res.json({ deleted: true });
   } catch (error) {
     console.error("[Routes] Failed to delete route:", error);

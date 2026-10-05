@@ -459,7 +459,8 @@ describe("production security configuration", () => {
     expect(admission).toContain("shardedLimit(limits.mutation");
     expect(server.indexOf("app.use(cors(")).toBeLessThan(server.indexOf("app.use(createBrowserIngressLimiter("));
     expect(server).toContain("shardedLimit(30");
-    expect(server).toContain("shardedLimit(10");
+    expect(server).toContain("createRouteComputeLimiter(RATE_LIMIT_SHARD_FACTOR)");
+    expect(workspaceFile("backend/src/lib/routeComputeLimiter.ts")).toContain("shardedLimit(10");
     expect(devices).toContain("shardedLimit(requestsPerWindow");
     // Operators must set the factor to the deployed replica count.
     expect(envExample).toContain("RATE_LIMIT_SHARD_FACTOR");
