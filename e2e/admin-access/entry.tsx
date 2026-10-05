@@ -1,10 +1,22 @@
 import { createRoot } from "react-dom/client";
 import { useSyncExternalStore } from "react";
 import { AuthProvider } from "@/hooks/useAuth";
+import { useCollection } from "@/hooks/useCollection";
 import RoleGuard from "@/components/shared/RoleGuard";
 import FeedbackPanel from "@/components/admin/FeedbackPanel";
 import { approveVerification, rejectVerification, reverifyAccount, switchAccount, signOut, tokenWaiting, subscribeTokenWaiting } from "./firebase";
 import "../../frontend/src/app/globals.css";
+function Metadata() {
+  const buses = useCollection<{ name: string }>("buses");
+  const routes = useCollection<{ name: string }>("routes");
+  return <main>
+    <h1>Fleet and routes</h1>
+    {buses.error && <p role="alert">{buses.error}</p>}
+    {routes.error && <p role="alert">{routes.error}</p>}
+    <button onClick={() => { buses.retry(); routes.retry(); }}>Retry fleet access</button>
+    {[...buses.data, ...routes.data].map(item => <p key={item.name}>{item.name}</p>)}
+  </main>;
+}
 function Fixture() {
   const waiting = useSyncExternalStore(subscribeTokenWaiting, tokenWaiting);
   return <>
@@ -16,7 +28,7 @@ function Fixture() {
     <button onClick={() => void signOut()}>Synthetic sign out</button>
   </aside>
   <AuthProvider><RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: 65 }}>
-    <FeedbackPanel embedded={new URLSearchParams(location.search).has("embedded")} />
+    {new URLSearchParams(location.search).has("metadata") ? <Metadata /> : <FeedbackPanel embedded={new URLSearchParams(location.search).has("embedded")} />}
   </div></RoleGuard></AuthProvider>
 </>;
 }

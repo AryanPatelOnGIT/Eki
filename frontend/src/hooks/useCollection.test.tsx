@@ -4,19 +4,37 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearCollectionCache, useCollection } from "./useCollection";
 const mocks = vi.hoisted(() => ({
   user: { uid: "admin", role: "admin" } as { uid: string; role: string | null } | null,
-  loading: false, generation: 0, ready: vi.fn(), listen: vi.fn(), unsubscribe: vi.fn(),
+  loading: false, generation: 0, ready: vi.fn(), listen: vi.fn(), unsubscribe: vi.fn(), refresh: vi.fn(),
+  failure: null as null | ((error: unknown) => void),
   success: null as null | ((snapshot: { docs: Array<{ id: string; data: () => unknown }> }) => void),
 }));
-vi.mock("./useAuth", () => ({ useAuth: () => ({ user: mocks.user, loading: mocks.loading }) }));
+vi.mock("./useAuth", () => ({ useAuth: () => ({ user: mocks.user, loading: mocks.loading, refreshAccess: mocks.refresh }) }));
 vi.mock("@/lib/authState", () => ({ waitForAuth: mocks.ready, getAuthVerificationGeneration: () => mocks.generation }));
 vi.mock("@/lib/firebaseFirestore", () => ({ db: {} }));
 vi.mock("firebase/firestore", () => ({ collection: vi.fn(), limit: vi.fn(), query: vi.fn(), where: vi.fn(), orderBy: vi.fn(), onSnapshot: mocks.listen }));
 beforeEach(() => {
   clearCollectionCache(); vi.clearAllMocks(); mocks.user = { uid: "admin", role: "admin" }; mocks.loading = false; mocks.generation = 0;
-  mocks.ready.mockResolvedValue(undefined); mocks.listen.mockImplementation((_query, success) => { mocks.success = success; return mocks.unsubscribe; });
+  mocks.refresh.mockResolvedValue(undefined);
+  mocks.ready.mockResolvedValue(undefined); mocks.listen.mockImplementation((_query, success, failure) => { mocks.success = success; mocks.failure = failure; return mocks.unsubscribe; });
 });
 afterEach(() => { cleanup(); clearCollectionCache(); });
 describe("protected collection lifecycle", () => {
+  it("refreshes denied access before attaching a new verified listener", async () => {
+    const hook = renderHook(() => useCollection("buses"));
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    const staleSuccess = mocks.success!;
+    act(() => mocks.failure!({ code: "permission-denied" }));
+    act(() => hook.result.current.retry());
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(mocks.listen).toHaveBeenCalledOnce();
+    mocks.generation++; mocks.loading = true; hook.rerender();
+    act(() => staleSuccess({ docs: [{ id: "old", data: () => ({}) }] }));
+    expect(hook.result.current.data).toEqual([]);
+    mocks.loading = false; hook.rerender();
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2));
+    act(() => mocks.success!({ docs: [{ id: "fresh", data: () => ({}) }] }));
+    expect(hook.result.current.data).toEqual([{ id: "fresh" }]);
+  });
   it.each(["signed-out", "unverified", "loading"])("does not subscribe while %s", async condition => {
     if (condition === "signed-out") mocks.user = null;
     if (condition === "unverified") mocks.user!.role = null;

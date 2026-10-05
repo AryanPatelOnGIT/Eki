@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 17:01 IST (UTC+05:30).
+Last updated: 2026-10-05 17:45 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -107,10 +107,34 @@ Do not leave a placeholder site key active while expecting the missing-key
 opt-out: a configured key selects the provider path. Restart the frontend after
 editing these values.
 
-`ensureAppCheck()` waits up to 10 seconds for a valid first token. Authentication
-then verifies the role before publishing the user and enabling protected
+`ensureAppCheck()` waits up to 10 seconds for a valid token. One pending SDK
+token acquisition remains shared until it settles, even after the caller's
+deadline; repeatedly clicking retry cannot start unbounded acquisitions.
+Authentication refreshes the ID token and verifies trusted role claims before
+publishing the user and enabling protected
 Firestore/RTDB listeners. Provider, token, role and timeout failures keep access
 closed. Account changes and sign-out invalidate earlier pending verification.
+
+For an administrator, Auth custom claims must contain both `role: "admin"`
+and `admin: true`. A Firestore profile or remembered role alone cannot authorize
+the admin workspace. Synchronize claims through the existing trusted admin
+procedure after changing a profile; do not grant privileges in browser code.
+
+If fleet/routes/drivers report `permission-denied`, use the panel's **Retry**.
+Permission retries and **Try again** on the verification screen share one
+fresh App Check/Auth verification, hide protected data while it runs, and
+subscribe again only after successful verification. Other transient listener
+errors reconnect without an extra security-token refresh. A permanently
+rejected SDK token requires repairing local enrollment and restarting the
+frontend; the retry does not disable Console enforcement or register tokens.
+
+For localhost diagnosis, first confirm the frontend and backend use the same
+Firebase project and an enrolled provider/debug token for that project's web
+app. Restart after changing ignored `.env.local`, then sign in and open Fleet
+and Routes. An Auth admin claim does not bypass enforced App Check. Record
+only redacted success/error codes; never paste debug or bearer tokens into an
+issue. Actual account/provider acceptance remains #204/#245 until observed
+in the affected browser.
 
 For Firebase Auth, the resolver uses the browser hostname automatically only
 on the project's primary `<project>.web.app`/`<project>.firebaseapp.com` sites.

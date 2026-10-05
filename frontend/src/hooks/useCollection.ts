@@ -68,7 +68,7 @@ export function useCollection<T>(
   collectionName: string,
   options: CollectionOptions = {},
 ) {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, refreshAccess } = useAuth();
   const canSubscribe = Boolean(user?.role) && !authLoading;
   const authGeneration = getAuthVerificationGeneration();
   const [, forceRender] = useState(0);
@@ -115,7 +115,7 @@ export function useCollection<T>(
 
     if (!currentEntry.unsubscribe) {
       const reportListenerError = (error: unknown) => {
-        if (queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
+        if (getAuthVerificationGeneration() !== authGeneration || queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
         // Keep the last snapshot only in `staleData`; live `data` is hidden
         // until a new listener produces an authoritative snapshot.
         const normalizedError = normalizeCollectionError(collectionName, error);
@@ -147,7 +147,7 @@ export function useCollection<T>(
             const unsubscribe = onSnapshot(
               query(collection(db, collectionName), ...constraints),
               (snapshot) => {
-                if (queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
+                if (getAuthVerificationGeneration() !== authGeneration || queryCache.get(cacheKey) !== currentEntry || currentEntry.listenerCount === 0) return;
                 currentEntry.data = snapshot.docs.map((doc) => ({
                   id: doc.id,
                   ...doc.data(),
@@ -194,6 +194,10 @@ export function useCollection<T>(
   const entry = canSubscribe ? queryCache.get(cacheKey) : undefined;
   const retry = useCallback(() => {
     const currentEntry = queryCache.get(cacheKey);
+    if (currentEntry?.error?.code === "permission-denied") {
+      void refreshAccess();
+      return;
+    }
     if (currentEntry) {
       currentEntry.unsubscribe?.();
       currentEntry.unsubscribe = null;
@@ -202,7 +206,7 @@ export function useCollection<T>(
       currentEntry.callbacks.forEach((callback) => callback());
     }
     setRetryGeneration((generation) => generation + 1);
-  }, [cacheKey]);
+  }, [cacheKey, refreshAccess]);
   const staleData = entry ? entry.data as T[] : [];
   return {
     data: entry?.error || entry?.loading ? [] : staleData,

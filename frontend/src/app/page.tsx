@@ -23,6 +23,7 @@ export default function HomePage() {
     loginLoading,
     loginWithGoogle,
     loginWithGoogleRedirect,
+    refreshAccess,
   } = useAuth();
   const router = useRouter();
 
@@ -43,7 +44,7 @@ export default function HomePage() {
       <main className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center bg-black text-white" role="alert">
         <h1 className="text-xl font-semibold">Access could not be verified</h1>
         <p>{roleError}</p>
-        <button type="button" className="btn-primary px-5 py-2.5" onClick={() => window.location.reload()}>Try again</button>
+        <button type="button" className="btn-primary px-5 py-2.5" onClick={() => void refreshAccess()}>Try again</button>
       </main>
     );
   }

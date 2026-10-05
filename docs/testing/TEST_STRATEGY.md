@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-05 17:01 IST (UTC+05:30).
+Last updated: 2026-10-05 17:46 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -106,10 +106,16 @@ Build/lint also validate that authenticated Firebase/API requests are `NetworkOn
 
 ### Authentication and feedback regressions
 
+The [local admin recovery evidence](ADMIN_PERMISSION_RECOVERY.md) distinguishes
+software regression checks from the remaining affected-browser acceptance.
+
 - App Check: missing provider, explicit development-only opt-out, debug exchange,
-  production rejection, token/error validation and first-token deadline.
+  production rejection, token/error validation, forced recovery refresh and
+  token deadline with a shared raw acquisition retained until settlement.
 - Auth readiness: user/role publication only after verification; timeout,
-  account switch and pending verification after sign-out cannot grant access.
+  current ID token claims (including the admin bit), account switch and pending
+  verification after sign-out cannot grant access. Concurrent permission
+  retries share verification and cannot attach listeners before it completes.
 - Listener disposal: collections/settings/live buses detach and clear old
   caches when protected readiness closes.
 - Admin feedback: actual middleware denies non-admins; bounded HTTP list schema,

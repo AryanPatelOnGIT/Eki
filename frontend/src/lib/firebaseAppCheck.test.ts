@@ -16,6 +16,23 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe("App Check verification", () => {
+  it("forces an App Check refresh for explicit access recovery", async () => {
+    vi.stubEnv("NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY", "test-key");
+    const { ensureAppCheck } = await import("./firebaseAppCheck");
+    await ensureAppCheck({ forceRefresh: true }); expect(sdk.token).toHaveBeenCalledWith(expect.anything(), true);
+  });
+  it("retains one raw token acquisition after a caller timeout rather than repeatedly launching verification", async () => {
+    vi.useFakeTimers(); vi.stubEnv("NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY", "test-key");
+    let release!: (value: { token: string }) => void; sdk.token.mockReturnValue(new Promise(resolve => { release = resolve; }));
+    const { ensureAppCheck } = await import("./firebaseAppCheck");
+    const first = expect(ensureAppCheck()).rejects.toMatchObject({ name: "AppCheckVerificationError" });
+    await vi.advanceTimersByTimeAsync(10000); await first;
+    const second = expect(ensureAppCheck({ forceRefresh: true })).rejects.toMatchObject({ name: "AppCheckVerificationError" });
+    await vi.advanceTimersByTimeAsync(10000); await second; expect(sdk.token).toHaveBeenCalledOnce();
+    release({ token: "late" }); await Promise.resolve();
+    sdk.token.mockResolvedValue({ token: "fresh" });
+    await ensureAppCheck({ forceRefresh: true }); expect(sdk.token).toHaveBeenCalledTimes(2);
+  });
   it("does nothing on the server", async () => {
     vi.stubGlobal("window", undefined);
     await (await import("./firebaseAppCheck")).ensureAppCheck();
