@@ -15,6 +15,9 @@ test("fleet and route denial retries share fresh verification before resubscribi
   await page.getByRole("button", { name: "Retry fleet access" }).click();
   await expect(page.getByText("Signing you in…")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Fleet and routes" })).toHaveCount(0);
+  // The gate closes synchronously; dynamic module loading starts the SDK call
+  // later. Observe that pending call before asserting its exact count.
+  await expect(page.getByRole("button", { name: "Approve verification" })).toBeEnabled();
   const events = () => page.evaluate(() => (window as typeof window & { qaAccessEvents: Array<{ name: string; detail: { forceRefresh?: boolean } }> }).qaAccessEvents);
   const pending = await events();
   expect(pending.filter(event => event.name === "qa-metadata-read")).toHaveLength(2);
