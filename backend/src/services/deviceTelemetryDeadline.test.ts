@@ -28,7 +28,7 @@ vi.mock("../lib/firebaseAdmin", () => ({
 }));
 vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: async () => false }));
 vi.mock("./telemetryRouteService", () => ({ scheduleTelemetryRouteProcessing: vi.fn() }));
-import { authenticateDeviceCredentials, getHttpsTelemetryStatus, hashDeviceSecret, ingestDeviceTelemetry, verifyDeviceSecretHash } from "./deviceTelemetryService";
+import { authenticateDeviceCredentials, getHttpsTelemetryStatus, hashDeviceSecret, ingestDeviceTelemetry, recordTelemetryRejection, verifyDeviceSecretHash } from "./deviceTelemetryService";
 import { ExecutionDeadlineError, TelemetryExecutionFailure } from "../lib/executionDeadline";
 import { scheduleTelemetryRouteProcessing } from "./telemetryRouteService";
 
@@ -55,6 +55,17 @@ function sample(offset = 0) { const now = Date.now() + offset; return {
 }; }
 
 describe("actual ingestion dependency deadlines", () => {
+  it("counts redacted rejection categories without a device identifier", () => {
+    const before = getHttpsTelemetryStatus().rejectionReasons;
+    for (const reason of ["timestamp", "hdop", "schema", "credentials"] as const) {
+      recordTelemetryRejection(reason);
+    }
+    const after = getHttpsTelemetryStatus().rejectionReasons;
+    for (const reason of ["timestamp", "hdop", "schema", "credentials"] as const) {
+      expect(after[reason]).toBe(before[reason] + 1);
+    }
+    expect(JSON.stringify(after)).not.toContain(id);
+  });
   it("does not dispatch a queued KDF after its credential admission expires", async () => {
     store.holdCrypto = true; let expired = false;
     const hash = `00000000000000000000000000000000:${"00".repeat(64)}`;
