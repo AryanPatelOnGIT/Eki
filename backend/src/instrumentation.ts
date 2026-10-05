@@ -1,13 +1,8 @@
 import { SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
-import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
-import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { NodeSDK } from "@opentelemetry/sdk-node";
+import type { NodeSDK } from "@opentelemetry/sdk-node";
 
 let sdk: NodeSDK | null = null;
+let startPromise: Promise<boolean> | null = null;
 
 function hasOtlpEndpoint(env: NodeJS.ProcessEnv): boolean {
   return Boolean(
@@ -32,9 +27,29 @@ export function redactHttpSpanUrl(
 }
 
 /** Starts before application modules load so HTTP/Express patches are effective. */
-export function startTelemetry(): boolean {
-  if (sdk || !isTelemetryEnabled()) return Boolean(sdk);
-
+export async function startTelemetry(): Promise<boolean> {
+  if (sdk || !isTelemetryEnabled()) return Promise.resolve(Boolean(sdk));
+  if (startPromise) return startPromise;
+  // The exporter/auto-instrumentation graph is large. Load it only when an
+  // endpoint is configured, before importing any application HTTP modules.
+  startPromise = (async () => {
+  const [
+    { getNodeAutoInstrumentations },
+    { OTLPLogExporter },
+    { OTLPMetricExporter },
+    { OTLPTraceExporter },
+    { BatchLogRecordProcessor },
+    { PeriodicExportingMetricReader },
+    { NodeSDK },
+  ] = await Promise.all([
+    import("@opentelemetry/auto-instrumentations-node"),
+    import("@opentelemetry/exporter-logs-otlp-http"),
+    import("@opentelemetry/exporter-metrics-otlp-http"),
+    import("@opentelemetry/exporter-trace-otlp-http"),
+    import("@opentelemetry/sdk-logs"),
+    import("@opentelemetry/sdk-metrics"),
+    import("@opentelemetry/sdk-node"),
+  ]);
   sdk = new NodeSDK({
     serviceName: process.env.OTEL_SERVICE_NAME?.trim() || "eki-backend",
     traceExporter: new OTLPTraceExporter(),
@@ -82,6 +97,9 @@ export function startTelemetry(): boolean {
   sdk.start();
   console.log("[OpenTelemetry] Traces, metrics, and logs enabled.");
   return true;
+  })();
+  try { return await startPromise; }
+  finally { startPromise = null; }
 }
 
 export async function shutdownTelemetry(): Promise<void> {

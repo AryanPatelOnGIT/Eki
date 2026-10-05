@@ -6,6 +6,24 @@ import {
 } from "./polylineDistance";
 import { ETA_SPEED_FLOOR_KMH } from "./etaConstants";
 
+// Static stop projections belong to the exact geometry object. A new route
+// version/reroute path gets a new cache without retaining the old geometry.
+const stopProjectionCache = new WeakMap<readonly LatLng[], Map<string, number | null>>();
+
+function stopPosition(stop: EtaStopPoint, path: readonly LatLng[], index: ReturnType<typeof preparePolylineDistanceIndex>): number | null {
+  let positions = stopProjectionCache.get(path);
+  if (!positions) {
+    positions = new Map();
+    stopProjectionCache.set(path, positions);
+  }
+  const key = `${stop.id}\0${stop.lat}\0${stop.lng}`;
+  if (positions.has(key)) return positions.get(key)!;
+  const position = positionAlongPolyline(stop, index);
+  if (positions.size >= 256) positions.clear();
+  positions.set(key, position);
+  return position;
+}
+
 export interface EtaStopPoint {
   id: string;
   lat: number;
@@ -44,7 +62,7 @@ export function busStopArrivalTimestamps(params: {
 
   for (let i = 0; i < params.remainingStops.length; i += 1) {
     const stop = params.remainingStops[i];
-    const stopPathPosition = positionAlongPolyline(stop, index);
+    const stopPathPosition = stopPosition(stop, params.path, index);
     const accumDistMeters =
       busPathPosition !== null && stopPathPosition !== null
         ? Math.abs(stopPathPosition - busPathPosition)

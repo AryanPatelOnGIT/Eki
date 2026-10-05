@@ -10,11 +10,16 @@ import { route, fixtureBus } from "../../../../e2e/fixtures/state";
 const state = vi.hoisted(() => ({
   geometries: new Map(), snapshot: {} as Record<string, unknown>, listener: undefined as undefined | ((value: Record<string, unknown>) => void),
   unsubscribe: vi.fn(), arrivals: vi.fn(), panTo: vi.fn(), setZoom: vi.fn(), fitBounds: vi.fn(),
+  markerRenders: new Map<string, number>(),
 }));
 const map = { panTo: state.panTo, setZoom: state.setZoom, fitBounds: state.fitBounds };
 vi.mock("@vis.gl/react-google-maps", () => ({
   Map: ({ children }: { children: ReactNode }) => <div aria-label="Map">{children}</div>,
-  AdvancedMarker: ({ children, position }: { children: ReactNode; position: unknown }) => <div data-marker={JSON.stringify(position)}>{children}</div>,
+  AdvancedMarker: ({ children, position }: { children: ReactNode; position: unknown }) => {
+    const title = (children as { props?: { title?: string } })?.props?.title;
+    if (title?.startsWith("qa-bus")) state.markerRenders.set(title.split(" ")[0], (state.markerRenders.get(title.split(" ")[0]) ?? 0) + 1);
+    return <div data-marker={JSON.stringify(position)}>{children}</div>;
+  },
   useMap: () => map,
 }));
 vi.mock("@/lib/liveBusStore", () => ({ subscribeLiveBusesByRoute: (_routeId: string, listener: typeof state.listener) => {
@@ -26,13 +31,23 @@ vi.mock("@/hooks/useDynamicRouteGeometries", () => ({ useDynamicRouteGeometries:
 vi.mock("@/hooks/useSmoothPosition", () => ({ useSmoothPosition: (position: unknown) => position }));
 vi.mock("@/lib/busEta", () => ({ busStopArrivalTimestamps: state.arrivals }));
 beforeEach(() => {
-  vi.clearAllMocks(); state.listener = undefined;
+  vi.clearAllMocks(); state.listener = undefined; state.markerRenders.clear();
   state.snapshot = { bus: fixtureBus("forward") };
   state.arrivals.mockReturnValue({ b: Date.now() + 60_000 });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const directed = { ...routeInRideDirection(route, "forward"), polyline: "_ekkC_omvLo}@o}@", polylineQuality: "HIGH_QUALITY" as const };
 describe("passenger map device and ride contexts", () => {
+  it("does not render an unchanged bus marker when a different bus advances", () => {
+    const first = fixtureBus("forward");
+    const second = fixtureBus("forward", "qa-session-2", "qa-bus-2");
+    state.snapshot = { first, second };
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    const renders = state.markerRenders.get("qa-bus") ?? 0;
+    expect(renders).toBeGreaterThan(0);
+    act(() => state.listener?.({ first, second: { ...second, seq: 2, timestamp: Date.now() } }));
+    expect(state.markerRenders.get("qa-bus")).toBe(renders);
+  });
   it("does not use the first bus's progress in a multi-bus view", async () => {
     state.snapshot = {
       bus: { ...fixtureBus("forward"), currentStopIndex: 1 },

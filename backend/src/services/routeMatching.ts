@@ -147,8 +147,20 @@ export function matchRoutePosition(
     segmentIndex: number;
     score: number;
   }> = [];
+  const minimumProgress = previous && maximumProgressChangeM !== undefined
+    ? previous.alongRouteDistanceM - maximumProgressChangeM
+    : Number.NEGATIVE_INFINITY;
+  const maximumProgress = previous && maximumProgressChangeM !== undefined
+    ? previous.alongRouteDistanceM + maximumProgressChangeM
+    : Number.POSITIVE_INFINITY;
 
   for (let segmentIndex = 0; segmentIndex < path.length - 1; segmentIndex += 1) {
+    // Projection onto a segment cannot lie outside its cumulative distance
+    // interval. Skip work only when the existing progress gate would reject
+    // every point on the segment; ambiguous parallel/loop segments inside the
+    // gate remain eligible for the full score comparison.
+    if (cumulative[segmentIndex] > maximumProgress ||
+        cumulative[segmentIndex + 1] < minimumProgress) continue;
     const projection = projectToSegment(
       rawPoint,
       path[segmentIndex],

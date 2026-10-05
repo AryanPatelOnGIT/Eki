@@ -307,6 +307,8 @@ uint32_t lastHttpsFailureAt = 0;
 uint32_t httpsRetryDelayMs = 0;
 uint32_t lastRemoteDiagnosticAt = 0;
 bool remoteDiagnosticPublished = false;
+uint32_t firstRemoteDiagnosticStartedAt = 0;
+bool firstRemoteDiagnosticReady = false;
 uint32_t remoteDiagnosticRetryStartedAt = 0;
 uint32_t remoteDiagnosticRetryDelayMs = 0;
 uint8_t consecutiveRemoteDiagnosticFailures = 0;
@@ -1582,7 +1584,7 @@ bool remoteDiagnosticIsDue() {
   }
   return remoteDiagnosticPublished
     ? elapsed(lastRemoteDiagnosticAt) >= REMOTE_DIAGNOSTIC_INTERVAL_MS
-    : millis() >= FIRST_REMOTE_DIAGNOSTIC_DELAY_MS;
+    : firstRemoteDiagnosticReady;
 }
 
 void scheduleRemoteDiagnosticRetry() {
@@ -1955,6 +1957,7 @@ void evaluateTelemetry() {
 }
 
 void publisherTask(void *) {
+  firstRemoteDiagnosticStartedAt = millis();
   const esp_err_t watchdogResult = esp_task_wdt_add(nullptr);
   if (watchdogResult != ESP_OK) {
     Serial.printf(
@@ -1965,6 +1968,9 @@ void publisherTask(void *) {
 
   for (;;) {
     esp_task_wdt_reset();
+    firstRemoteDiagnosticReady = eki::telemetry::firstDiagnosticDue(
+      firstRemoteDiagnosticReady, firstRemoteDiagnosticStartedAt,
+      millis(), FIRST_REMOTE_DIAGNOSTIC_DELAY_MS);
     serviceConnectivity();
     if (firmwareCredentialRejected.exchange(false)) latchCredentialFault();
     collectDiagnosticResult();

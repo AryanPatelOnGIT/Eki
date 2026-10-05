@@ -292,6 +292,17 @@ inline uint32_t retryAfterDelayMs(const char *value) {
   return std::min<uint32_t>(seconds * 1000, HTTPS_RETRY_AFTER_MAX_MS);
 }
 
+// Called on every publisher turn, including while transport is unavailable.
+// The latch survives a millis() wrap before the first successful report.
+inline bool firstDiagnosticDue(
+  bool alreadyDue,
+  uint32_t startedAt,
+  uint32_t now,
+  uint32_t delayMs
+) {
+  return alreadyDue || static_cast<uint32_t>(now - startedAt) >= delayMs;
+}
+
 inline uint32_t minimumHttpRetryDelayMs(
   int responseCode,
   uint32_t retryAfterMs = 0

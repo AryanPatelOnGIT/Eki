@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { memo, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Map as GoogleMap, AdvancedMarker, useMap } from "@vis.gl/react-google-maps";
 import RouteTimelineSheet from "@/components/passenger/RouteTimelineSheet";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
@@ -54,7 +54,7 @@ const BUS_MOTION_COLORS: Record<string, string> = {
   uncertain: "#F87171", // red     — GPS fix lost
 };
 
-function BusMarker({
+const BusMarker = memo(function BusMarker({
   bus,
 }: {
   bus: IncomingBusData;
@@ -122,7 +122,7 @@ function BusMarker({
       </div>
     </AdvancedMarker>
   );
-}
+});
 
 
 // ── Traffic layer rendered imperatively ──────────────────────────────────────
@@ -175,20 +175,17 @@ function PassengerMapInner({
   selectedBusKey?: string;
 }) {
   const [buses, setBuses] = useState<Map<string, IncomingBusData>>(new Map<string, IncomingBusData>());
+  const busesRef = useRef<Map<string, IncomingBusData>>(new Map());
   const [stopETAs, setStopETAs] = useState<Record<string, number>>({});
   const [uiNow, setUiNow] = useState(() => Date.now());
   const [activeBusStopIndex, setActiveBusStopIndex] = useState<number | undefined>(undefined);
-  const lastBuzzedStopIdRef = useRef<string | null>(null);
   const lastStopIndexRef = useRef<Record<string, number>>({});
-  const stopEntryTimeRef = useRef<Record<string, number>>({});
   // Hysteresis: tracks which stops are "inside" (entered but not yet exited via the larger exit radius)
   const stopInsideRef = useRef<Record<string, boolean>>({}); // busId+stopId -> inside state
   const routeRef = useRef(route);
-  const targetStopRef = useRef(targetStop);
   useEffect(() => {
     routeRef.current = route;
-    targetStopRef.current = targetStop;
-  }, [route, targetStop]);
+  }, [route]);
 
   const [passengerLocation, setPassengerLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [geolocationNotice, setGeolocationNotice] = useState<string | null>(null);
@@ -268,9 +265,9 @@ function PassengerMapInner({
         const allData = snapshot as Record<string, unknown> | null;
         const now = Date.now();
         const currentRoute = routeRef.current;
-        const currentTargetStop = targetStopRef.current;
 
         if (!allData) {
+          busesRef.current = new Map();
           setBuses(new Map());
           setActiveBusStopIndex(undefined);
           return;
@@ -286,12 +283,16 @@ function PassengerMapInner({
             (selectedBusKey && passengerLiveBusSelectionKey(normalized) !== selectedBusKey) ||
             (!preview && !directionsMatch(normalized.direction, currentRoute.rideDirection))
           ) return;
-          const bus: IncomingBusData = {
+          const candidate: IncomingBusData = {
             ...normalized,
             ...(preview ? { direction: undefined, matchedLocation: undefined, mapMatchSeq: undefined, mapMatchSampledAt: undefined, routeSource: undefined } : {}),
             heading: normalizeHeading(normalized.heading),
           };
 
+          const previous = busesRef.current.get(candidate.busId);
+          const bus = previous && Object.keys(candidate).length === Object.keys(previous).length &&
+            Object.entries(candidate).every(([field, value]) => (previous as Record<string, unknown>)[field] === value)
+              ? previous : candidate;
           activeBuses.set(bus.busId, bus);
 
           if (preview) return;
@@ -332,7 +333,6 @@ function PassengerMapInner({
 
           const STOP_ENTRY_RADIUS_M = 35;
           const STOP_EXIT_RADIUS_M = 45;
-          const DWELL_GATE_MS = 10_000;
           const lastKnownIndex = lastStopIndexRef.current[bus.busId] ?? 0;
           const sequenceStart = Math.max(0, lastKnownIndex - 1);
           const sequenceEnd = Math.min(
@@ -353,30 +353,16 @@ function PassengerMapInner({
 
             if (!wasInside && distance < STOP_ENTRY_RADIUS_M) {
               stopInsideRef.current[insideKey] = true;
-              stopEntryTimeRef.current[insideKey] ??= now;
               if (index > (lastStopIndexRef.current[bus.busId] ?? 0)) {
                 lastStopIndexRef.current[bus.busId] = index;
               }
             } else if (wasInside && distance > STOP_EXIT_RADIUS_M) {
               stopInsideRef.current[insideKey] = false;
-              delete stopEntryTimeRef.current[insideKey];
             }
           }
 
-          const busDistance = getDistanceMeters(bus, currentTargetStop);
-          const dwellAtTarget =
-            stopEntryTimeRef.current[bus.busId + ":" + currentTargetStop.id];
-          const isAtTarget =
-            dwellAtTarget !== undefined &&
-            now - dwellAtTarget >= DWELL_GATE_MS;
-          if (
-            busDistance < STOP_EXIT_RADIUS_M &&
-            isAtTarget &&
-            lastBuzzedStopIdRef.current !== currentTargetStop.id
-          ) {
-            lastBuzzedStopIdRef.current = currentTargetStop.id;
-          }
         });
+        busesRef.current = activeBuses;
         setBuses(activeBuses);
         // Progress belongs to one bus. A fleet view aggregates earliest
         // arrivals but never borrows one bus's passed/next-stop state.

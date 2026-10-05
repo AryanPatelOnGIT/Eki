@@ -9,24 +9,34 @@ export const routesCollectionRoutes = Router();
  * GET /api/routes-list
  *
  * Returns all BRTS routes with their stops for the frontend planner dropdowns.
- * Data comes from Firestore cache — no Google API calls.
+ * Data comes from Firestore — no Google API calls.
  *
- * RUNTIME COST: $0 (Firestore read, 1 req per page load)
+ * Concurrent requests share one bounded Firestore read; later requests
+ * re-read so edits/deletions remain immediately visible.
  */
-const listRoutes = async (_req: Request, res: Response) => {
-  res.set("Cache-Control", "no-store");
-  try {
-    const snapshot = await db.collection("routes").limit(250).get();
-    const routes = snapshot.docs.map((doc) => {
+type RouteSummary = { id: string; name: unknown; color: unknown; stops: unknown };
+let pendingRoutes: Promise<RouteSummary[]> | null = null;
+function readRouteSummaries(): Promise<RouteSummary[]> {
+  if (pendingRoutes) return pendingRoutes;
+  const request = db.collection("routes").limit(250).get().then(snapshot =>
+    snapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
         name: data.name ?? doc.id,
         color: data.color ?? "#3b82f6",
         stops: data.stops ?? [],
-        // Omit polyline — that's only returned by /api/plan
       };
-    });
+    }),
+  );
+  pendingRoutes = request;
+  void request.finally(() => { if (pendingRoutes === request) pendingRoutes = null; }).catch(() => {});
+  return request;
+}
+const listRoutes = async (_req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const routes = await readRouteSummaries();
     res.json({ routes });
   } catch (err) {
     console.error("❌ /api/routes-list error:", err);

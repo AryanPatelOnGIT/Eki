@@ -1160,7 +1160,8 @@ export function startTripStateEngine(): () => Promise<void> {
   /** Marks stale active rides offline and removes stale terminal nodes. */
   const runStaleSweep = async () => {
     try {
-      const snapshot = await busesRef.once("value");
+      const snapshot = await busesRef.orderByChild("timestamp")
+        .endAt(Date.now() - STALE_BUS_MS).once("value");
       if (stopping) return;
       const now = Date.now();
       const removals: Promise<unknown>[] = [];

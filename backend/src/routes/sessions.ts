@@ -415,7 +415,7 @@ async function sendMessage(req: AuthenticatedRequest, res: Response) {
         throw new ChatPolicyError(403, "You are not part of this ride.");
       }
 
-      const from = isDriver || isAdmin ? "driver" : "passenger";
+      const from = isAdmin ? "admin" : isDriver ? "driver" : "passenger";
       const passengerName = passengerEntry?.userName;
       const tokenName = req.user?.name;
       const rawSenderName = (

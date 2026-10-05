@@ -41,6 +41,14 @@ function configuredBackendUrl(): string {
   }
 }
 
+function retryAfterHeaderMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const date = Date.parse(header);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
 export async function apiRequest<T>(
   path: string,
   {
@@ -111,9 +119,12 @@ export async function apiRequest<T>(
         response.status,
         typeof result.phase === "string" ? result.phase : undefined,
         false,
-        typeof result.retryAfterMs === "number" && Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0
-          ? result.retryAfterMs
-          : undefined,
+        Math.max(
+          typeof result.retryAfterMs === "number" && Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0
+            ? result.retryAfterMs
+            : 0,
+          retryAfterHeaderMs(response.headers.get("Retry-After")) ?? 0,
+        ) || undefined,
       );
     }
     if (validateResponse && !validateResponse(result)) {

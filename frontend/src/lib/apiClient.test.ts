@@ -22,6 +22,15 @@ describe("apiRequest", () => {
       .rejects.toMatchObject({ status: 429, retryAfterMs: body && "retryAfterMs" in body && body.retryAfterMs === 5000 ? 5000 : undefined });
     expect(status).toHaveBeenCalledWith(429);
   });
+  it("preserves a server Retry-After header when the error body omits it", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("{}", { status: 503, headers: { "Retry-After": "3" } }),
+    ));
+    await expect(apiRequest("/api/test")).rejects.toMatchObject({
+      status: 503, retryAfterMs: 3_000,
+    });
+  });
   it.each(["ngrok-free.dev", "ngrok-free.app", "ngrok.io"])("requests API responses from %s while preserving auth headers", async domain => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", `https://test.${domain}`);
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}'));

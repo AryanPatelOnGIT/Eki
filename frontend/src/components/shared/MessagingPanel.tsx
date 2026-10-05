@@ -23,7 +23,7 @@ const MAX_MESSAGES_PER_MINUTE = 10;
 interface Message {
   id: string;
   text: string;
-  from: "driver" | "passenger";
+  from: "driver" | "passenger" | "admin";
   senderName: string;
   senderId: string;
   timestamp: Timestamp | null;
@@ -341,7 +341,7 @@ export default function MessagingPanel({
                 <div className={`flex items-baseline gap-1.5 mb-1 px-1 ${isMe ? 'flex-row-reverse' : ''}`}>
                   <span className="text-[10px] font-semibold" 
                     style={{ color: isMe ? "var(--accent)" : "var(--text-ghost)" }}>
-                    {isMe ? 'You' : msg.senderName}
+                    {isMe ? 'You' : msg.from === "admin" ? `Administrator · ${msg.senderName}` : msg.senderName}
                   </span>
                   {msg.timestamp instanceof Timestamp && (
                     <span className="text-[9px] font-medium" style={{ color: "var(--text-ghost)" }}>
@@ -353,7 +353,7 @@ export default function MessagingPanel({
                   className="px-4 py-2.5 text-[14px] leading-relaxed"
                   style={{
                     borderRadius: isMe ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                    background: isMe ? "var(--accent)" : "var(--surface-3)",
+                    background: isMe ? "var(--accent)" : msg.from === "admin" ? "var(--status-warning-bg)" : "var(--surface-3)",
                     color: isMe ? "#1a1a1a" : "var(--text-primary)",
                     fontWeight: isMe ? 500 : 400,
                   }}
