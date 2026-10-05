@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-05 17:46 IST (UTC+05:30).
+Last updated: 2026-10-06 00:35 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -97,7 +97,10 @@ they are not a claim that a newer head or production deployment passed.
 - Passenger route visibility and service counts require the complete active-session tuple; device-only, malformed, duplicated-session, completed, and direction-pending nodes cannot inflate service.
 - Active sessions remain visible while stale non-active locations expire.
 - One shared RTDB snapshot/delta pipeline fans out to subscribers, prunes on the nearest expiry, and tears down at zero subscribers.
-- Visibility/online resume state signals reconnect and clears after a snapshot.
+- Healthy short tab switches and unrelated online events preserve data and
+  subscriptions. Meaningful suspension/confirmed disconnect recovery debounces,
+  jitters and clears only after connection plus authoritative snapshot. See
+  [browser recovery bounds](../operations/RTDB_RECONNECT_RECOVERY.md).
 - Polyline distance index and snapping choose the correct segment/direction.
 - Ride feedback eligibility requires completed session/passenger identity.
 - Ride-history timestamp/status/stop normalization handles legacy forms.
