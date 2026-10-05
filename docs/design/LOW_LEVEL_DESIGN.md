@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-05 17:01 IST (UTC+05:30).
+Last updated: 2026-10-06 00:18 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -25,7 +25,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `routes/shifts.ts` | Driver authorization, delay, start/resume, early interruption, message/history deletion |
 | `routes/feedback.ts` | Admin feedback list/status and server-authoritative passenger submission |
 | `routes/rideSessions.ts` | Versioned session resources and idempotent creation/member commands |
-| `routes/fleet.ts` | Admin buses/drivers, Auth claims, RTDB assignment mirrors, reconciliation |
+| `routes/fleet.ts` | Admin buses/drivers, Auth claims, RTDB assignment mirrors, reconciliation; bus saves merge editable catalog fields, preserve metadata and explicitly remove the legacy assignment |
 | `routes/polyline.ts` | Admin route geometry create/update/delete with active-use guards |
 | `routes/plan.ts` | Authenticated route segment from stored polyline; no Maps call |
 | `routes/routesList.ts` | Bounded cached route list |
