@@ -91,6 +91,42 @@ describe("Firestore deployed query readiness", () => {
     }
   });
 
+  it("rejects malformed timestamps and documents even alongside other valid response fields", async () => {
+    for (const payload of [
+      [{ readTime: {} }], [{ readTime: 1 }], [{ readTime: "not-a-timestamp" }],
+      [{ readTime: "2026-02-30T00:00:00Z" }], [{ readTime: "2026-10-06T25:00:00Z" }],
+      [{ document: {} }], [{ document: null, readTime: "2026-10-06T00:00:00Z" }],
+      [{ document: { name: "projects/other-project/databases/(default)/documents/ride_sessions/ride" } }],
+      [{ document: { name: "projects/eki-test/databases/other/documents/ride_sessions/ride" } }],
+      [{ document: { name: "projects/eki-test/databases/(default)/documents/messages/message" } }],
+      [{ document: { name: "projects/eki-test/databases/(default)/documents/ride_sessions/" } }],
+      [{ document: { name: "projects/eki-test/databases/(default)/documents/ride_sessions/ride/child" } }],
+      [{ readTime: "2026-10-06T00:00:00Z", error: null }],
+    ]) {
+      const h = harness([{ ok: true, json: async () => payload }]);
+      await assert.rejects(verifyFirestoreIndexes(h.options), /Invalid Firestore readiness response/);
+      assert.deepEqual(h.waits, []);
+      assert.equal(h.requests.length, 1);
+    }
+  });
+
+  it("accepts real projected document names and valid empty-query RFC3339 times", async () => {
+    const h = harness([
+      { ok: true, json: async () => [{ document: { name: "projects/eki-test/databases/(default)/documents/ride_sessions/ride" }, readTime: "2024-02-29T00:00:00.123456789Z" }] },
+      { ok: true, json: async () => [{ document: { name: "projects/eki-test/databases/(default)/documents/ride_sessions/ride/messages/message" }, readTime: "2026-10-06T05:30:00+05:30" }] },
+      { ok: true, json: async () => [{ readTime: "2026-10-06T00:00:00Z" }] },
+    ]);
+    await verifyFirestoreIndexes(h.options);
+    assert.equal(h.requests.length, 3);
+    assert.deepEqual(h.waits, []);
+  });
+
+  it("does not expose malformed provider JSON in checker errors", async () => {
+    const h = harness([{ ok: true, json: async () => { throw new SyntaxError('Unexpected token in "sensitive-record"'); } }]);
+    await assert.rejects(verifyFirestoreIndexes(h.options), error => /Invalid Firestore readiness response/.test(error.message) && !error.message.includes("sensitive-record"));
+    assert.deepEqual(h.waits, []);
+  });
+
   it("rejects missing credentials and invalid projects before making requests", async () => {
     for (const override of [{ token: "" }, { projectId: "" }, { projectId: "../other" }]) {
       const h = harness();

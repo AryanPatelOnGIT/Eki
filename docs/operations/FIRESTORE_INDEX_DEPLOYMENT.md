@@ -27,6 +27,13 @@ already submitted index builds continue. Inspect Firebase index build status
 and rerun the deployment after resolving the failure. Large builds may require
 more than thirty minutes; rerunning does not require changing the index spec.
 
+Successful responses must contain valid RFC3339 read times or projected document
+names in the exact selected project, default database and expected collection
+scope. Empty-query read-time-only responses are valid; empty/malformed document
+objects, impossible dates and wrong-project/collection names are rejected even
+when another field appears valid. JSON parse errors are replaced with a safe
+query label so malformed provider bodies cannot leak into deployment logs.
+
 The gate reuses the workflow's FIREBASE_TOKEN exchange and requires permission
 to query Firestore in addition to the CLI's index deployment permissions.
 To verify an explicitly chosen target without deploying:
