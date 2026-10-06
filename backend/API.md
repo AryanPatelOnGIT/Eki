@@ -239,7 +239,7 @@ background work and cannot change that acknowledgement contract.
 
 ### `POST /api/devices/:deviceId/diagnostics` — device
 
-Accepts the closed 1 KiB firmware-health object: firmware version, uptime, free heap, RSSI, queue depth/high-water/drop counters, accepted/rejected fixes, NMEA/UART errors, reset total, fault code, flash-encryption and Secure-Boot booleans, and device timestamp. Device ID, bus, and route come from the authenticated server registry; credentials and network names are never accepted in the body. The latest report overwrites `_device_diagnostics/{deviceId}` through the Admin SDK. Returns 202, 400, 401, 429, or 503 with `Cache-Control: no-store`.
+Accepts the closed 1 KiB firmware-health object: firmware version, uptime, free heap, RSSI, queue depth/high-water/drop counters, accepted/rejected fixes, NMEA/UART errors, reset total, fault code, flash-encryption and Secure-Boot booleans, and device timestamp. Updated firmware also sends `gnssFixState` (`valid` or `no_fix`), bounded `noFixDurationMs`, and `telemetrySchema: "hdop_v1"` as one complete group. Earlier 18-field reports remain valid; absence of these fields means the capability is unknown, not that the receiver has a valid fix. Device ID, bus, and route come from the authenticated server registry; credentials and network names are never accepted in the body. The latest report overwrites `_device_diagnostics/{deviceId}` through the Admin SDK. Returns 202, 400, 401, 429, or 503 with `Cache-Control: no-store`.
 
 ### `GET /api/devices/:deviceId/firmware?sequence=N` — device
 

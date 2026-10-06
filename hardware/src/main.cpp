@@ -371,8 +371,10 @@ uint32_t publishAttemptCount = 0;
 uint32_t scheduledHttpsRetryCount = 0;
 uint32_t lastCapturedEvidenceAt = 0;
 uint32_t lastAcceptedEvidenceAt = 0;
+uint32_t lastValidGnssFixAt = 0;
 bool captureEvidenceSeen = false;
 bool acceptedEvidenceSeen = false;
+bool validGnssFixSeen = false;
 
 struct HealthCounters {
   uint32_t uartBufferOverflows;
@@ -385,8 +387,10 @@ struct HealthCounters {
   uint32_t scheduledHttpsRetries;
   uint32_t lastCapturedAt;
   uint32_t lastAcceptedAt;
+  uint32_t lastValidGnssFixAt;
   bool captureSeen;
   bool acceptedSeen;
+  bool validGnssFixSeen;
 };
 
 uint32_t elapsed(uint32_t since) {
@@ -592,8 +596,10 @@ HealthCounters healthCounters() {
     scheduledHttpsRetryCount,
     lastCapturedEvidenceAt,
     lastAcceptedEvidenceAt,
+    lastValidGnssFixAt,
     captureEvidenceSeen,
     acceptedEvidenceSeen,
+    validGnssFixSeen,
   };
   portEXIT_CRITICAL(&healthMetricsMux);
   return counters;
@@ -1598,6 +1604,8 @@ void scheduleRemoteDiagnosticRetry() {
   );
 }
 
+TelemetryFix currentFix();
+
 void publishRemoteDiagnostic() {
   if (
     WiFi.status() != WL_CONNECTED ||
@@ -1617,6 +1625,10 @@ void publishRemoteDiagnostic() {
   const uint32_t acceptedAgeMs = counters.acceptedSeen
     ? elapsed(counters.lastAcceptedAt)
     : 0;
+  const bool validGnssFix = currentFix().valid;
+  const uint32_t noFixDurationMs = eki::telemetry::gnssNoFixDurationMs(
+    validGnssFix, counters.validGnssFixSeen, counters.lastValidGnssFixAt,
+    firstRemoteDiagnosticStartedAt, millis());
   const uint32_t retryAgeMs = elapsed(lastHttpsFailureAt);
   const uint32_t retryRemainingMs = httpsRetryDelayMs > retryAgeMs
     ? httpsRetryDelayMs - retryAgeMs
@@ -1648,6 +1660,9 @@ void publishRemoteDiagnostic() {
   document["queueStaleDrops"] = queue.staleDrops;
   document["acceptedFixes"] = counters.acceptedFixes;
   document["rejectedFixes"] = counters.rejectedFixes;
+  document["gnssFixState"] = validGnssFix ? "valid" : "no_fix";
+  document["noFixDurationMs"] = noFixDurationMs;
+  document["telemetrySchema"] = "hdop_v1";
   document["nmeaChecksumFailures"] = counters.nmeaChecksumFailures;
   document["uartBufferOverflows"] = counters.uartBufferOverflows;
   document["uartFifoOverflows"] = counters.uartFifoOverflows;
@@ -1658,7 +1673,7 @@ void publishRemoteDiagnostic() {
   document["timestamp"] = epochMilliseconds();
 
   char payload[1024]{};
-  const size_t payloadLength = eki::json::serializeCompletePayload(document, 18, payload, sizeof(payload));
+  const size_t payloadLength = eki::json::serializeCompletePayload(document, 21, payload, sizeof(payload));
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
     Serial.println("[Diagnostics] Refusing incomplete or oversized health payload.");
     scheduleRemoteDiagnosticRetry();
@@ -1840,6 +1855,12 @@ void processGpsByte(char byte) {
   latestRmcStartedAt = sentenceStartedAt;
   disciplineClockFromGnss();
   latestRmcFix = buildFixFromRmc();
+  if (latestRmcFix.valid) {
+    portENTER_CRITICAL(&healthMetricsMux);
+    lastValidGnssFixAt = receiverArrivedAt;
+    validGnssFixSeen = true;
+    portEXIT_CRITICAL(&healthMetricsMux);
+  }
   EKI_TRACE_PRINTF("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
     static_cast<long long>(latestGnssEpochMs),
     static_cast<long long>(systemEpochMilliseconds()),

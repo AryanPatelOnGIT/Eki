@@ -121,6 +121,13 @@ void test_first_diagnostic_due_latches_across_rollover() {
   TEST_ASSERT_TRUE(firstDiagnosticDue(true, started, 15, 30000));
 }
 
+void test_gnss_no_fix_duration_uses_monotonic_rollover() {
+  const uint32_t started = UINT32_MAX - 49;
+  TEST_ASSERT_EQUAL_UINT32(75, gnssNoFixDurationMs(false, false, 0, started, 25));
+  TEST_ASSERT_EQUAL_UINT32(15, gnssNoFixDurationMs(false, true, 10, started, 25));
+  TEST_ASSERT_EQUAL_UINT32(0, gnssNoFixDurationMs(true, true, 10, started, 25));
+}
+
 void test_http_response_actions_cover_transport_and_status_families() {
   TEST_ASSERT_EQUAL_INT(408, eki::telemetry::classifyIngressResponse(404, "ERR_NGROK_3200"));
   TEST_ASSERT_EQUAL_INT(404, eki::telemetry::classifyIngressResponse(404, ""));
@@ -637,6 +644,7 @@ int main(int, char **) {
   RUN_TEST(test_retry_backoff_is_jittered_and_bounded);
   RUN_TEST(test_diagnostic_retry_backoff_is_bounded);
   RUN_TEST(test_first_diagnostic_due_latches_across_rollover);
+  RUN_TEST(test_gnss_no_fix_duration_uses_monotonic_rollover);
   RUN_TEST(test_http_response_actions_cover_transport_and_status_families);
   RUN_TEST(test_retry_after_is_strict_bounded_and_status_aware);
   RUN_TEST(test_retry_retains_only_samples_that_can_stay_fresh);

@@ -23,6 +23,8 @@ const DIAGNOSTIC_KEYS = [
   "timestamp",
 ] as const;
 
+const GNSS_DETAIL_KEYS = ["gnssFixState", "noFixDurationMs", "telemetrySchema"] as const;
+
 export interface DeviceDiagnosticsPayload {
   firmwareVersion: string;
   uptimeMs: number;
@@ -42,6 +44,9 @@ export interface DeviceDiagnosticsPayload {
   flashEncryption: boolean;
   secureBoot: boolean;
   timestamp: number;
+  gnssFixState?: "valid" | "no_fix";
+  noFixDurationMs?: number;
+  telemetrySchema?: "hdop_v1";
 }
 
 type ParseResult =
@@ -65,8 +70,14 @@ export function parseDeviceDiagnosticsValue(value: unknown): ParseResult {
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
   if (
-    keys.length !== DIAGNOSTIC_KEYS.length ||
-    keys.some((key) => !(DIAGNOSTIC_KEYS as readonly string[]).includes(key))
+    (keys.length !== DIAGNOSTIC_KEYS.length &&
+      keys.length !== DIAGNOSTIC_KEYS.length + GNSS_DETAIL_KEYS.length) ||
+    DIAGNOSTIC_KEYS.some((key) => !Object.hasOwn(record, key)) ||
+    keys.some((key) => !(
+      [...DIAGNOSTIC_KEYS, ...GNSS_DETAIL_KEYS] as readonly string[]
+    ).includes(key)) ||
+    (keys.length > DIAGNOSTIC_KEYS.length &&
+      GNSS_DETAIL_KEYS.some((key) => !Object.hasOwn(record, key)))
   ) return { ok: false };
 
   const firmwareVersion = record.firmwareVersion;
@@ -90,7 +101,13 @@ export function parseDeviceDiagnosticsValue(value: unknown): ParseResult {
     (fault !== "none" && fault !== "credential-rejected") ||
     typeof record.flashEncryption !== "boolean" ||
     typeof record.secureBoot !== "boolean" ||
-    !isBoundedInteger(record.timestamp, 1_700_000_000_000, 9_999_999_999_999)
+    !isBoundedInteger(record.timestamp, 1_700_000_000_000, 9_999_999_999_999) ||
+    (keys.length > DIAGNOSTIC_KEYS.length && (
+      (record.gnssFixState !== "valid" && record.gnssFixState !== "no_fix") ||
+      !isBoundedInteger(record.noFixDurationMs, 0, 0xFFFFFFFF) ||
+      (record.gnssFixState === "valid" && record.noFixDurationMs !== 0) ||
+      record.telemetrySchema !== "hdop_v1"
+    ))
   ) return { ok: false };
 
   return { ok: true, value: record as unknown as DeviceDiagnosticsPayload };

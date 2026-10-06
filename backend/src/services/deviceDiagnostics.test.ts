@@ -32,6 +32,19 @@ describe("device diagnostics payload", () => {
     });
   });
 
+  it("accepts GNSS detail while preserving the previous firmware contract", () => {
+    const next = {
+      ...validDiagnostics(),
+      gnssFixState: "no_fix",
+      noFixDurationMs: 120_000,
+      telemetrySchema: "hdop_v1",
+    };
+    expect(parseDeviceDiagnosticsValue(next)).toEqual({ ok: true, value: next });
+    expect(parseDeviceDiagnosticsValue({
+      ...next, gnssFixState: "valid", noFixDurationMs: 0,
+    }).ok).toBe(true);
+  });
+
   it("rejects unknown fields and unsafe values", () => {
     expect(parseDeviceDiagnosticsValue({
       ...validDiagnostics(),
@@ -48,6 +61,17 @@ describe("device diagnostics payload", () => {
     expect(parseDeviceDiagnosticsValue({
       ...validDiagnostics(),
       fault: "wifi-recovery",
+    })).toEqual({ ok: false });
+    expect(parseDeviceDiagnosticsValue({
+      ...validDiagnostics(), gnssFixState: "no_fix",
+    })).toEqual({ ok: false });
+    expect(parseDeviceDiagnosticsValue({
+      ...validDiagnostics(), gnssFixState: "valid",
+      noFixDurationMs: 12_000, telemetrySchema: "hdop_v1",
+    })).toEqual({ ok: false });
+    expect(parseDeviceDiagnosticsValue({
+      ...validDiagnostics(), gnssFixState: "no_fix",
+      noFixDurationMs: -1, telemetrySchema: "hdop_v1",
     })).toEqual({ ok: false });
   });
 });

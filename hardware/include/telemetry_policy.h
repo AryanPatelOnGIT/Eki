@@ -303,6 +303,17 @@ inline bool firstDiagnosticDue(
   return alreadyDue || static_cast<uint32_t>(now - startedAt) >= delayMs;
 }
 
+inline uint32_t gnssNoFixDurationMs(
+  bool fixValid,
+  bool validFixSeen,
+  uint32_t lastValidFixAt,
+  uint32_t monitoringStartedAt,
+  uint32_t now
+) {
+  return fixValid ? 0 : static_cast<uint32_t>(
+    now - (validFixSeen ? lastValidFixAt : monitoringStartedAt));
+}
+
 inline uint32_t minimumHttpRetryDelayMs(
   int responseCode,
   uint32_t retryAfterMs = 0
