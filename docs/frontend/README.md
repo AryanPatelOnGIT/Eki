@@ -1,6 +1,6 @@
 # Eki frontend
 
-Last updated: 2026-10-06 00:31 IST (UTC+05:30).
+Last updated: 2026-10-06 00:35 IST (UTC+05:30).
 
 Next.js 16 App Router application with React 19, Firebase Auth and a static-export PWA. Passenger and administrator workspaces are protected; `/feedback` is an admin review view sharing the same panel as the Admin Feedback tab.
 
@@ -35,6 +35,7 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 | `lib/firebaseAppCheck.ts` | Valid token acquisition with a 10-second response deadline; retain one raw acquisition until settlement, force explicit recovery refresh, and leave protected access closed on failure |
 | `lib/firebaseAuthDomain.ts` | Normalize the primary project's `web.app`/`firebaseapp.com` host to the current hostname; custom/secondary hosts use the explicitly configured auth domain |
 | `lib/liveBusStore.ts` | One shared initial live-fleet sync, followed by RTDB child deltas and route-scoped delivery; dispose at zero subscribers |
+| `hooks/useRTDBResume.ts`, `lib/liveBusRetry.ts` | Preserve healthy short-tab data; debounce confirmed disconnect/30-second suspension with cooldown and bounded independent retry jitter |
 | `hooks/useCollection.ts`, `hooks/useSettings.ts` | Shared auth-ready Firestore configuration/session listeners and cache disposal |
 | `components/maps/` | Stored directional geometry, current matched/raw position, honest freshness and local ETA math |
 | `lib/apiClient.ts` | Firebase bearer-token HTTP calls, deadlines and actionable network/auth errors |
@@ -51,6 +52,12 @@ ignored development configuration and restart the frontend; retries cannot
 disable App Check enforcement. See the [recovery evidence](../testing/ADMIN_PERMISSION_RECOVERY.md).
 
 Service-worker updates wait for existing tabs to close. Maps and decorative motion respect reduced-motion preferences; protected routes are no-index. Dialogs and listboxes support keyboard interaction and focus restoration.
+
+Browser recovery uses a 30-second monotonic suspension threshold, 1–1.5 second
+debounce and 5-second manual-handshake cooldown. Live listener retry windows
+range from 0.5–1 second to 15–30 seconds with independent jitter. See the
+[reconnect runbook](../operations/RTDB_RECONNECT_RECOVERY.md) for cache,
+snapshot-readiness and actual-network acceptance limits.
 
 ## Verify and build
 
