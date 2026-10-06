@@ -37,7 +37,7 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 | `lib/liveBusStore.ts` | One shared initial live-fleet sync, followed by RTDB child deltas and route-scoped delivery; dispose at zero subscribers |
 | `hooks/useRTDBResume.ts`, `lib/liveBusRetry.ts` | Preserve healthy short-tab data; debounce confirmed disconnect/30-second suspension with cooldown and bounded independent retry jitter |
 | `hooks/useCollection.ts`, `hooks/useSettings.ts` | Shared auth-ready Firestore configuration/session listeners and cache disposal |
-| `components/maps/` | Stored directional geometry, current matched/raw position, honest freshness and local ETA math |
+| `components/maps/`, `lib/busEta.ts` | Stored directional geometry, current matched/raw position, honest freshness and local ETA math; unchanged buses retain marker identity and static stop projections are cached per route geometry/version/direction with edit and unmount invalidation |
 | `lib/apiClient.ts` | Firebase bearer-token HTTP calls, deadlines and actionable network/auth errors |
 | `components/ui/` | In-app listbox controls plus focus-contained alert/confirmation dialogs |
 | `src/sw.js` | Static/public caching; Firebase, authenticated API and unknown requests are network-only |

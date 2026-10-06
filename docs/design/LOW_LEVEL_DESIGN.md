@@ -97,7 +97,7 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `components/MapProviders.tsx` | Single Maps API provider/load per workspace |
 | `components/ServiceWorkerRegistrar.tsx` | SW registration/update check and controlled one-time reload |
 | `components/maps/DirectionsRoute.tsx` | Draw active direction/version stored geometry; missing legacy geometry requires admin repair |
-| `components/maps/PassengerMap.tsx` | RTDB route filtering, matched/raw marker policy, dynamic route overlay and heuristic ETA |
+| `components/maps/PassengerMap.tsx`, `lib/busEta.ts` | RTDB route filtering, matched/raw marker policy, dynamic route overlay and heuristic ETA; unchanged bus objects and marker props retain identity, while per-map stop projections use bounded route/version/direction keys and verify path and stop coordinates before reuse |
 | `components/admin/DashboardPanel.tsx` | Live Ops matched markers, per-bus route overlays and raw/match/version diagnostics |
 | `components/maps/PassengerTrackingMap.tsx` | Passenger tracking composition |
 | `components/admin/*Panel.tsx` | Operations, dashboard, routes, fleet/personnel, history and settings |
