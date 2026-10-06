@@ -59,6 +59,10 @@ range from 0.5–1 second to 15–30 seconds with independent jitter. See the
 [reconnect runbook](../operations/RTDB_RECONNECT_RECOVERY.md) for cache,
 snapshot-readiness and actual-network acceptance limits.
 
+Passenger map per-bus identity, marker and ETA projection behavior is described
+in the [R18 synthetic evidence](../testing/PASSENGER_MAP_PER_BUS_WORK.md).
+The moving-device render and road-confidence gates remain in #245.
+
 ## Verify and build
 
 ```powershell

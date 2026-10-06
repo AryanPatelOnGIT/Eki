@@ -123,6 +123,8 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `lib/feedback.ts` | Validated admin list/status response parsing |
 | `lib/predefinedRoutes.ts` | Seed source geometry/stops |
 | `config/maps.ts`, `config/passenger.ts`, `etaConstants.ts` | Central public/runtime tuning |
+
+Passenger ETAs project stops once per route geometry, version, direction and ordered stop set. A changed path reference or stop coordinate forces reprojection even before a version update arrives. The map holds at most 16 stop-projection entries and discards them with the route view. Exact same-point continuity reuse is safe; moved or ambiguous positions use the full polyline search. See [R18 synthetic evidence](../testing/PASSENGER_MAP_PER_BUS_WORK.md) for counters and the remaining live boundary.
 | `sw.js` | Precache static export; cache public maps/fonts/images; network-only Firebase/auth/backend/unknown |
 
 Tests beside pure frontend libraries exercise freshness, RTDB sharing, route distance/snapping, resume state, history and feedback eligibility.
