@@ -62,10 +62,11 @@ function retryablePollError(error: unknown): error is ApiError {
   if (error.status === null) return error.code === "NETWORK_TIMEOUT" || error.code === "BACKEND_UNAVAILABLE";
   if (error.status === 429) return true;
   // Stored route-save failures can also be 5xx. The legacy GET replays their
-  // original code, whereas read failure uses this distinct code. Generic
-  // HTTP_ERROR covers transient proxy/gateway 5xx without a backend payload.
+  // original code, whereas read and auth-capacity failures use distinct codes.
+  // Generic HTTP_ERROR covers transient proxy/gateway 5xx without a backend payload.
   return error.status >= 500 && error.status <= 599 &&
-    (error.code === "ROUTE_RECONCILIATION_FAILED" || error.code === "HTTP_ERROR");
+    (error.code === "ROUTE_RECONCILIATION_FAILED" || error.code === "HTTP_ERROR" ||
+      (error.status === 503 && error.code === "AUTH_BUSY"));
 }
 
 function completed(result: SaveResponse): result is RouteSaveResult {

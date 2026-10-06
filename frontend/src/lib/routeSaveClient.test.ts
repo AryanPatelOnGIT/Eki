@@ -16,7 +16,11 @@ const saved = {
 };
 
 describe("route save client", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
   it("uses the route-specific timeout and stable save ID", async () => {
     const request = vi.fn().mockResolvedValue(saved);
     await expect(saveRoute(
@@ -92,6 +96,33 @@ describe("route save client", () => {
     expect(request.mock.calls.slice(1).every(([path]) => path.endsWith("/save-operations/save-1"))).toBe(true);
   });
 
+  it("retries admin authentication capacity on a status GET through apiRequest", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "processing", saveId: "save-1" }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: "Authentication service is busy. Retry shortly.",
+        code: "AUTH_BUSY",
+        phase: "authentication",
+      }), { status: 503, headers: { "Retry-After": "1" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(saved), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = expect(saveRoute("route-1", "save-1", { expectedVersion: 1 }, "token"))
+      .resolves.toEqual(saved);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await outcome;
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/routes/route-1",
+      "https://api.example.test/api/routes/route-1/save-operations/save-1",
+      "https://api.example.test/api/routes/route-1/save-operations/save-1",
+    ]);
+    expect(fetchMock.mock.calls.map(([, options]) => options.method ?? "GET")).toEqual(["PUT", "GET", "GET"]);
+  });
+
   it("respects Retry-After with the polling cap and retains the operation ID after 429", async () => {
     vi.useFakeTimers();
     const request = vi.fn()
@@ -140,6 +171,9 @@ describe("route save client", () => {
 
   it.each([
     new ApiError("bad operation", "INVALID_SAVE_OPERATION", 400),
+    new ApiError("login required", "AUTH_REQUIRED", 401, "authentication"),
+    new ApiError("token invalid", "AUTH_INVALID", 401, "authentication"),
+    new ApiError("admin required", "ADMIN_REQUIRED", 403, "authentication"),
     new ApiError("denied", "HTTP_ERROR", 403),
     new ApiError("stored failure", "ROUTING_UPSTREAM_FAILURE", 502, "routing"),
     new ApiError("stored failure", "ROUTING_NOT_CONFIGURED", 503, "routing"),
