@@ -72,6 +72,17 @@ export async function writeEmulatorRuleset() {
   if (config.database) {
     config.database.rules = databasePath;
   }
+  // The generated file is emulator-only: it cannot describe a hosting deploy.
+  delete config.hosting;
+  config.emulators = {
+    firestore: { host: '127.0.0.1', port: 8085 },
+    database: { host: '127.0.0.1', port: 9005 },
+    auth: { host: '127.0.0.1', port: 9095 },
+    hub: { host: '127.0.0.1', port: 4405 },
+    logging: { host: '127.0.0.1', port: 4505 },
+    ui: { enabled: false },
+    singleProjectMode: false, // Each sequential suite owns a separate demo namespace.
+  };
   const configPath = path.join(dir, "firebase.json");
   await writeFile(configPath, JSON.stringify(config, null, 2));
 

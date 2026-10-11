@@ -27,8 +27,8 @@ integration("R14 actual SDK publisher fences, recovery and listener isolation", 
   const leader = (generation: number) => new WorkerFence("r14-sdk-publisher", generation, performance.now() + 120_000);
   beforeAll(() => {
     const host = process.env.FIREBASE_DATABASE_EMULATOR_HOST;
-    if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback RTDB emulator required; external database access prohibited.");
-    app = initializeApp({ projectId: "eki-rules-test", databaseURL: "https://eki-rules-test-default-rtdb.firebaseio.com",
+    if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback RTDB emulator required; external database access prohibited.");
+    app = initializeApp({ projectId: "demo-eki-rules-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-rules-test-default-rtdb",
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "r14-sdk-publisher");
     realtime = getDatabase(app); fixture.realtime = realtime;
   });

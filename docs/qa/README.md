@@ -84,9 +84,10 @@ Configuration acceptance is **not runtime proof of isolation**. This slice does
 not enable network replay or alter the existing generator/rules runner. Before
 any future mutating harness, verify the actual child process's SDK targets,
 disable cloud credential discovery, deny outbound network, probe emulator
-identity and provide teardown/kill controls. The current rules runner uses the
-historical non-demo `eki-rules-test` identifier; that must be repaired/verified
-in the emulator slice, not treated as accepted by this preflight.
+identity and provide teardown/kill controls. The
+[emulator runner](EMULATOR_ACCEPTANCE.md) now uses demo namespaces, explicit
+loopback targets and a scoped Node transport guard; its execution evidence
+remains separate from static configuration validation.
 
 ## Audit and next implementation slices
 

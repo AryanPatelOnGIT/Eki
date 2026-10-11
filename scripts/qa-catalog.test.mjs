@@ -98,9 +98,12 @@ test('mappings reject invented tests, unknown cases and missing tested semantics
 
 test('AST census scopes literal tests and detects event-bearing custom controls', () => {
   const text = `describe('identity', () => { it('keeps owner', () => {}); });
-    test('root', () => {}); const ui = <CustomThing onClick={handle} aria-label="Open" />;`;
+    test('root', () => {});
+    const integration = enabled ? describe : describe.skip;
+    integration('emulator', () => { it('commits', () => {}); });
+    const ui = <CustomThing onClick={handle} aria-label="Open" />;`;
   const found = inspectSource('example.tsx', text, ts);
-  assert.deepEqual(found.tests.map(item => item.name), ['identity > keeps owner', 'root']);
+  assert.deepEqual(found.tests.map(item => item.name), ['identity > keeps owner', 'root', 'emulator > commits']);
   assert.equal(found.controls[0].literalAccessibleName, 'Open');
   assert.equal(found.controls[0].coverageStatus, 'NOT_COVERED');
 });

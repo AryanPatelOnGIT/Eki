@@ -10,10 +10,10 @@ integration("R19 indexed stale pages on the actual loopback RTDB emulator", () =
   const key = (name: string) => { const value = `r19_${name}_r19`; keys.add(value); return value; };
   beforeAll(() => {
     const host = process.env.FIREBASE_DATABASE_EMULATOR_HOST;
-    if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw new Error("Loopback RTDB emulator required");
-    app = initializeApp({ projectId: "eki-rules-test", databaseURL: "https://eki-rules-test-default-rtdb.firebaseio.com",
+    if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw new Error("Loopback RTDB emulator required");
+    app = initializeApp({ projectId: "demo-eki-rules-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-rules-test-default-rtdb",
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "r19-indexed-scan");
-    readerApp = initializeApp({ projectId: "eki-rules-test", databaseURL: "https://eki-rules-test-default-rtdb.firebaseio.com",
+    readerApp = initializeApp({ projectId: "demo-eki-rules-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-rules-test-default-rtdb",
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "r19-indexed-reader");
     realtime = getDatabase(app); source = realtime.ref("activeBuses"); reader = getDatabase(readerApp).ref("activeBuses");
   });

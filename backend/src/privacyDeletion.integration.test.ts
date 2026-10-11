@@ -13,8 +13,8 @@ const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describ
 integration("privacy recovery against actual loopback Firestore", () => {
   beforeAll(() => {
     const host = process.env.FIRESTORE_EMULATOR_HOST;
-    if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback emulator required");
-    state.firestore = new Firestore({ projectId: "eki-privacy-test", host, ssl: false });
+    if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback emulator required");
+    state.firestore = new Firestore({ projectId: "demo-eki-privacy-test", host, ssl: false });
   });
   beforeEach(async () => {
     await drainPrivacyDeletions(false); state.deleted = []; state.fails.clear();

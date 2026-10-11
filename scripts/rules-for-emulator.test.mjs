@@ -81,6 +81,10 @@ describe("writeEmulatorRuleset (temp-dir output)", () => {
       const config = JSON.parse(await readFile(configPath, "utf8"));
       assert.equal(config.firestore.rules, firestorePath);
       assert.equal(config.database.rules, databasePath);
+      assert.equal(config.hosting, undefined);
+      assert.deepEqual(config.emulators.firestore, { host: '127.0.0.1', port: 8085 });
+      assert.deepEqual(config.emulators.database, { host: '127.0.0.1', port: 9005 });
+      assert.deepEqual(config.emulators.auth, { host: '127.0.0.1', port: 9095 });
     } finally {
       await import("node:fs/promises").then(({ rm }) =>
         rm(dir, { recursive: true, force: true }),

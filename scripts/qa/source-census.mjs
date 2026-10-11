@@ -7,14 +7,24 @@ import { registeredOperations } from '../verify-openapi.mjs';
 export function inspectSource(filename, text, ts) {
   const ast = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true);
   const controls = []; const tests = []; const dependencies = []; const databaseSites = [];
+  const suiteAliases = new Set(['describe']);
+  const isDescribe = node => /^describe(?:\.skip|\.only)?$/.test(node?.getText(ast) ?? '');
+  function findSuiteAliases(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
+      (isDescribe(node.initializer) || (ts.isConditionalExpression(node.initializer) &&
+        isDescribe(node.initializer.whenTrue) && isDescribe(node.initializer.whenFalse)))) suiteAliases.add(node.name.text);
+    ts.forEachChild(node, findSuiteAliases);
+  }
+  findSuiteAliases(ast);
   const location = node => ({ path: filename, line: ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1 });
   function walk(node, suites = []) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) dependencies.push(node.moduleSpecifier.text);
     if (ts.isCallExpression(node)) {
       const call = node.expression.getText(ast);
       const title = node.arguments[0];
-      if (/^(describe|it|test)(\.|$)/.test(call) && title && ts.isStringLiteralLike(title)) {
-        if (/^describe(\.|$)/.test(call)) suites = [...suites, title.text];
+      const suiteCall = suiteAliases.has(call.split('.')[0]);
+      if ((suiteCall || /^(it|test)(\.|$)/.test(call)) && title && ts.isStringLiteralLike(title)) {
+        if (suiteCall) suites = [...suites, title.text];
         else tests.push({ ...location(node), name: [...suites, title.text].join(' > '),
           declaration: call, executionStatus: 'NOT_RUN' });
       }
