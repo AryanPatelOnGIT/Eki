@@ -5,6 +5,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safetyPreflight } from './safety-preflight.mjs';
 import { emulatorTestMap } from '../../qa/emulator-test-map.mjs';
+import { removeGeneratedDemoConfig } from './emulator-environment.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const directory = resolve(root, 'artifacts/qa'); mkdirSync(directory, { recursive: true });
@@ -18,6 +19,7 @@ const report = { sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd:
   firebaseTools: '15.14.0',
   verdict: 'BLOCKED', physicalMotionExecuted: false, realProvidersExecuted: false, osNetworkSandboxVerified: false };
 try {
+  report.generatedDemoConfigRemoved = removeGeneratedDemoConfig(process.env);
   safetyPreflight(process.env);
   if (process.env.GCLOUD_PROJECT !== 'demo-eki-qa' || process.env.EKI_QA_CONFIRM_DISPOSABLE !== '1' ||
     process.env.EKI_QA_EXTERNAL_PROVIDERS !== 'mock') throw new Error('Disposable demo setup required');
@@ -58,7 +60,7 @@ try {
     report.verdict = result.status === 0 && report.counts.failed === 0 && report.counts.blocked === 0 && report.cases.every(item => item.status === 'PARTIAL')
       ? 'GREEN_FOR_EXECUTED_EMULATOR_SCOPE' : report.counts.failed ? 'RED' : 'BLOCKED';
   }
-} catch (error) { report.setupError = error.message; }
+} catch (error) { report.setupError = error.message; console.error(`Emulator QA blocked: ${error.message}`); }
 report.finishedAt = new Date().toISOString();
 writeFileSync(resolve(directory, 'emulator-report.json'), JSON.stringify(report, null, 2) + '\n');
 const markdown = ['# Disposable emulator execution', '', `Commit: ${report.sourceCommit}; dirty: ${report.dirty}; verdict: ${report.verdict}.`,
