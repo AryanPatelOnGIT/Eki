@@ -51,6 +51,7 @@ function spawnNpx() {
     EKI_QA_EXTERNAL_PROVIDERS: 'mock',
     EKI_QA_CONFIRM_DISPOSABLE: '1',
     DOTENV_CONFIG_PATH: path.join(ROOT, 'artifacts/qa/nonexistent.env'),
+    METADATA_SERVER_DETECTION: 'none', // No GCP environment discovery in local demo tests.
   };
   const opts = { stdio: "inherit", cwd: ROOT, env };
 
