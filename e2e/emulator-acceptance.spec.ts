@@ -7,7 +7,11 @@ const login = async (page: Page, uid = 'qa_passenger') => {
   await expect(page.getByLabel('Verified fixture account')).toHaveText(uid);
 };
 const select = async (page: Page, name: string, option: string) => {
-  await page.getByRole('combobox', { name, exact: true }).click();
+  const picker = page.getByRole('combobox', { name, exact: true });
+  if (await picker.evaluate(element => element.tagName === 'SELECT')) {
+    await picker.selectOption({ label: option }); return;
+  }
+  await picker.click();
   await page.getByRole('option', { name: option, exact: true }).click();
 };
 const prepareBoarding = async (page: Page, code = 'ABCD2345') => {
@@ -196,4 +200,143 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await page.getByRole('button', { name: 'Edit route Synthetic route', exact: true }).click();
   await page.getByRole('button', { name: /^Synthetic origin / }).click();
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
+});
+
+test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request }) => {
+  test.setTimeout(60000);
+  await page.goto('/'); await login(page); await board(page);
+  const joined = (await evidence(request)).passengers.qa_passenger;
+  const middle = await request.post(`${control}/telemetry/middle`);
+  expect(middle.ok()).toBe(true); expect((await middle.json()).statuses).toEqual([202, 202]);
+  await expect.poll(async () => (await evidence(request)).live.currentStopIndex).toBe(2);
+  const end = await request.post(`${control}/telemetry/end`);
+  expect(end.ok()).toBe(true); expect((await end.json()).statuses).toEqual([202]);
+  await expect(page.getByText('Route ended', { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect.poll(async () => (await evidence(request)).sessions.filter((ride: { automaticTurnaround?: boolean }) => ride.automaticTurnaround).length,
+    { timeout: 15000 }).toBe(1);
+  const completed = await evidence(request);
+  const original = completed.sessions.find((ride: { id: string }) => ride.id === 'qa_session');
+  const returning = completed.sessions.find((ride: { automaticTurnaround?: boolean }) => ride.automaticTurnaround);
+  expect(original).toMatchObject({ status: 'completed', direction: 'forward', passengerIds: ['qa_passenger'] });
+  expect(original.passengers.qa_passenger).toEqual(joined);
+  expect(returning).toMatchObject({ direction: 'reverse', previousSessionId: 'qa_session', passengers: {} });
+  // The real engine may already advance armed to active at the return origin.
+  expect(['armed', 'active']).toContain(returning.status);
+  expect(returning.id).not.toBe('qa_session');
+  expect(completed.lock.sessionId).toBe(returning.id);
+  expect(completed.completions).toEqual([expect.objectContaining({ id: 'qa_session', sessionId: 'qa_session', direction: 'forward' })]);
+  await expect(page.getByRole('heading', { name: 'Rate your ride', exact: true })).toBeVisible({ timeout: 15000 });
+  await page.getByRole('dialog').getByRole('textbox').fill('Synthetic completed ride feedback.');
+  await page.getByRole('button', { name: 'Submit Feedback', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Thank you!', exact: true })).toBeVisible();
+  expect((await evidence(request)).feedbacks).toEqual([expect.objectContaining({ userId: 'qa_passenger', type: 'ride',
+    sessionId: 'qa_session', busId: 'qa_bus', driverId: 'qa_driver' })]);
+  await page.goto('/?panel=history'); await login(page, 'qa_admin');
+  const row = page.getByRole('button').filter({ hasText: 'Completed' });
+  await expect(row).toHaveCount(1); await row.click();
+  const details = page.locator('#ride-history-details-qa_session');
+  await expect(details).toContainText('qa_passenger');
+  await expect(details).toContainText('Synthetic origin'); await expect(details).toContainText('Synthetic end');
+  await page.reload();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_admin');
+  await expect(page.getByRole('button').filter({ hasText: 'Completed' })).toHaveCount(1);
+  expect((await evidence(request)).sessions.find((ride: { id: string }) => ride.id === returning.id).passengers).toEqual({});
+  await page.getByRole('button').filter({ hasText: 'Completed' }).click();
+  await page.getByRole('button', { name: 'Delete ride history', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await evidence(request)).completions).toHaveLength(1);
+  await page.getByRole('button', { name: 'Delete ride history', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Permanently delete', exact: true }).click();
+  await expect(page.getByText('Ride history deleted.', { exact: true })).toBeVisible();
+  const deleted = await evidence(request);
+  expect(deleted.sessions.map((ride: { id: string }) => ride.id)).toEqual([returning.id]);
+  expect(deleted.completions).toEqual([]); expect(deleted.lock.sessionId).toBe(returning.id);
+  await page.goto('/?panel=feedback');
+  await page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' }).click();
+  await page.getByRole('button', { name: 'reviewed', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
+  expect((await evidence(request)).feedbacks[0].status).toBe('reviewed');
+  await page.getByRole('button', { name: 'resolved', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeDisabled();
+  expect((await evidence(request)).feedbacks[0].status).toBe('resolved');
+});
+
+test('admin operator creation edit cancellation and deletion update real claims without changing a running operator', async ({ page, request }) => {
+  await page.goto('/?panel=fleet'); await login(page, 'qa_admin');
+  await page.getByRole('textbox', { name: 'New vehicle Bus ID', exact: true }).fill('qa_spare');
+  await page.getByRole('textbox', { name: 'New vehicle display name', exact: true }).fill('Synthetic spare');
+  await page.getByRole('button', { name: 'Add new vehicle', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit vehicle Synthetic spare', exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'New operator ID', exact: true }).fill('qa_operator');
+  await page.getByRole('textbox', { name: 'New operator display name', exact: true }).fill('Synthetic new operator');
+  await page.getByRole('textbox', { name: 'Firebase Auth UID for new operator', exact: true }).fill('qa_other');
+  await select(page, 'Assign vehicle to new operator', 'Synthetic spare (qa_spare)');
+  const rejectedAcknowledgement = page.waitForResponse(response => response.url() === 'http://127.0.0.1:3116/api/fleet/drivers/qa_operator'
+    && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Add new operator', exact: true }).click();
+  expect((await rejectedAcknowledgement).status()).toBe(400);
+  await expect(page.getByText('Failed to add Operator: Assigned bus must have at least one valid route.', { exact: true })).toBeVisible();
+  expect((await evidence(request)).drivers.map((driver: { id: string }) => driver.id)).toEqual(['qa_driver']);
+  expect((await evidence(request)).otherAccountClaims).toEqual({ role: 'passenger' });
+  await page.getByRole('button', { name: 'Edit vehicle Synthetic spare', exact: true }).click();
+  const allowedRoute = page.getByRole('textbox', { name: 'Edit vehicle display name', exact: true }).locator('..')
+    .getByRole('checkbox', { name: 'Synthetic route', exact: true });
+  await allowedRoute.focus(); await allowedRoute.press('Space'); await expect(allowedRoute).toBeChecked();
+  await page.getByRole('button', { name: 'Save vehicle changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Cancel editing vehicle', exact: true })).toHaveCount(0);
+  const acknowledgement = page.waitForResponse(response => response.url() === 'http://127.0.0.1:3116/api/fleet/drivers/qa_operator'
+    && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Add new operator', exact: true }).click();
+  const saved = await acknowledgement; expect(saved.status()).toBe(200); expect(await saved.json()).toEqual({ saved: true });
+  await expect(page.getByRole('button', { name: 'Edit operator Synthetic new operator', exact: true })).toBeVisible();
+  const created = await evidence(request);
+  expect(created.drivers.find((driver: { id: string }) => driver.id === 'qa_operator')).toMatchObject({ authUid: 'qa_other', assignedBusId: 'qa_spare' });
+  expect(created.otherAccountClaims).toMatchObject({ role: 'driver', driverId: 'qa_operator', assignedBusId: 'qa_spare' });
+  await page.getByRole('button', { name: 'Edit operator Synthetic new operator', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Edit operator display name', exact: true }).fill('Unsaved operator draft');
+  await page.getByRole('button', { name: 'Cancel editing operator', exact: true }).click();
+  expect((await evidence(request)).drivers.find((driver: { id: string }) => driver.id === 'qa_operator').name).toBe('Synthetic new operator');
+  await page.getByRole('button', { name: 'Delete operator Synthetic new operator', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await evidence(request)).otherAccountClaims.role).toBe('driver');
+  await page.getByRole('button', { name: 'Delete operator Synthetic new operator', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Operator', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit operator Synthetic new operator', exact: true })).toHaveCount(0);
+  const removed = await evidence(request);
+  expect(removed.otherAccountClaims).toEqual({ role: 'passenger' });
+  expect(removed.drivers.map((driver: { id: string }) => driver.id)).toEqual(['qa_driver']);
+  expect(removed.lock.sessionId).toBe('qa_session');
+});
+
+test('admin live service controls persist bounded delay and interrupt safely before a distinct restart', async ({ page, request }) => {
+  await page.goto('/?panel=ops'); await login(page, 'qa_admin');
+  await page.getByRole('button', { expanded: false }).filter({ hasText: 'Synthetic bus' }).click();
+  const decrease = page.getByRole('button', { name: 'Decrease delay by 1 minutes for qa_bus', exact: true });
+  await decrease.click();
+  await expect(page.getByText('Delay updated to 0 minutes for qa_bus.', { exact: true })).toBeVisible();
+  expect((await evidence(request)).live.delayMinutes).toBe(0);
+  await page.getByRole('button', { name: 'Increase delay by 1 minutes for qa_bus', exact: true }).click();
+  await expect(page.getByText('Delay updated to 1 minutes for qa_bus.', { exact: true })).toBeVisible();
+  expect((await evidence(request)).live.delayMinutes).toBe(1);
+  await decrease.click();
+  await expect(page.getByText('Delay updated to 0 minutes for qa_bus.', { exact: true })).toBeVisible();
+  expect((await evidence(request)).live.delayMinutes).toBe(0);
+  await page.getByRole('button', { name: 'Boarding code', exact: true }).click();
+  await expect(page.getByRole('button', { name: /^[A-Z0-9]{4}-[A-Z0-9]{4}$/ })).toBeVisible();
+  await page.getByRole('button', { name: 'End ride early', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Keep running', exact: true }).click();
+  expect((await evidence(request)).sessions.find((ride: { id: string }) => ride.id === 'qa_session').status).toBe('active');
+  await page.getByRole('button', { name: 'End ride early', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'End ride', exact: true }).click();
+  await expect(page.getByText('Ride qa_session ended early and was saved to history.', { exact: true })).toBeVisible();
+  expect((await evidence(request)).sessions.find((ride: { id: string }) => ride.id === 'qa_session').status).toBe('interrupted');
+  await select(page, 'Operator', 'Synthetic operator (qa_driver)');
+  await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Start service', exact: true }).click();
+  await expect(page.getByText(/^Service started /)).toBeVisible();
+  const restarted = await evidence(request);
+  const fresh = restarted.sessions.find((ride: { id: string }) => ride.id !== 'qa_session');
+  expect(fresh).toMatchObject({ busId: 'qa_bus', driverId: 'qa_driver', routeId: 'qa_route', passengers: {} });
+  expect(restarted.sessions).toHaveLength(2); expect(restarted.lock.sessionId).toBe(fresh.id);
+  expect(restarted.completions).toEqual([]);
 });

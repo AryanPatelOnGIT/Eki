@@ -138,6 +138,26 @@ const poll = (id = key) => contractFetch(`${base}/api/v2/fleet-reconciliation-jo
 const waitTerminal = (id = key) => vi.waitFor(() => expect(state.docs.get(`_fleet_reconciliation_jobs/${id}`)?.status).not.toBe("processing"));
 
 describe("fleet operation resources", () => {
+  it("rejects missing or route-less operator assignment before changing records or authorization", async () => {
+    const original = { name: "Original", authUid: "auth_uid", assignedBusId: "bus_1", badge: "retained" };
+    state.docs.set("drivers/driver_1", original);
+    state.docs.set("users/auth_uid", { role: "driver" });
+    state.userClaims.set("auth_uid", { role: "driver", driverId: "driver_1", assignedBusId: "bus_1" });
+    state.docs.set("buses/empty_bus", { assignedRoutes: [] });
+    for (const assignedBusId of ["missing_bus", "empty_bus"]) {
+      const result = await contractFetch(`${base}/api/fleet/drivers/driver_1`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Changed", authUid: "replacement_uid", assignedBusId }),
+      });
+      expect(result.status).toBe(400);
+      expect(await result.json()).toEqual({ error: "Assigned bus must have at least one valid route." });
+      expect(state.docs.get("drivers/driver_1")).toEqual(original);
+      expect(state.docs.get("users/auth_uid")).toEqual({ role: "driver" });
+      expect(state.docs.has("users/replacement_uid")).toBe(false);
+      expect(state.userClaims.get("auth_uid")).toEqual({ role: "driver", driverId: "driver_1", assignedBusId: "bus_1" });
+      expect(state.writes).toBe(0); expect(state.revocations).toBe(0);
+    }
+  });
   it("preserves operator metadata when updating editable driver fields", async () => {
     state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId: "bus_1", createdAt: 123, badge: { number: "synthetic" } });
     const response = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "PUT", headers: { "Content-Type": "application/json" },

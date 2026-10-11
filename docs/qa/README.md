@@ -92,7 +92,7 @@ remains separate from static configuration validation.
 `npm run qa:browser` runs actual passenger/admin components with the compiled
 backend and disposable Auth/Firestore/RTDB emulators. See
 [browser acceptance](BROWSER_ACCEPTANCE.md) for ports, setup, reports and exact
-provider/navigation/remaining-software boundaries. It runs twenty Chromium
+provider/navigation/remaining-software boundaries. It runs twenty-six Chromium
 viewport tests without replacing boarding/chat/profile children with panels.
 
 ## Audit and next implementation slices

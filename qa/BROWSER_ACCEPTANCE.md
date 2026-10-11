@@ -1,6 +1,6 @@
 # Actual components with disposable browser integration
 
-Updated: 11 October 2026, 19:08 IST (Asia/Calcutta).
+Updated: 11 October 2026, 19:29 IST (Asia/Calcutta).
 
 This L3 suite mounts PassengerWorkspace with its actual boarding, profile,
 chat and feedback children, actual AuthProvider/hooks/database SDKs, and the
@@ -41,13 +41,41 @@ These are scoped transport guards, not an OS sandbox for arbitrary native code.
 
 ## Assertions and evidence
 
-Ten named cases run once in each Chromium mobile/desktop viewport, one worker,
+Thirteen named cases run once in each Chromium mobile/desktop viewport, one worker,
 no retries. They cover successful boarding and reload restoration, wrong-code
 and distant-position denial with no membership mutation, lost chat response
 after a real commit and idempotent retry/listener delivery, persisted feedback
 and local cooldown, profile sign-out confirmation/cancellation, admin settings
 and role switch, all six tabs with keyboard focus, vehicle creation/edit cancel/
-delete, and route identity/edit cancellation.
+delete, and route identity/edit cancellation. Additional integrated cases drive
+registered synthetic device HTTP fixes through the real workers to completion,
+one separate automatic reverse ride, the passenger's real ten-second feedback
+timer and persisted ride feedback. Admin history reload/manifest inspection,
+cancelled and confirmed terminal deletion, feedback review/resolution, inactive
+operator creation/edit cancellation/deletion with real Auth claim demotion,
+delay 0→1→0, boarding-code retrieval, interruption and distinct restart are
+checked against independent durable records. The browser uses both native
+selectOption and custom option clicks according to the actual control.
+
+The operator case first deliberately selects a vehicle with no routes. The
+backend now rejects that deterministic assignment with 400 before changing
+operator/user records or Auth claims. Previously its late validation returned
+500 after persisting a partially assigned operator. Unit regressions cover both
+missing and route-less buses while preserving the original operator and old
+account authorization; the browser checks rejection, edits the spare vehicle
+to give it a valid route, then retries and observes the actual acknowledgement
+before inspecting claims. This change does not make cross-store Firebase/Auth
+publication atomic or certify deployed multi-replica race recovery.
+
+The synthetic route is approximately 400 m. Sample times span the previous
+45 seconds, with two intermediate accepted fixes and a final stopped fix.
+The chosen speeds/times satisfy the source's travel envelope; position advances
+are not forced into RTDB. These accelerated timestamps exercise lifecycle
+semantics, not measured driving latency or a 45-second wall-clock soak. Every
+fixture request has a deadline and observes the real worker checkpoint before
+the next dependent fix. A reverse ride may already be active at its origin when
+observed; both armed and active are valid, and it must remain separately owned
+and empty of the original passenger.
 
 `browser-playwright.json`, `browser-junit.xml`, `browser-report.json`,
 `browser-report.md`, `browser-run.log` and failure screenshots are written under
@@ -77,9 +105,10 @@ redirects. App Check is explicitly disabled for isolated development here;
 the separate existing admin regression covers synthetic enforcement behavior.
 Real attestation/provider configuration is a manual gate.
 
-This first integrated browser slice does not yet cover the complete motion/
-completion/automatic return chain, operator CRUD and service operations,
-route-save/Places fault scenarios, history mutations, all race/error/control
+The primary synthetic completion/automatic return chain, inactive operator CRUD,
+service interruption/restart and terminal history deletion are now exercised.
+Remaining software includes route-save/Places fault scenarios, reassignment and
+active-operator mutation denial, broader service/history race partitions, all error/control
 partitions, PWA failure modes or other browser engines. Those remain software
 work in the master roadmap, not physical-test waivers. Hardware/live-motion
 requirements remain under GitHub #245/#300. Local development failures and
@@ -104,3 +133,14 @@ failure evidence separately, restore the fixture and run the full suite.
 The report classifier separately rejects wrong test files, repeated viewport
 observations, missing viewports and retry-only passes. Exact file, title and
 one first-attempt result from each mobile/desktop project are required.
+
+The expanded Linux development run subsequently passed all twenty-six
+executions with zero failed/skipped/flaky/retried tests in 2.4 minutes. Its
+checkout was dirty and records that fact. The completion journey took about
+18 seconds per viewport, including the real ten-second feedback delay. The
+source bug above was reproduced before its fix; missing/empty-route assignment
+now fails without partial state, followed by a successful valid-route retry.
+An existing diagnostics-pool unit test also now freezes only Date.now during
+its HTTP loop so CPU load cannot turn its admission-isolation oracle into an
+accidental window-rollover test. Timers and HTTP remain real; throughput and
+elapsed-time recovery are separate checks.

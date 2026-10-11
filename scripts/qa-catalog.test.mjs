@@ -115,6 +115,8 @@ test('critical changes cannot pass solely because an unrelated existing test is 
   assert.equal(criticalSource(path), true);
   assert.equal(criticalSource(tests[0].path), false);
   assert.equal(criticalSource('firestore.rules'), true);
+  assert.equal(criticalSource('backend/src/routes/fleet.ts'), true);
+  assert.throws(() => checkCoverageBudget(['backend/src/routes/fleet.ts'], []), /exact case\/test mapping/);
   assert.throws(() => checkCoverageBudget([path], mapping), /corresponding test change/);
   assert.throws(() => checkCoverageBudget([path, tests[0].path], []), /exact case\/test mapping/);
   assert.equal(checkCoverageBudget([path, tests[0].path], mapping).status, 'PASS');
