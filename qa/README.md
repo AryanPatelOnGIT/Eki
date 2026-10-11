@@ -89,6 +89,12 @@ identity and provide teardown/kill controls. The
 loopback targets and a scoped Node transport guard; its execution evidence
 remains separate from static configuration validation.
 
+`npm run qa:browser` runs actual passenger/admin components with the compiled
+backend and disposable Auth/Firestore/RTDB emulators. See
+[browser acceptance](BROWSER_ACCEPTANCE.md) for ports, setup, reports and exact
+provider/navigation/remaining-software boundaries. It runs twenty Chromium
+viewport tests without replacing boarding/chat/profile children with panels.
+
 ## Audit and next implementation slices
 
 See [the baseline audit](BASELINE_2026_10_11.md) for diagrams, gaps and risks.

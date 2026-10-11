@@ -1,0 +1,199 @@
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+
+const control = 'http://127.0.0.1:3117';
+const evidence = async (request: APIRequestContext) => (await request.get(`${control}/evidence`)).json();
+const login = async (page: Page, uid = 'qa_passenger') => {
+  await page.getByRole('button', { name: `Sign in ${uid}`, exact: true }).click();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText(uid);
+};
+const select = async (page: Page, name: string, option: string) => {
+  await page.getByRole('combobox', { name, exact: true }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+};
+const prepareBoarding = async (page: Page, code = 'ABCD2345') => {
+  await page.getByRole('button', { name: 'Track Synthetic route', exact: true }).click();
+  await select(page, 'Boarding stop', 'Synthetic origin');
+  await select(page, 'Destination station', 'Synthetic end');
+  await page.getByRole('textbox', { name: 'Boarding code' }).fill(code);
+};
+const board = async (page: Page) => {
+  await prepareBoarding(page);
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'On board', exact: true })).toBeVisible();
+};
+
+test.beforeEach(async ({ context, request, browser }, testInfo) => {
+  testInfo.annotations.push({ type: 'browser-version', description: browser.version() });
+  const denied: string[] = [];
+  await context.route('**/*', async route => {
+    const url = new URL(route.request().url());
+    if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) await route.continue();
+    else { denied.push(`${url.protocol}//${url.hostname}:${url.port}`); await route.abort('blockedbyclient'); }
+  });
+  await context.routeWebSocket('**/*', websocket => {
+    const url = new URL(websocket.url());
+    if (url.hostname === '127.0.0.1' && ['3115', '9005'].includes(url.port)) websocket.connectToServer();
+    else { denied.push(`${url.protocol}//${url.hostname}:${url.port}`); websocket.close(); }
+  });
+  (context as typeof context & { qaDenied?: string[] }).qaDenied = denied;
+  expect((await request.post(`${control}/reset`)).ok()).toBe(true);
+});
+test.afterEach(async ({ context, request, page }, testInfo) => {
+  if (!page.isClosed()) {
+    const controls = await page.locator('button,input,textarea,select,a,[role="combobox"],[role="option"],[role="tab"]').evaluateAll(elements => elements.filter(element =>
+      element.getClientRects().length && !element.closest('[inert],[aria-hidden="true"]')).map(element => ({
+      tag: element.tagName.toLowerCase(), role: element.getAttribute('role'),
+      name: element.getAttribute('aria-label') || (element as HTMLInputElement).labels?.[0]?.textContent?.trim() || element.getAttribute('placeholder') || element.textContent?.trim().slice(0, 120),
+      disabled: element.hasAttribute('disabled'),
+    })));
+    await testInfo.attach('visible-control-census', { body: Buffer.from(JSON.stringify({ test: testInfo.title, project: testInfo.project.name, controls })), contentType: 'application/json' });
+  }
+  expect((context as typeof context & { qaDenied?: string[] }).qaDenied).toEqual([]);
+  const current = await evidence(request);
+  expect(current.transport.enabled).toBe(true);
+  expect(current.transport.allowedConnections).toBeGreaterThan(0);
+  expect(current.transport.deniedConnections).toBe(0);
+});
+
+test('boards through real auth API and persistence then restores one membership on reload', async ({ page, request }) => {
+  await page.goto('/'); await login(page); await board(page);
+  const before = await evidence(request);
+  expect(before.passengerIds).toEqual(['qa_passenger']);
+  expect(Object.keys(before.passengers)).toEqual(['qa_passenger']);
+  expect(before.passengers.qa_passenger).toMatchObject({ userId: 'qa_passenger', boardingStopId: 'origin', alightingStopId: 'end' });
+  await page.reload();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+  await expect(page.getByRole('button', { name: 'On board', exact: true })).toBeVisible();
+  expect((await evidence(request)).passengers.qa_passenger.joinedAt).toEqual(before.passengers.qa_passenger.joinedAt);
+});
+
+test('rejects a wrong code without a manifest write and permits a corrected retry', async ({ page, request }) => {
+  await page.goto('/'); await login(page); await prepareBoarding(page, 'ZZZZ2345');
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('boarding code is invalid');
+  expect((await evidence(request)).passengerIds).toEqual([]);
+  await page.getByRole('textbox', { name: 'Boarding code' }).fill('ABCD2345');
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'On board', exact: true })).toBeVisible();
+});
+
+test('rejects distant geolocation without a manifest or optimistic success', async ({ page, context, request }) => {
+  await context.setGeolocation({ latitude: 23.02, longitude: 72, accuracy: 5 });
+  await page.goto('/'); await login(page); await prepareBoarding(page);
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('near the bus');
+  expect((await evidence(request)).passengerIds).toEqual([]);
+  await expect(page.getByRole('button', { name: 'On board', exact: true })).toHaveCount(0);
+});
+
+test('chat reconciles a lost acknowledgement into one durable message and listener delivery', async ({ page, request }) => {
+  await page.goto('/'); await login(page); await board(page);
+  await page.getByRole('button', { name: 'Open live chat', exact: true }).click();
+  let loseOnce = true;
+  await page.route('http://127.0.0.1:3116/api/sessions/qa_session/messages', async route => {
+    if (!loseOnce) { await route.continue(); return; }
+    loseOnce = false;
+    const response = await route.fetch(); expect(response.status()).toBe(201);
+    await route.abort('failed');
+  });
+  await page.getByRole('textbox', { name: 'Chat message' }).fill('Synthetic hello <script>text only</script>');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByText('Message could not be sent. Please try again.')).toBeVisible();
+  expect((await evidence(request)).messages).toHaveLength(1);
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByRole('textbox', { name: 'Chat message' })).toHaveValue('');
+  await expect(page.getByText('Synthetic hello <script>text only</script>', { exact: true })).toBeVisible();
+  expect((await evidence(request)).messages).toHaveLength(1);
+  await page.getByRole('button', { name: 'Close chat' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('feedback confirms persistence and enforces cooldown after reopening the real modal', async ({ page, request }) => {
+  await page.goto('/'); await login(page);
+  await page.getByRole('button', { name: 'Profile', exact: true }).click();
+  await page.getByRole('button', { name: 'Send Feedback', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Submit Feedback' })).toBeDisabled();
+  await page.getByRole('textbox').fill('Synthetic suggestion only.');
+  await page.getByRole('button', { name: 'Submit Feedback' }).click();
+  await expect(page.getByRole('heading', { name: 'Thank you!' })).toBeVisible();
+  expect((await evidence(request)).feedbacks).toEqual([expect.objectContaining({ userId: 'qa_passenger', type: 'general', comment: 'Synthetic suggestion only.' })]);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Send Feedback', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: /^Wait / })).toBeDisabled();
+  await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('profile cancellation preserves auth and confirmation signs out the real emulator account', async ({ page }) => {
+  await page.goto('/'); await login(page);
+  await page.getByRole('button', { name: 'Profile', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+  await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('signed out');
+  await expect(page.getByRole('heading', { name: 'Guest', exact: true })).toBeVisible();
+});
+
+test('admin settings save persists and a passenger cannot enter the same panel', async ({ page, request }) => {
+  await page.goto('/?panel=settings'); await login(page, 'qa_admin');
+  await expect(page.getByRole('button', { name: 'No changes' })).toBeDisabled();
+  await page.getByLabel('Service Start Time', { exact: true }).fill('7:30 am');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Saved!' })).toBeVisible();
+  expect((await evidence(request)).settings).toMatchObject({ serviceStartTime: '7:30 am', updatedBy: 'qa_admin' });
+  await login(page, 'qa_passenger');
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toHaveCount(0);
+  expect((await evidence(request)).settings.serviceStartTime).toBe('7:30 am');
+});
+
+test('all six actual admin panels mount through pointer and roving keyboard navigation', async ({ page }) => {
+  await page.goto('/?panel=admin'); await login(page, 'qa_admin');
+  for (const name of ['Live Ops', 'Routes', 'Fleet & People', 'History', 'Feedback', 'Settings']) {
+    await page.getByRole('tab', { name, exact: true }).click();
+    await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel', { name, exact: true })).toHaveCount(1);
+    await expect(page.getByText('Loading fixture view…')).toHaveCount(0);
+  }
+  await page.getByRole('tab', { name: 'Settings', exact: true }).press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Live Ops', exact: true })).toBeFocused();
+  await page.getByRole('tab', { name: 'Live Ops', exact: true }).press('End');
+  await expect(page.getByRole('tab', { name: 'Settings', exact: true })).toBeFocused();
+  await page.getByRole('tab', { name: 'Settings', exact: true }).press('Home');
+  await expect(page.getByRole('tab', { name: 'Live Ops', exact: true })).toBeFocused();
+});
+
+test('admin vehicle create edit cancel and delete persist through real authorization and listeners', async ({ page, request }) => {
+  await page.goto('/?panel=fleet'); await login(page, 'qa_admin');
+  await page.getByRole('textbox', { name: 'New vehicle Bus ID', exact: true }).fill('qa_new');
+  await page.getByRole('textbox', { name: 'New vehicle display name', exact: true }).fill('Synthetic new vehicle');
+  const assignment = page.getByRole('checkbox', { name: 'Synthetic route', exact: true });
+  await assignment.focus(); await assignment.press('Space'); await expect(assignment).toBeChecked();
+  await page.getByRole('button', { name: 'Add new vehicle', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit vehicle Synthetic new vehicle', exact: true })).toBeVisible();
+  expect((await evidence(request)).buses.find((bus: { id: string }) => bus.id === 'qa_new')).toMatchObject({ name: 'Synthetic new vehicle', assignedRoutes: ['qa_route'] });
+  await page.getByRole('button', { name: 'Edit vehicle Synthetic new vehicle', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Edit vehicle display name', exact: true }).fill('Unsaved draft');
+  await page.getByRole('button', { name: 'Cancel editing vehicle', exact: true }).click();
+  expect((await evidence(request)).buses.find((bus: { id: string }) => bus.id === 'qa_new').name).toBe('Synthetic new vehicle');
+  await page.getByRole('button', { name: 'Delete vehicle Synthetic new vehicle', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await evidence(request)).buses.some((bus: { id: string }) => bus.id === 'qa_new')).toBe(true);
+  await page.getByRole('button', { name: 'Delete vehicle Synthetic new vehicle', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Vehicle', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit vehicle Synthetic new vehicle', exact: true })).toHaveCount(0);
+  expect((await evidence(request)).buses.some((bus: { id: string }) => bus.id === 'qa_new')).toBe(false);
+});
+
+test('actual route editor keeps identity immutable and cancels a local rename without a write', async ({ page }) => {
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  await page.getByRole('button', { name: 'Edit route Synthetic route', exact: true }).click();
+  await expect(page.getByLabel('Route ID', { exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: /^Synthetic origin / }).click();
+  await page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true }).fill('Unsaved origin');
+  await page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true }).press('Enter');
+  await page.getByRole('button', { name: 'Cancel route editing', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit route Synthetic route', exact: true }).click();
+  await page.getByRole('button', { name: /^Synthetic origin / }).click();
+  await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
+});

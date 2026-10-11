@@ -1,0 +1,23 @@
+const path = 'e2e/emulator-acceptance.spec.ts';
+export const browserTestMap = [
+  ['OPS01', 'all six actual admin panels mount through pointer and roving keyboard navigation', 'Actual AdminPage six tabs, lazy panels, selected tabpanel and wrap/Home/End focus in both viewports. Provider-backed operations are separate.'],
+  ['FLEET01', 'admin vehicle create edit cancel and delete persist through real authorization and listeners', 'One assigned synthetic vehicle is created through authenticated API and observed via actual Firestore listener; other assignment/collision partitions remain separate.'],
+  ['FLEET03', 'admin vehicle create edit cancel and delete persist through real authorization and listeners', 'Actual edit draft cancellation preserves the durable original name. Saving edits and pending races remain separate.'],
+  ['FLEET04', 'admin vehicle create edit cancel and delete persist through real authorization and listeners', 'Cancellation and deletion of a non-running demo vehicle; active/concurrent safety partitions remain separate.'],
+  ['ROUTE02', 'actual route editor keeps identity immutable and cancels a local rename without a write', 'Existing route identity is disabled and reopening after cancel retains its original stop name. Create collisions/generated IDs remain separate.'],
+  ['BOARD01', 'boards through real auth API and persistence then restores one membership on reload', 'Valid ordered nearby boarding: actual Auth token/API/UID manifest, acknowledgement and reload restoration. Other timing/race partitions remain separate.'],
+  ['BOARD06', 'rejects distant geolocation without a manifest or optimistic success', 'A synthetic browser position over 2 km away is rejected at the actual backend. Exact 150 m boundary partitions remain L1/L2 work.'],
+  ['BOARD11', 'rejects a wrong code without a manifest write and permits a corrected retry', 'Wrong-code rejection and corrected-code retry; no transaction rotation claim.'],
+  ['CHAT04', 'chat reconciles a lost acknowledgement into one durable message and listener delivery', 'Committed request replay retains one persistent message and clears the draft only on confirmed acknowledgement. Conflict/rate partitions remain separate.'],
+  ['CHAT09', 'chat reconciles a lost acknowledgement into one durable message and listener delivery', 'Lost HTTP acknowledgement after actual commit, stable retry identity and real Firestore listener delivery.'],
+  ['FEED01', 'feedback confirms persistence and enforces cooldown after reopening the real modal', 'Empty submission disabled and valid general comment persisted. Exact word limits remain separate.'],
+  ['FEED05', 'feedback confirms persistence and enforces cooldown after reopening the real modal', 'Confirmed submission followed by same-account local cooldown; exact 24-hour/concurrent/multi-account server partitions remain separate.'],
+  ['AUTH11', 'profile cancellation preserves auth and confirmation signs out the real emulator account', 'Real Auth sign-out confirmation and Guest rendering; exhaustive callback/listener cleanup remains separate.'],
+  ['AUTH12', 'admin settings save persists and a passenger cannot enter the same panel', 'Real trusted admin-to-passenger switch removes the actual settings panel and preserves the authorized saved record.'],
+  ['SET02', 'admin settings save persists and a passenger cannot enter the same panel', 'One intended field persists through the actual API with authenticated updater identity. Announcement and remote passenger propagation remain separate.'],
+  ['SET05', 'admin settings save persists and a passenger cannot enter the same panel', 'No changes disabled; Save changes/confirmed Saved states observed. Concurrent/pending click partitions remain separate.'],
+].map(([caseId, name, scope]) => ({ caseId, scope,
+  sourcePaths: ['frontend/src/components/passenger/PassengerWorkspace.tsx', 'frontend/src/components/passenger/PassengerBoardingView.tsx',
+    'frontend/src/components/shared/MessagingPanel.tsx', 'frontend/src/components/shared/FeedbackModal.tsx',
+    'frontend/src/components/admin/SettingsPanel.tsx', 'backend/src/routes/sessions.ts', 'backend/src/routes/feedback.ts', 'backend/src/routes/settings.ts'],
+  tests: [{ path, name, level: 'L3', semantics: scope }] }));

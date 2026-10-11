@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # The static acceptance budget compares immutable PR/base commits.
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -101,6 +102,16 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Verify admin access and feedback in mobile and desktop browsers
         run: npm run test:e2e:admin
+      - name: Verify actual passenger components and backend with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --browser
+      - name: Retain observed browser integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-acceptance-evidence
+          path: artifacts/qa/browser-*
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Strict production build (fail-closed gate + CSP regeneration)
         # Issue #39 D1: the strict build (EKI_STRICT_PRODUCTION_BUILD) and the
         # CSP hash regeneration were never exercised in CI. Placeholder values
