@@ -28,8 +28,9 @@
     "qa:check": "node scripts/qa/safety-preflight.mjs && node scripts/qa/acceptance-catalog.mjs --check",
     "qa:catalog": "node scripts/qa/acceptance-catalog.mjs",
     "qa:safety": "node scripts/qa/safety-preflight.mjs",
-    "qa:test": "node --test scripts/qa-catalog.test.mjs",
-    "qa:budget": "node scripts/qa/coverage-budget.mjs"
+    "qa:test": "node --test scripts/qa*.test.mjs",
+    "qa:budget": "node scripts/qa/coverage-budget.mjs",
+    "qa:gnss": "node scripts/qa/run-gnss.mjs"
   },
   "overrides": {
     "@next/eslint-plugin-next": {
