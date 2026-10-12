@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   # Validate this definition on its owned feature branch before installation.
   push:
-    branches: [codex/qa-nightly-reliability, codex/qa-api-boundaries, codex/qa-native-evidence, codex/qa-reviewed-unit-evidence, codex/qa-component-evidence]
+    branches: [codex/qa-nightly-reliability, codex/qa-api-boundaries, codex/qa-native-evidence, codex/qa-reviewed-unit-evidence, codex/qa-component-evidence, codex/qa-http-unit-evidence]
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
             if (context.repo.owner !== 'notnamansinha' || context.repo.repo !== 'Eki') throw new Error('Unexpected repository');
             let sha;
             if (context.eventName === 'push') {
-              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability' && context.ref !== 'refs/heads/codex/qa-api-boundaries' && context.ref !== 'refs/heads/codex/qa-native-evidence' && context.ref !== 'refs/heads/codex/qa-reviewed-unit-evidence' && context.ref !== 'refs/heads/codex/qa-component-evidence') throw new Error('Untrusted branch');
+              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability' && context.ref !== 'refs/heads/codex/qa-api-boundaries' && context.ref !== 'refs/heads/codex/qa-native-evidence' && context.ref !== 'refs/heads/codex/qa-reviewed-unit-evidence' && context.ref !== 'refs/heads/codex/qa-component-evidence' && context.ref !== 'refs/heads/codex/qa-http-unit-evidence') throw new Error('Untrusted branch');
               sha = context.sha;
             } else {
               if (context.ref !== 'refs/heads/main') throw new Error('Use the owner-approved default-branch definition');

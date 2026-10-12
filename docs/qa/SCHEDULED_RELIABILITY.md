@@ -1,6 +1,6 @@
 # Isolated nightly and weekly reliability
 
-Last updated: 2026-10-12 17:00 IST (UTC+05:30).
+Last updated: 2026-10-12 17:13 IST (UTC+05:30).
 
 ## Installation and source provenance
 
@@ -32,7 +32,7 @@ verification` and deployment approval semantics remain intact.
 | Nightly browser | Actual passenger/admin components and backend; synthetic Maps/Places/Routes; Chromium mobile and desktop | One browser worker, zero retries; campaign 480 seconds |
 | Nightly HTTP authorization | Missing/malformed credentials on protected operations and a real emulator passenger token on admin-only operations; minimal public probes | Four named L2 tests with fresh backend processes; campaign 390 seconds |
 | Nightly native firmware | Exact host-only Unity identities and scoped FW oracles; no board execution | Pinned PlatformIO 6.2.0; child 300 seconds, campaign 360 seconds |
-| Nightly reviewed units | Fifteen reviewed pure/mocked/React-jsdom backend/frontend files with exact case links | Two sequential workspace children, each 120 seconds; campaign 300 seconds |
+| Nightly reviewed units | Twenty-three reviewed pure/mocked/loopback-HTTP/React-jsdom backend/frontend files with exact case links | Two sequential workspace children, each 120 seconds; campaign 300 seconds |
 | Weekly mutation | Stryker 10.0.0 and Vitest 4.1.11; only pure `telemetryPayload.ts` mutated | Two workers; ten-minute outer deadline; both reviewed test files required in report |
 | Weekly admission | Five separate production-helper processes, each 250,000 submissions against stalled synthetic dependencies; drain, recovery and FIFO | Each process 60 seconds; 1,250,000 submissions total; no fleet/database/provider load |
 
