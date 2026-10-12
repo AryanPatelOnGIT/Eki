@@ -3,7 +3,7 @@
   "info": {
     "title": "Eki backend HTTP API",
     "version": "1.0.0",
-    "description": "HTTP contract for the 39 existing handlers and six compatible v2 aliases from PR #197. Firebase SDK listeners are documented separately in docs/api/HTTP_CONTRACT.md; they are not HTTP operations. Legacy URLs remain supported; no retirement date is scheduled. REST naming alone promises no performance improvement."
+    "description": "HTTP contract for current mounted handlers and compatible legacy/v2 aliases. CI reconciles methods and paths with source. Firebase SDK listeners are documented separately in docs/api/HTTP_CONTRACT.md; they are not HTTP operations. Legacy URLs remain supported; no retirement date is scheduled. REST naming alone promises no performance improvement."
   },
   "servers": [
     {

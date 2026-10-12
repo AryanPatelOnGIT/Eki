@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # The static acceptance budget compares immutable PR/base commits.
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -40,6 +41,8 @@ jobs:
         run: npm run qa:catalog
       - name: Record deterministic GNSS unit properties with exact assertion evidence
         run: npm run qa:gnss
+      - name: Record reviewed backend and frontend unit sub-oracles
+        run: npm run qa:unit:reviewed
       - name: Retain source-attributed acceptance catalog
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -84,6 +87,16 @@ jobs:
         # temp dir (scripts/run-rules-emulator.mjs); the committed rule files
         # are never modified (audit #113).
         run: node scripts/run-rules-emulator.mjs
+      - name: Retain observed disposable emulator evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: emulator-acceptance-evidence
+          # One artifact root lets the dependent ledger read fixed report paths.
+          # Including root-level debug logs nests reports under artifacts/qa/.
+          path: artifacts/qa/emulator-*
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify bounded admission under stalled dependencies
         run: |
           npm run build --workspace=backend
@@ -93,6 +106,26 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Verify admin access and feedback in mobile and desktop browsers
         run: npm run test:e2e:admin
+      - name: Verify actual passenger components and backend with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --browser
+      - name: Verify published protected HTTP authorization with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --api
+      - name: Retain actual HTTP authorization observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-authorization-evidence
+          path: artifacts/qa/api-*
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain observed browser integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-acceptance-evidence
+          path: artifacts/qa/browser-*
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Strict production build (fail-closed gate + CSP regeneration)
         # Issue #39 D1: the strict build (EKI_STRICT_PRODUCTION_BUILD) and the
         # CSP hash regeneration were never exercised in CI. Placeholder values
@@ -201,12 +234,26 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install platformio
+      - run: pip install platformio==6.2.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - name: Verify fleet JTAG configuration rejects unsafe overrides
         run: python hardware/scripts/test_verify_secure_fleet.py
       - name: Install non-production firmware build configuration
         run: cp hardware/include/secrets.example.h hardware/include/secrets.h
-      - run: platformio test --project-dir hardware -e native
+      - name: Record actual native firmware assertion identities
+        run: npm run qa:native
+      - name: Retain native host evidence separately from physical acceptance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-firmware-evidence
+          path: artifacts/qa/native-*
+          if-no-files-found: warn
+          retention-days: 7
       - name: Exercise real checkpoint cryptography, TLS wrapper and NMEA parser
         run: python hardware/scripts/test_host_protocols.py
       - name: Keep firmware runtime reachable in build verification
@@ -241,3 +288,40 @@ jobs:
           --esptool-dir "$HOME/.platformio/packages/tool-esptoolpy"
           --image hardware/.pio/build/esp32dev-secure/firmware-signed.bin
           --key hardware/keys/secure_boot_signing_key.pem
+
+  qa-evidence:
+    needs: [web, firmware]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: static-acceptance-catalog
+          path: artifacts/qa/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        with:
+          pattern: '*-evidence'
+          path: artifacts/qa/
+          merge-multiple: true
+      - name: Validate all six current-source evidence families
+        if: always()
+        run: npm run qa:report
+      - name: Retain current-source execution ledger
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: current-source-execution-evidence
+          path: artifacts/qa/execution-report.*
+          if-no-files-found: error
+          retention-days: 7

@@ -2,8 +2,8 @@
 const { Firestore } = require("firebase-admin/firestore");
 const Module = require("node:module");
 const host = process.env.FIRESTORE_EMULATOR_HOST;
-if (process.env.FIREBASE_RULES_TEST !== "1" || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host ?? "")) throw Error("Loopback emulator required");
-const firestore = new Firestore({ projectId: "eki-rules-test", host, ssl: false });
+if (process.env.FIREBASE_RULES_TEST !== "1" || host !== "127.0.0.1:8085" || !globalThis.__ekiQaNetworkGuard?.enabled) throw Error("Guarded loopback emulator required");
+const firestore = new Firestore({ projectId: "demo-eki-rules-test", host, ssl: false });
 // Replace only this disposable child's Firebase module before loading the real service.
 const modulePath = require.resolve("../src/lib/firebaseAdmin.ts");
 const replacement = new Module(modulePath); replacement.exports = { db: firestore }; replacement.loaded = true;

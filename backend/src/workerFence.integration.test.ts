@@ -15,13 +15,13 @@ integration("worker fencing against actual Firebase emulators", () => {
   beforeAll(() => {
     // Never allow this fault-injection suite to reach an external database.
     for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_DATABASE_EMULATOR_HOST]) {
-      if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw new Error("Both loopback Firebase emulators are required.");
+      if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw new Error("Both loopback Firebase emulators are required.");
     }
-    app = initializeApp({ projectId: "eki-rules-test", databaseURL: "https://eki-rules-test-default-rtdb.firebaseio.com",
+    app = initializeApp({ projectId: "demo-eki-rules-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-rules-test-default-rtdb",
       // Emulator-only owner token prevents an ADC/metadata-network lookup.
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) },
     }, "worker-fence-integration");
-    firestore = new Firestore({ projectId: "eki-rules-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
+    firestore = new Firestore({ projectId: "demo-eki-rules-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
     realtime = getDatabase(app);
   });
   afterAll(async () => { await firestore?.terminate(); if (app) await deleteApp(app); });

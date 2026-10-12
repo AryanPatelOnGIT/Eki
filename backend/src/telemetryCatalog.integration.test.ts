@@ -16,9 +16,9 @@ const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describ
 integration("versioned telemetry catalog against actual Firebase emulators", () => {
   let app: App, stop: (() => void) | undefined;
   beforeAll(async () => {
-    for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_DATABASE_EMULATOR_HOST]) if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
-    app = initializeApp({ projectId: "eki-catalog-test", databaseURL: "https://eki-catalog-test-default-rtdb.firebaseio.com", credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "catalog-integration");
-    state.firestore = new Firestore({ projectId: "eki-catalog-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false }); state.realtime = getDatabase(app);
+    for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_DATABASE_EMULATOR_HOST]) if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
+    app = initializeApp({ projectId: "demo-eki-catalog-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-catalog-test-default-rtdb", credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "catalog-integration");
+    state.firestore = new Firestore({ projectId: "demo-eki-catalog-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false }); state.realtime = getDatabase(app);
   });
   beforeEach(async () => {
     invalidateRouteGeometryRead();

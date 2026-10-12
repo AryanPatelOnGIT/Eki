@@ -13,8 +13,8 @@ const integration = process.env.FIREBASE_RULES_TEST === "1" ? describe : describ
 integration("durable operation recovery against the actual Firestore emulator", () => {
   beforeAll(() => {
     const host = process.env.FIRESTORE_EMULATOR_HOST;
-    if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback Firestore emulator required");
-    state.firestore = new Firestore({ projectId: "eki-rules-test", host, ssl: false });
+    if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Loopback Firestore emulator required");
+    state.firestore = new Firestore({ projectId: "demo-eki-rules-test", host, ssl: false });
   });
   afterAll(async () => { await drainHttpOperations(); await state.firestore?.terminate(); });
   it("discovers and audits an actual killed executor without repeating its committed effects", async () => {

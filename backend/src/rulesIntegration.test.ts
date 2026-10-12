@@ -39,7 +39,7 @@ rulesDescribe("Firebase security rules integration", () => {
     assertFails = rulesModule.assertFails;
     assertSucceeds = rulesModule.assertSucceeds;
     environment = await rulesModule.initializeTestEnvironment({
-      projectId: "eki-rules-test",
+      projectId: "demo-eki-rules-test",
       firestore: {
         ...emulator("FIRESTORE_EMULATOR_HOST"),
         rules: readFileSync(rulesPath("FIRESTORE_RULES_PATH", "../../firestore.rules"), "utf8"),

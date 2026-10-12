@@ -24,12 +24,12 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
   let app: App; let server: Server; let base: string;
   beforeAll(async () => {
     for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_DATABASE_EMULATOR_HOST]) {
-      if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
+      if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
     }
     // Separate namespace avoids interference with rules/fencing/crash suites.
-    app = initializeApp({ projectId: "eki-reconciliation-test", databaseURL: "https://eki-reconciliation-test-default-rtdb.firebaseio.com",
+    app = initializeApp({ projectId: "demo-eki-reconciliation-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-reconciliation-test-default-rtdb",
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "reconciliation-integration");
-    state.firestore = new Firestore({ projectId: "eki-reconciliation-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
+    state.firestore = new Firestore({ projectId: "demo-eki-reconciliation-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
     state.realtime = getDatabase(app);
     const http = express(); http.use(express.json()); http.use("/api/fleet", fleetRouter);
     server = await new Promise<Server>(done => { const listener = http.listen(0, "127.0.0.1", () => done(listener)); });

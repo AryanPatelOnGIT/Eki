@@ -29,13 +29,13 @@ integration("R20 API reads against actual loopback Firebase", () => {
   let app: App; let server: Server; let base = "";
   beforeAll(async () => {
     for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_DATABASE_EMULATOR_HOST]) {
-      if (!host || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
+      if (!host || !/^(127\.0\.0\.1|\[::1\]):\d+$/.test(host)) throw Error("Both loopback emulators required");
     }
-    app = initializeApp({ projectId: "eki-r20-test", databaseURL: "https://eki-r20-test-default-rtdb.firebaseio.com",
+    app = initializeApp({ projectId: "demo-eki-r20-test", databaseURL: "http://127.0.0.1:9005/?ns=demo-eki-r20-test-default-rtdb",
       credential: { getAccessToken: async () => ({ access_token: "owner", expires_in: 3600 }) } }, "r20-integration");
-    state.firestore = new Firestore({ projectId: "eki-r20-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
+    state.firestore = new Firestore({ projectId: "demo-eki-r20-test", host: process.env.FIRESTORE_EMULATOR_HOST, ssl: false });
     state.realtime = getDatabase(app);
-    const rules = await fetch(`http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}/.settings/rules.json?ns=eki-r20-test-default-rtdb`, {
+    const rules = await fetch(`http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}/.settings/rules.json?ns=demo-eki-r20-test-default-rtdb`, {
       method: "PUT", headers: { Authorization: "Bearer owner", "Content-Type": "application/json" }, body: readFileSync(resolve(__dirname, "../../database.rules.json"), "utf8"),
     });
     if (!rules.ok) throw Error(`Failed to install isolated loopback RTDB indexes: ${rules.status}`);
