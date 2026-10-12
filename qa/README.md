@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 16:06 IST (UTC+05:30).
+Last updated: 2026-10-12 16:31 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -20,7 +20,8 @@ motion/bench/provider matrix and capture form linked to #300/#245/#246.
 with separate L1 evidence, bounded seeds and replay paths. Its exact links are
 combined with the L2/L3 links without treating any level as whole-case acceptance.
 The [HTTP authorization sweep](HTTP_AUTHORIZATION.md) adds a separate L2
-published-operation negative matrix. After the GNSS, emulator, browser and API
+published-operation negative matrix. [Native firmware evidence](NATIVE_EVIDENCE.md)
+records exact host-policy assertions. After the GNSS, emulator, browser, API and native
 suites run on one clean commit, `npm run qa:report` builds the
 [current-source execution ledger](EXECUTION_EVIDENCE.md). Stale/dirty or incomplete
 observations cannot satisfy that report's required harness scopes.

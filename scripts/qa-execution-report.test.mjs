@@ -26,12 +26,15 @@ test('stale dirty missing invented and inconsistent evidence cannot become curre
     item => { item.counts.passed = 2; }, item => { item.assertions[0].status = 'FAIL'; },
     item => { item.cases[0].scope = 'invented scope'; }, item => { item.realProvidersExecuted = true; },
     item => { item.cases.push({ ...item.cases[0] }); }];
+  mutations.push(item => { item.assertions[0] = null; }, item => { item.cases[0] = null; });
   for (const mutate of mutations) {
     const value = report(); mutate(value);
     const merged = combineExecutionEvidence(catalog, { unit: value }, families);
     assert.equal(merged.requiredHarnessExecution, 'BLOCKED'); assert.equal(merged.cases[0].latestExecutionStatus, 'NOT_RUN');
   }
   assert.equal(combineExecutionEvidence(catalog, {}, families).requiredHarnessExecution, 'BLOCKED');
+  const wrongLevel = [{ ...families[0], mappings: [{ ...mapping, tests: [{ ...mapping.tests[0], level: 'L2' }] }] }];
+  assert.equal(combineExecutionEvidence(catalog, { unit: report() }, wrongLevel).requiredHarnessExecution, 'BLOCKED');
 });
 
 test('a scoped browser run retains real partial evidence but cannot satisfy the complete browser family', () => {

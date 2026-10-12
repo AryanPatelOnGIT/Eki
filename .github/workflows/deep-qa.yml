@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   # Validate this definition on its owned feature branch before installation.
   push:
-    branches: [codex/qa-nightly-reliability, codex/qa-api-boundaries]
+    branches: [codex/qa-nightly-reliability, codex/qa-api-boundaries, codex/qa-native-evidence]
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
             if (context.repo.owner !== 'notnamansinha' || context.repo.repo !== 'Eki') throw new Error('Unexpected repository');
             let sha;
             if (context.eventName === 'push') {
-              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability' && context.ref !== 'refs/heads/codex/qa-api-boundaries') throw new Error('Untrusted branch');
+              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability' && context.ref !== 'refs/heads/codex/qa-api-boundaries' && context.ref !== 'refs/heads/codex/qa-native-evidence') throw new Error('Untrusted branch');
               sha = context.sha;
             } else {
               if (context.ref !== 'refs/heads/main') throw new Error('Use the owner-approved default-branch definition');
@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        suite: [gnss, emulator, browser, api]
+        suite: [gnss, emulator, browser, api, native]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,17 +64,24 @@ jobs:
       - name: Verify deterministic configuration and catalog
         run: npm run qa:check
       - name: Select runner Java 21
-        if: matrix.suite != 'gnss'
+        if: matrix.suite == 'emulator' || matrix.suite == 'browser' || matrix.suite == 'api'
         run: |
           test -x "$JAVA_HOME_21_X64/bin/java"
           echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
           echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
       - name: Build backend for real isolated integration
-        if: matrix.suite != 'gnss'
+        if: matrix.suite == 'emulator' || matrix.suite == 'browser' || matrix.suite == 'api'
         run: npm run build --workspace=backend
       - name: Install bounded browser project
         if: matrix.suite == 'browser'
         run: npx playwright install --with-deps chromium
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.suite == 'native'
+        with:
+          python-version: '3.12'
+      - name: Install pinned native host test tool
+        if: matrix.suite == 'native'
+        run: pip install platformio==6.2.0
       - name: Execute recorded campaign
         env:
           EKI_QA_CAMPAIGN_DAY: ${{ needs.resolve.outputs.campaign-day }}
