@@ -1,6 +1,6 @@
 # Isolated nightly and weekly reliability
 
-Last updated: 2026-10-12 15:39 IST (UTC+05:30).
+Last updated: 2026-10-12 17:13 IST (UTC+05:30).
 
 ## Installation and source provenance
 
@@ -30,6 +30,9 @@ verification` and deployment approval semantics remain intact.
 | Nightly GNSS | Fixed seeds 42 and 0 plus SHA/day-derived unsigned seed; 400 examples/property | Three recorded runs; each child 150 seconds |
 | Nightly emulator | Actual disposable Auth/Firestore/RTDB rules and backend ingestion/lifecycle/projection | Child campaign 390 seconds |
 | Nightly browser | Actual passenger/admin components and backend; synthetic Maps/Places/Routes; Chromium mobile and desktop | One browser worker, zero retries; campaign 480 seconds |
+| Nightly HTTP authorization | Missing/malformed credentials on protected operations and a real emulator passenger token on admin-only operations; minimal public probes | Four named L2 tests with fresh backend processes; campaign 390 seconds |
+| Nightly native firmware | Exact host-only Unity identities and scoped FW oracles; no board execution | Pinned PlatformIO 6.2.0; child 300 seconds, campaign 360 seconds |
+| Nightly reviewed units | Twenty-three reviewed pure/mocked/loopback-HTTP/React-jsdom backend/frontend files with exact case links | Two sequential workspace children, each 120 seconds; campaign 300 seconds |
 | Weekly mutation | Stryker 10.0.0 and Vitest 4.1.11; only pure `telemetryPayload.ts` mutated | Two workers; ten-minute outer deadline; both reviewed test files required in report |
 | Weekly admission | Five separate production-helper processes, each 250,000 submissions against stalled synthetic dependencies; drain, recovery and FIFO | Each process 60 seconds; 1,250,000 submissions total; no fleet/database/provider load |
 
@@ -92,13 +95,14 @@ the process environment before running these isolated tests.
 
 ```sh
 npm ci
+python -m pip install platformio==6.2.0
 npx playwright install --with-deps chromium
 npm run qa:nightly
 npm run qa:weekly
 ```
 
 Individual commands are `npm run qa:mutation`, `npm run qa:soak`, or
-`node scripts/qa/campaign.mjs gnss|emulator|browser` with one literal suite name.
+`node scripts/qa/campaign.mjs gnss|emulator|browser|api|native|reviewedUnit` with one literal suite name.
 The integration campaigns require a built backend. Reports are under
 `artifacts/qa/`; missing prerequisites produce blocked/failed output.
 

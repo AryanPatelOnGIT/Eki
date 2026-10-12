@@ -2,6 +2,9 @@ import { gnssTestMap } from './gnss-test-map.mjs';
 import { emulatorTestMap } from './emulator-test-map.mjs';
 import { browserTestMap } from './browser-test-map.mjs';
 import { mutationTestMap } from './mutation-test-map.mjs';
+import { apiTestMap } from './api-test-map.mjs';
+import { nativeTestMap } from './native-test-map.mjs';
+import { reviewedUnitTestMap } from './reviewed-unit-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 // Exact limited assertion links; no complete feature acceptance is claimed.
 export const testMap = mergeTestMaps([{
@@ -36,4 +39,4 @@ export const testMap = mergeTestMaps([{
     level: 'L1',
     semantics: 'Both HTTP handlers acknowledge boarding and record membership for numeric zero bus/passenger coordinates using mocked storage.',
   }],
-}], gnssTestMap, emulatorTestMap, browserTestMap, mutationTestMap);
+}], gnssTestMap, emulatorTestMap, browserTestMap, mutationTestMap, apiTestMap, nativeTestMap, reviewedUnitTestMap);

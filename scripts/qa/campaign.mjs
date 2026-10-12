@@ -14,7 +14,7 @@ export function campaignSeeds(commit, day) {
 }
 
 export function runCampaign(suite, env = process.env) {
-  if (!['gnss', 'emulator', 'browser'].includes(suite)) throw Error('Only named isolated QA suites are supported');
+  if (!['gnss', 'emulator', 'browser', 'api', 'native', 'reviewedUnit'].includes(suite)) throw Error('Only named isolated QA suites are supported');
   safetyPreflight(env);
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
   const dirty = Boolean(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repositoryRoot, encoding: 'utf8' }).trim());
@@ -24,7 +24,9 @@ export function runCampaign(suite, env = process.env) {
   const directory = resolve(repositoryRoot, 'artifacts/qa'); mkdirSync(directory, { recursive: true });
   const startedAt = new Date().toISOString(); const observations = [];
   const commands = suite === 'gnss' ? seeds.map(seed => ({ args: ['scripts/qa/run-gnss.mjs'], seed, timeout: 150_000 }))
-    : [{ args: ['scripts/run-rules-emulator.mjs', ...(suite === 'browser' ? ['--browser'] : [])], timeout: suite === 'browser' ? 480_000 : 390_000 }];
+    : suite === 'reviewedUnit' ? [{ args: ['scripts/qa/run-reviewed-unit.mjs'], timeout: 300_000 }]
+      : suite === 'native' ? [{ args: ['scripts/qa/run-native.mjs'], timeout: 360_000 }]
+      : [{ args: ['scripts/run-rules-emulator.mjs', ...(suite === 'browser' ? ['--browser'] : suite === 'api' ? ['--api'] : [])], timeout: suite === 'browser' ? 480_000 : 390_000 }];
   for (const command of commands) {
     const result = spawnSync(process.execPath, command.args, { cwd: repositoryRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
       timeout: command.timeout, env: { ...env, ...(command.seed === undefined ? {} : { EKI_QA_SEED: String(command.seed) }) } });

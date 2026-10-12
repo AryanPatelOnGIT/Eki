@@ -136,6 +136,57 @@ async function submit(overrides: Record<string, unknown> = {}) {
 }
 
 describe("feedback routes", () => {
+  it("enforces the literal 24-hour cooldown boundary without writing rejected feedback", async () => {
+    const now = 2_000_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      for (const [age, status] of [[86_399_999, 429], [86_400_000, 201], [86_400_001, 201]]) {
+        harness.feedbacks.clear();
+        const prior = { lastSubmittedAt: new Date(now - age) };
+        harness.cooldown = prior;
+        const response = await submit();
+        expect(response.status).toBe(status);
+        if (status === 429) {
+          expect((await response.json()).retryAfterMs).toBe(1);
+          expect(response.headers.get("retry-after")).toBe("1");
+          expect(harness.feedbacks.size).toBe(0);
+          expect(harness.cooldown).toBe(prior);
+        } else {
+          expect((await response.json()).submitted).toBe(true);
+          expect(harness.feedbacks.size).toBe(1);
+        }
+      }
+    } finally { clock.mockRestore(); }
+  });
+
+  it("enforces rating endpoints and rejects malformed ratings with no write", async () => {
+    for (const rating of [1, 5]) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      const response = await submit({ rating, comment: "" });
+      expect(response.status).toBe(201);
+      expect([...harness.feedbacks.values()][0].rating).toBe(rating);
+    }
+    for (const rating of [0, 6, 1.5, "5", null]) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      expect((await submit({ rating, comment: "" })).status).toBe(400);
+      expect(harness.feedbacks.size).toBe(0); expect(harness.cooldown).toBeUndefined();
+    }
+  });
+
+  it("enforces the general-comment word and character limits without changing cooldown on rejection", async () => {
+    for (const [comment, status] of [
+      [Array(199).fill("word").join(" "), 201], [Array(200).fill("word").join(" "), 201],
+      [Array(201).fill("word").join(" "), 400], ["a".repeat(1999), 201],
+      ["a".repeat(2000), 201], ["a".repeat(2001), 400], ["   ", 400],
+    ] as const) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      const response = await submit({ type: "general", comment, rating: null });
+      expect(response.status).toBe(status);
+      expect(harness.feedbacks.size).toBe(status === 201 ? 1 : 0);
+      if (status === 400) expect(harness.cooldown).toBeUndefined();
+    }
+  });
+
   it("derives identity and atomically creates feedback plus cooldown", async () => {
     const response = await submit();
 
