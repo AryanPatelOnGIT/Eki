@@ -22,6 +22,8 @@ function validId(value: unknown): value is string {
   return typeof value === "string" && SAFE_ID.test(value);
 }
 
+class InvalidBusAssignmentError extends Error {}
+
 async function loadBusRouteIds(busId: string): Promise<string[]> {
   const busDoc = await db.collection("buses").doc(busId).get();
   const bus = busDoc.data();
@@ -31,7 +33,7 @@ async function loadBusRouteIds(busId: string): Promise<string[]> {
       ? [bus.assignedRouteId]
       : []).filter(validId);
   if (!busDoc.exists || routeIds.length === 0) {
-    throw new Error("Assigned bus must have at least one valid route.");
+    throw new InvalidBusAssignmentError("Assigned bus must have at least one valid route.");
   }
   return routeIds;
 }
@@ -416,6 +418,10 @@ router.put("/drivers/:id", fleetMutation(async (req: Request, res: Response) => 
       res.status(409).json({ error: "That Auth UID is already assigned to another operator." });
       return;
     }
+    // Reject deterministic assignment errors before changing the old account,
+    // operator record or user role. Authorization publication reads this again
+    // after persistence, but validation there is too late to avoid partial state.
+    if (assignedBusId !== null) await loadBusRouteIds(assignedBusId);
     await auth.getUser(authUid);
     if (validId(previousAuthUid) && previousAuthUid !== authUid) {
       // Revoke the old principal before reusing this driver ID. Otherwise the
@@ -427,6 +433,10 @@ router.put("/drivers/:id", fleetMutation(async (req: Request, res: Response) => 
     await applyDriverAuthorization(id, authUid, assignedBusId);
     res.json({ saved: true });
   } catch (error) {
+    if (error instanceof InvalidBusAssignmentError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     console.error("[Fleet] Failed to save driver:", error);
     res.status(500).json({ error: "Unable to save operator." });
   }

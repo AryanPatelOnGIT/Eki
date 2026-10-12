@@ -8,7 +8,7 @@ import { testMap } from '../../qa/test-map.mjs';
 // This is a changed-source review gate, not an assertion-strength metric.
 export function criticalSource(path) {
   return /^(firestore\.rules|database\.rules\.json)$/.test(path) ||
-    /^(backend|frontend)\/src\/.*(auth|appcheck|boarding|telemetry|tripstate|workerfence|livebus|ride|session|privacy|retention)/i.test(path)
+    /^(backend|frontend)\/src\/.*(auth|appcheck|boarding|telemetry|tripstate|workerfence|livebus|ride|session|privacy|retention|fleet)/i.test(path)
       && !/\.(test|spec)\./.test(path);
 }
 

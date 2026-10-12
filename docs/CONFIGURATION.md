@@ -1,10 +1,20 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-05 17:45 IST (UTC+05:30).
+Last updated: 2026-10-11 18:00 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
 production environments.
+
+## Synthetic QA process controls
+
+`EKI_QA_SEED` is an optional uint32 seed (default 42) for `npm run qa:gnss`.
+`EKI_QA_REPLAY_PATH` is an optional generation index to replay a reported
+property failure; remove it to run the full campaign. Use process variables as
+shown in [the GNSS guide](qa/GNSS_PROPERTIES.md), with [the QA-only template](../qa/qa.env.example).
+Neither is a production backend setting or authorization for provider/network
+replay. QA reports preserve the exact source SHA, observed assertions and
+partial case evidence without claiming live-motion or RF acceptance.
 
 ## Backend variables
 

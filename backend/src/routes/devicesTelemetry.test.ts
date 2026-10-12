@@ -257,8 +257,13 @@ it("uses a short recovery window without trusting supplied device IDs", async ()
 });
 
 it("keeps telemetry available after the diagnostics IP pool is exhausted", async () => {
-  let response: Response | undefined;
-  for (let index = 0; index < 205; index++) response = await sendDiagnostics();
-  expect(response?.status).toBe(429);
-  expect((await sendTelemetry()).status).toBe(202);
+  // This checks separate admission pools, not wall-clock throughput. A busy
+  // worker may otherwise cross the shared ten-second window during the loop.
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+  try {
+    let response: Response | undefined;
+    for (let index = 0; index < 205; index++) response = await sendDiagnostics();
+    expect(response?.status).toBe(429);
+    expect((await sendTelemetry()).status).toBe(202);
+  } finally { clock.mockRestore(); }
 }, 15_000);

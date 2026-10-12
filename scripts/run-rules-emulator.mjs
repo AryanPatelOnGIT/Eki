@@ -14,9 +14,14 @@ import { safetyPreflight } from "./qa/safety-preflight.mjs";
  * deployable repository rule files are never modified.
  */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length && !['--browser', '--browser-providers', '--browser-service', '--api'].includes(args[0]))) throw new Error('Only named browser or API scopes are supported');
+const api = args[0] === '--api';
+const browser = args.length === 1 && !api;
 const evidenceDirectory = path.join(ROOT, 'artifacts/qa'); mkdirSync(evidenceDirectory, { recursive: true });
-for (const name of ['emulator-vitest.json', 'emulator-junit.xml', 'emulator-report.md', 'emulator-run.log']) rmSync(path.join(evidenceDirectory, name), { force: true });
-writeFileSync(path.join(evidenceDirectory, 'emulator-report.json'), JSON.stringify({
+const prefix = api ? 'api' : browser ? 'browser' : 'emulator';
+for (const name of [`${prefix}-${browser ? 'playwright' : 'vitest'}.json`, `${prefix}-junit.xml`, `${prefix}-report.md`, `${prefix}-run.log`, ...(browser ? ['browser-results', 'browser-progress.json'] : [])]) rmSync(path.join(evidenceDirectory, name), { force: true, recursive: true });
+writeFileSync(path.join(evidenceDirectory, `${prefix}-report.json`), JSON.stringify({
   sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(),
   dirty: Boolean(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: ROOT, encoding: 'utf8' }).trim()),
   startedAt: new Date().toISOString(), timezone: 'Asia/Calcutta', verdict: 'BLOCKED',
@@ -37,7 +42,7 @@ const emulatorArgs = [
   "firestore,database,auth",
   "--project",
   "demo-eki-qa",
-  `node "${path.join(ROOT, 'scripts/qa/run-emulator-tests.mjs')}"`,
+  `node "${path.join(ROOT, api ? 'scripts/qa/run-api.mjs' : browser ? 'scripts/qa/run-browser-tests.mjs' : 'scripts/qa/run-emulator-tests.mjs')}"`,
 ];
 
 function spawnNpx() {
@@ -50,6 +55,8 @@ function spawnNpx() {
     FIREBASE_DATABASE_URL: 'http://127.0.0.1:9005/',
     EKI_QA_EXTERNAL_PROVIDERS: 'mock',
     EKI_QA_CONFIRM_DISPOSABLE: '1',
+    EKI_QA_BASE_URL: 'http://127.0.0.1:3116/',
+    EKI_QA_BROWSER_SCOPE: args[0] === '--browser-providers' ? 'providers' : args[0] === '--browser-service' ? 'service' : 'all',
     DOTENV_CONFIG_PATH: path.join(ROOT, 'artifacts/qa/nonexistent.env'),
     METADATA_SERVER_DETECTION: 'none', // No GCP environment discovery in local demo tests.
   };
@@ -78,7 +85,7 @@ function spawnNpx() {
 }
 
 const child = spawnNpx();
-const deadline = setTimeout(() => { console.error('Emulator runner deadline exceeded; dependent tests BLOCKED.'); child.kill('SIGTERM'); }, 6 * 60_000);
+const deadline = setTimeout(() => { console.error('Emulator runner deadline exceeded; dependent tests BLOCKED.'); child.kill('SIGTERM'); }, (browser ? 7 : 6) * 60_000);
 
 child.on("error", (err) => {
   clearTimeout(deadline);
