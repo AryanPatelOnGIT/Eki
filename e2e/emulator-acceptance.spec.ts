@@ -1,4 +1,6 @@
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext, type BrowserContext } from '@playwright/test';
+
+const feedbackStatusGates = new WeakMap<BrowserContext, () => Promise<void>>();
 
 const control = 'http://127.0.0.1:3117';
 const evidence = async (request: APIRequestContext) => (await request.get(`${control}/evidence`)).json();
@@ -31,7 +33,12 @@ test.beforeEach(async ({ context, request, browser }, testInfo) => {
   const denied: string[] = [];
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
-    if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) await route.continue();
+    if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) {
+      const gate = url.port === '3116' && route.request().method() === 'PATCH' &&
+        /^\/api\/v2\/feedback\/[A-Za-z0-9_-]+$/.test(url.pathname) ? feedbackStatusGates.get(context) : undefined;
+      if (gate) { feedbackStatusGates.delete(context); await gate(); }
+      await route.continue();
+    }
     else { denied.push(`${url.protocol}//${url.hostname}:${url.port}`); await route.abort('blockedbyclient'); }
   });
   await context.routeWebSocket('**/*', websocket => {
@@ -57,6 +64,84 @@ test.afterEach(async ({ context, request, page }, testInfo) => {
   expect(current.transport.enabled).toBe(true);
   expect(current.transport.allowedConnections).toBeGreaterThan(0);
   expect(current.transport.deniedConnections).toBe(0);
+  expect(current.providers.externalNetworkExecuted).toBe(false);
+  expect(current.providers.deniedRequests).toBe(0);
+});
+
+test('route creation recovers from provider quota and lost acknowledgement then reuses geometry and deletes safely', async ({ page, request }) => {
+  test.setTimeout(45000);
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  await page.getByRole('button', { name: 'Add Route', exact: true }).click();
+  await page.getByLabel('Display Name', { exact: true }).fill('Synthetic provider route');
+  await page.getByLabel('Route ID', { exact: true }).fill('qa_created_route');
+  for (const name of ['origin', 'end']) {
+    await page.getByRole('searchbox', { name: 'Search for a stop', exact: true }).fill(`Synthetic ${name}`);
+    await page.getByRole('button').filter({ hasText: `Synthetic provider ${name}` }).click();
+  }
+  expect((await request.post(`${control}/providers/routes/malformed`)).ok()).toBe(true);
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('invalid geometry');
+  expect((await evidence(request)).routes).toHaveLength(1);
+  await page.getByRole('dialog').getByRole('button', { name: 'OK', exact: true }).click();
+  expect((await request.post(`${control}/providers/routes/rate-limit`)).ok()).toBe(true);
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Route calculation is busy');
+  const failed = await evidence(request);
+  expect(failed.routes.map((route: { id: string }) => route.id)).toEqual(['qa_route']);
+  expect(failed.providers.calls.filter((call: { provider: string }) => call.provider === 'routes').length).toBeGreaterThan(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'OK', exact: true }).click();
+  expect((await request.post(`${control}/providers/routes/valid`)).ok()).toBe(true);
+  let lost = false;
+  await page.route('http://127.0.0.1:3116/api/routes/qa_created_route', async route => {
+    if (route.request().method() !== 'PUT' || lost) { await route.continue(); return; }
+    lost = true; const response = await route.fetch(); expect(response.status()).toBe(200);
+    expect((await response.json()).saved).toBe(true); await route.abort('failed');
+  });
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByText('Route deployed!', { exact: true })).toBeVisible();
+  expect(lost).toBe(true);
+  const created = await evidence(request);
+  const stored = created.routes.find((route: { id: string }) => route.id === 'qa_created_route');
+  expect(stored).toMatchObject({ configVersion: 1, geometryVersion: 1, polylineQuality: 'HIGH_QUALITY' });
+  expect(stored.stops.map((stop: { name: string }) => stop.name)).toEqual(['Synthetic provider origin', 'Synthetic provider end']);
+  expect(stored.forwardPolyline).not.toBe(stored.reversePolyline);
+  expect(created.providers.calls.filter((call: { provider: string; mode: string }) => call.provider === 'routes' && call.mode === 'valid')).toHaveLength(2);
+  await page.getByRole('button', { name: 'Edit route Synthetic provider route', exact: true }).click();
+  await page.getByLabel('Display Name', { exact: true }).fill('Synthetic renamed route');
+  const update = page.waitForResponse(response => response.url() === 'http://127.0.0.1:3116/api/routes/qa_created_route' && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  expect(await (await update).json()).toMatchObject({ saved: true, geometryReused: true, configVersion: 2, geometryVersion: 1 });
+  await expect(page.getByText('Route updated!', { exact: true })).toBeVisible();
+  const renamed = await evidence(request);
+  expect(renamed.providers.calls).toEqual(created.providers.calls);
+  expect(renamed.routes.find((route: { id: string }) => route.id === 'qa_created_route').forwardPolyline).toBe(stored.forwardPolyline);
+  await page.getByRole('button', { name: 'Delete route Synthetic renamed route', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await evidence(request)).routes).toHaveLength(2);
+  await page.getByRole('button', { name: 'Delete route Synthetic renamed route', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Route', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit route Synthetic renamed route', exact: true })).toHaveCount(0);
+  expect((await evidence(request)).routes.map((route: { id: string }) => route.id)).toEqual(['qa_route']);
+});
+
+test('Places provider quota and actual abort deadline surface recoverable errors without adding a stop', async ({ page, request }, testInfo) => {
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  await page.getByRole('button', { name: 'Add Route', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: 'Search for a stop', exact: true });
+  expect((await request.post(`${control}/providers/places/rate-limit`)).ok()).toBe(true);
+  await search.fill(`Synthetic quota query ${testInfo.project.name}`);
+  await expect(page.getByRole('alert')).toContainText('busy');
+  expect((await request.post(`${control}/providers/places/timeout`)).ok()).toBe(true);
+  await search.fill(`Synthetic deadline query ${testInfo.project.name}`);
+  await expect(page.getByRole('alert')).toContainText('too long', { timeout: 10000 });
+  expect((await evidence(request)).routes).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Deploy', exact: true })).toBeDisabled();
+  expect((await request.post(`${control}/providers/places/valid`)).ok()).toBe(true);
+  await search.fill(`Synthetic new origin query ${testInfo.project.name}`);
+  await page.getByRole('button').filter({ hasText: 'Synthetic provider origin' }).click();
+  await expect(page.getByRole('button', { name: 'Deploy', exact: true })).toBeDisabled();
+  const calls = (await evidence(request)).providers.calls;
+  expect(calls.map((call: { mode: string }) => call.mode)).toEqual(['rate-limit', 'timeout', 'valid']);
 });
 
 test('boards through real auth API and persistence then restores one membership on reload', async ({ page, request }) => {
@@ -202,7 +287,7 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
 });
 
-test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request }) => {
+test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request, context }) => {
   test.setTimeout(60000);
   await page.goto('/'); await login(page); await board(page);
   const joined = (await evidence(request)).passengers.qa_passenger;
@@ -252,13 +337,29 @@ test('authenticated telemetry completes the joined ride and arms a distinct retu
   expect(deleted.sessions.map((ride: { id: string }) => ride.id)).toEqual([returning.id]);
   expect(deleted.completions).toEqual([]); expect(deleted.lock.sessionId).toBe(returning.id);
   await page.goto('/?panel=feedback');
-  await page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' }).click();
-  await page.getByRole('button', { name: 'reviewed', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
-  expect((await evidence(request)).feedbacks[0].status).toBe('reviewed');
+  const feedbackCard = page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' });
+  await feedbackCard.click();
+  let statusRequestPending = false;
+  let releaseStatusWrite: () => void = () => {};
+  const statusWriteGate = new Promise<void>(resolve => { releaseStatusWrite = resolve; });
+  feedbackStatusGates.set(context, async () => {
+    statusRequestPending = true;
+    await statusWriteGate;
+  });
+  try {
+    await page.getByRole('button', { name: 'reviewed', exact: true }).click();
+    await expect.poll(() => statusRequestPending).toBe(true);
+    await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
+    // Pending disable is not a confirmed write: no request has reached Express yet.
+    expect((await evidence(request)).feedbacks[0].status).toBe('new');
+  } finally { feedbackStatusGates.delete(context); releaseStatusWrite(); }
+  await expect.poll(async () => (await evidence(request)).feedbacks[0].status).toBe('reviewed');
+  await expect(feedbackCard).toContainText('reviewed');
+  await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'resolved', exact: true }).click();
+  await expect.poll(async () => (await evidence(request)).feedbacks[0].status).toBe('resolved');
+  await expect(feedbackCard).toContainText('resolved');
   await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeDisabled();
-  expect((await evidence(request)).feedbacks[0].status).toBe('resolved');
 });
 
 test('admin operator creation edit cancellation and deletion update real claims without changing a running operator', async ({ page, request }) => {
@@ -330,6 +431,10 @@ test('admin live service controls persist bounded delay and interrupt safely bef
   await page.getByRole('dialog').getByRole('button', { name: 'End ride', exact: true }).click();
   await expect(page.getByText('Ride qa_session ended early and was saved to history.', { exact: true })).toBeVisible();
   expect((await evidence(request)).sessions.find((ride: { id: string }) => ride.id === 'qa_session').status).toBe('interrupted');
+  // A slow worker may legitimately age the original seed beyond the real
+  // sixty-second arm policy. Supply a new authenticated fix before restarting.
+  const freshFix = await request.post(`${control}/telemetry/fresh-origin`);
+  expect(freshFix.ok()).toBe(true); expect((await freshFix.json()).statuses).toEqual([202]);
   await select(page, 'Operator', 'Synthetic operator (qa_driver)');
   await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Start service', exact: true }).click();

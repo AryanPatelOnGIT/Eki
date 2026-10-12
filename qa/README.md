@@ -1,11 +1,31 @@
 # Eki deterministic acceptance infrastructure
 
-This first implementation slice imports requirements and inventories current source.
-It changes no application, firmware, database rules or deployment behavior. It does
-not certify the 351-case ledger. Routine commands use Node and existing TypeScript
-dependencies, with no LLM calls or live provider requests.
+Last updated: 2026-10-12 17:13 IST (UTC+05:30).
+
+The infrastructure imports all 399 feature/matrix/experiment definitions and
+inventories current source. Bounded emulator and actual-component browser suites
+record partial software evidence with explicit provider and physical limits;
+they do not certify the 351-case ledger. A source regression also prevents invalid
+operator assignments from partially changing records before rejection. Routine
+commands use Node and locked dependencies, with no LLM calls or live provider
+requests. Default-branch schedules, deployments and field acceptance remain
+separate owner gates.
+
+The [witnessed field package](FIELD_ACCEPTANCE.md) supplies the unexecuted
+motion/bench/provider matrix and capture form linked to #300/#245/#246.
 
 ## Run locally
+
+`npm run qa:gnss` executes the [deterministic GNSS/property harness](GNSS_PROPERTIES.md)
+with separate L1 evidence, bounded seeds and replay paths. Its exact links are
+combined with the L2/L3 links without treating any level as whole-case acceptance.
+The [HTTP authorization sweep](HTTP_AUTHORIZATION.md) adds a separate L2
+published-operation negative matrix. [Native firmware evidence](NATIVE_EVIDENCE.md)
+records exact host-policy assertions. [Reviewed unit sub-oracles](REVIEWED_UNIT_EVIDENCE.md)
+record selected backend/frontend pure, mocked, loopback HTTP and React/jsdom checks. After all six instrumented
+families run on one clean commit, `npm run qa:report` builds the
+[current-source execution ledger](EXECUTION_EVIDENCE.md). Stale/dirty or incomplete
+observations cannot satisfy that report's required harness scopes.
 
 ```sh
 npm ci --ignore-scripts
@@ -92,10 +112,17 @@ remains separate from static configuration validation.
 `npm run qa:browser` runs actual passenger/admin components with the compiled
 backend and disposable Auth/Firestore/RTDB emulators. See
 [browser acceptance](BROWSER_ACCEPTANCE.md) for ports, setup, reports and exact
-provider/navigation/remaining-software boundaries. It runs twenty-six Chromium
+provider/navigation/remaining-software boundaries. It runs thirty Chromium
 viewport tests without replacing boarding/chat/profile children with panels.
 
 ## Audit and next implementation slices
+
+On 12 October 2026 the owner authorized merging the QA draft stack into `testing`
+once the remaining software work and checks are complete. That approval is
+conditional; uncovered software oracles and failed checks still require work.
+Default-branch schedule installation, release deployment and witnessed hardware
+acceptance remain separate gates. No merge has been performed by recording this
+authorization.
 
 See [the baseline audit](BASELINE_2026_10_11.md) for diagrams, gaps and risks.
 Next: expand reviewed P0 test/source mappings and refine the coverage budget;
@@ -103,7 +130,9 @@ deterministic GNSS/property replay; fail-closed demo emulator ingestion/recovery
 complete passenger and admin component/browser flows; scheduled read-only CI;
 measured load/mutation; separate field acceptance package.
 
-No nightly/weekly workflow is installed in this slice. Scheduled workflows need
+See [scheduled reliability](SCHEDULED_RELIABILITY.md) for proposed definitions,
+measured budgets and local reproduction. No nightly/weekly workflow is installed
+on the default branch. Scheduled workflows need
 the default branch and separate owner approval in the supplied specification.
 The existing PR CI can validate the catalog and publish static artifacts without
 production credentials; historical NOT_RUN cases do not make the job fail.
