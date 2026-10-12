@@ -5,11 +5,13 @@ import { buildCatalog, repositoryRoot } from './acceptance-catalog.mjs';
 import { gnssTestMap } from '../../qa/gnss-test-map.mjs';
 import { emulatorTestMap } from '../../qa/emulator-test-map.mjs';
 import { browserTestMap } from '../../qa/browser-test-map.mjs';
+import { apiTestMap } from '../../qa/api-test-map.mjs';
 
 export const evidenceFamilies = [
   { name: 'gnss', level: 'L1', verdict: 'GREEN_FOR_UNIT_SCOPE', mappings: gnssTestMap },
   { name: 'emulator', level: 'L2', verdict: 'GREEN_FOR_EXECUTED_EMULATOR_SCOPE', mappings: emulatorTestMap },
   { name: 'browser', level: 'L3', verdict: 'GREEN_FOR_EXECUTED_BROWSER_SCOPE', mappings: browserTestMap },
+  { name: 'api', level: 'L2', verdict: 'GREEN_FOR_EXECUTED_API_SCOPE', mappings: apiTestMap },
 ];
 
 // Observed suite success never closes the full source oracle. Historical,

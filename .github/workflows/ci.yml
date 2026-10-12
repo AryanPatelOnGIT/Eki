@@ -107,6 +107,16 @@ jobs:
         run: npm run test:e2e:admin
       - name: Verify actual passenger components and backend with disposable emulators
         run: node scripts/run-rules-emulator.mjs --browser
+      - name: Verify published protected HTTP authorization with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --api
+      - name: Retain actual HTTP authorization observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-authorization-evidence
+          path: artifacts/qa/api-*
+          if-no-files-found: warn
+          retention-days: 7
       - name: Summarize current-source QA scopes without claiming complete release acceptance
         if: always()
         run: npm run qa:report

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   # Validate this definition on its owned feature branch before installation.
   push:
-    branches: [codex/qa-nightly-reliability]
+    branches: [codex/qa-nightly-reliability, codex/qa-api-boundaries]
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
             if (context.repo.owner !== 'notnamansinha' || context.repo.repo !== 'Eki') throw new Error('Unexpected repository');
             let sha;
             if (context.eventName === 'push') {
-              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability') throw new Error('Untrusted branch');
+              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability' && context.ref !== 'refs/heads/codex/qa-api-boundaries') throw new Error('Untrusted branch');
               sha = context.sha;
             } else {
               if (context.ref !== 'refs/heads/main') throw new Error('Use the owner-approved default-branch definition');
@@ -40,7 +40,7 @@ jobs:
             if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid immutable revision');
             core.setOutput('sha', sha);
             core.setOutput('day', new Date().toISOString().slice(0, 10));
-            core.summary.addRaw(`Source: ${sha}; isolated software only; no LLM, live providers or physical-motion acceptance.`).write();
+            await core.summary.addRaw(`Source: ${sha}; isolated software only; no LLM, live providers or physical-motion acceptance.`).write();
 
   suites:
     needs: resolve
@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        suite: [gnss, emulator, browser]
+        suite: [gnss, emulator, browser, api]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 15:40 IST (UTC+05:30).
+Last updated: 2026-10-12 16:00 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -16,7 +16,9 @@ separate owner gates.
 `npm run qa:gnss` executes the [deterministic GNSS/property harness](GNSS_PROPERTIES.md)
 with separate L1 evidence, bounded seeds and replay paths. Its exact links are
 combined with the L2/L3 links without treating any level as whole-case acceptance.
-After all three suites run on one clean commit, `npm run qa:report` builds the
+The [HTTP authorization sweep](HTTP_AUTHORIZATION.md) adds a separate L2
+published-operation negative matrix. After the GNSS, emulator, browser and API
+suites run on one clean commit, `npm run qa:report` builds the
 [current-source execution ledger](EXECUTION_EVIDENCE.md). Stale/dirty or incomplete
 observations cannot satisfy that report's required harness scopes.
 

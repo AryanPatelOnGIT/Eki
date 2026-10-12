@@ -1,9 +1,9 @@
 # Current-source execution ledger
 
-Last updated: 2026-10-12 15:05 IST (UTC+05:30).
+Last updated: 2026-10-12 16:03 IST (UTC+05:30).
 
-`npm run qa:report` combines the GNSS L1, disposable emulator L2 and actual-component
-browser L3 reports with the full source-attributed catalog. It writes JSON and
+`npm run qa:report` combines GNSS L1, disposable emulator L2, HTTP authorization L2
+and actual-component browser L3 reports with the full source-attributed catalog. It writes JSON and
 Markdown under ignored `artifacts/qa/execution-report.*` and GitHub Step Summary.
 It is separate from the static catalog, which continues to import definitions
 without inventing executed statuses.
@@ -16,6 +16,7 @@ npm run qa:gnss
 npm run build --workspace=backend
 npm run test:rules
 npm run qa:browser
+npm run qa:api
 npm run qa:report
 ```
 
@@ -42,7 +43,7 @@ excluded or promoted by historical ledger notes.
 
 These commands do not run every existing frontend/backend unit suite or firmware
 build. Existing Production verification performs those separately; this ledger
-currently imports only the three explicitly instrumented QA families. Further
+currently imports only the four explicitly instrumented QA families. Further
 unit/firmware/control coverage requires exact observed evidence and reviewed
 case links. OAuth, real Maps/Places/App Check, hardware and production owner gates
 remain separate; motion evidence is tracked in #300 under #245.
