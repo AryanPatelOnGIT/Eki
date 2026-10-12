@@ -7,6 +7,7 @@ import { emulatorTestMap } from '../../qa/emulator-test-map.mjs';
 import { browserTestMap } from '../../qa/browser-test-map.mjs';
 import { apiTestMap } from '../../qa/api-test-map.mjs';
 import { nativeTestMap } from '../../qa/native-test-map.mjs';
+import { reviewedUnitTestMap } from '../../qa/reviewed-unit-test-map.mjs';
 
 export const evidenceFamilies = [
   { name: 'gnss', level: 'L1', verdict: 'GREEN_FOR_UNIT_SCOPE', mappings: gnssTestMap },
@@ -14,6 +15,7 @@ export const evidenceFamilies = [
   { name: 'browser', level: 'L3', verdict: 'GREEN_FOR_EXECUTED_BROWSER_SCOPE', mappings: browserTestMap },
   { name: 'api', level: 'L2', verdict: 'GREEN_FOR_EXECUTED_API_SCOPE', mappings: apiTestMap },
   { name: 'native', level: 'L1', verdict: 'GREEN_FOR_NATIVE_SCOPE', mappings: nativeTestMap },
+  { name: 'reviewedUnit', level: 'L1', verdict: 'GREEN_FOR_REVIEWED_UNIT_SCOPE', mappings: reviewedUnitTestMap },
 ];
 
 // Observed suite success never closes the full source oracle. Historical,
