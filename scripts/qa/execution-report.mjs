@@ -6,12 +6,16 @@ import { gnssTestMap } from '../../qa/gnss-test-map.mjs';
 import { emulatorTestMap } from '../../qa/emulator-test-map.mjs';
 import { browserTestMap } from '../../qa/browser-test-map.mjs';
 import { apiTestMap } from '../../qa/api-test-map.mjs';
+import { nativeTestMap } from '../../qa/native-test-map.mjs';
+import { reviewedUnitTestMap } from '../../qa/reviewed-unit-test-map.mjs';
 
 export const evidenceFamilies = [
   { name: 'gnss', level: 'L1', verdict: 'GREEN_FOR_UNIT_SCOPE', mappings: gnssTestMap },
   { name: 'emulator', level: 'L2', verdict: 'GREEN_FOR_EXECUTED_EMULATOR_SCOPE', mappings: emulatorTestMap },
   { name: 'browser', level: 'L3', verdict: 'GREEN_FOR_EXECUTED_BROWSER_SCOPE', mappings: browserTestMap },
   { name: 'api', level: 'L2', verdict: 'GREEN_FOR_EXECUTED_API_SCOPE', mappings: apiTestMap },
+  { name: 'native', level: 'L1', verdict: 'GREEN_FOR_NATIVE_SCOPE', mappings: nativeTestMap },
+  { name: 'reviewedUnit', level: 'L1', verdict: 'GREEN_FOR_REVIEWED_UNIT_SCOPE', mappings: reviewedUnitTestMap },
 ];
 
 // Observed suite success never closes the full source oracle. Historical,
@@ -25,6 +29,8 @@ export function combineExecutionEvidence(catalog, reports, families = evidenceFa
       reasons.push('Source SHA/clean-working-tree provenance mismatch');
     if (report.level !== family.level || report.physicalMotionExecuted !== false || report.realProvidersExecuted !== false)
       reasons.push('Invalid evidence level/provider/physical boundary');
+    if (family.name === 'native' && (report.actualBoardExecuted !== false || report.nativeTarget !== 'native'))
+      reasons.push('Native host evidence cannot claim an actual board target');
     const counts = report.counts;
     if (!counts || !Number.isSafeInteger(counts.discovered) || counts.discovered < 1
       || Object.values(counts).some(value => !Number.isSafeInteger(value) || value < 0)
@@ -33,17 +39,21 @@ export function combineExecutionEvidence(catalog, reports, families = evidenceFa
     const assertions = family.level === 'L3' ? report.tests : report.assertions;
     if (!Array.isArray(assertions) || assertions.length !== counts?.discovered) reasons.push('Missing observed assertion identities');
     else {
-      const validIdentity = item => typeof item.path === 'string' && typeof item.name === 'string'
+      const validIdentity = item => item && typeof item.path === 'string' && typeof item.name === 'string'
         && (family.level !== 'L3' || (typeof item.project === 'string' && Array.isArray(item.results)));
-      const identities = assertions.map(item => `${item.path}|${item.name}|${item.project ?? ''}`);
+      const indexedObservations = family.name === 'reviewedUnit';
+      if (indexedObservations && !assertions.every((item, index) => item?.observationIndex === index))
+        reasons.push('Missing/duplicate/noncontiguous reviewed observation position');
+      const identities = assertions.map(item => `${item?.path}|${item?.name}|${item?.project ?? ''}|${indexedObservations ? item?.observationIndex : ''}`);
       if (!assertions.every(validIdentity) || new Set(identities).size !== identities.length) reasons.push('Invalid/duplicate observed identity');
-      const passed = assertions.filter(item => family.level === 'L3' ? item.status === 'expected'
+      const passed = assertions.filter(item => family.level === 'L3' ? item?.status === 'expected'
         && item.results?.length === 1 && item.results[0].status === 'passed' && item.results[0].retry === 0
-        : ['PASS', 'passed'].includes(item.status)).length;
-      const failed = assertions.filter(item => ['FAIL', 'failed', 'unexpected'].includes(item.status)).length;
+        : ['PASS', 'passed'].includes(item?.status)).length;
+      const failed = assertions.filter(item => ['FAIL', 'failed', 'unexpected'].includes(item?.status)).length;
       if (passed !== counts.passed || failed !== counts.failed) reasons.push('Counts disagree with individual observations');
     }
-    if (!Array.isArray(report.cases) || new Set(report.cases?.map(item => item.caseId)).size !== report.cases?.length)
+    if (!Array.isArray(report.cases) || report.cases.some(item => !item || typeof item.caseId !== 'string')
+        || new Set(report.cases?.map(item => item?.caseId)).size !== report.cases?.length)
       reasons.push('Missing/duplicate case observations');
     const timestamp = Date.parse(report.startedAt), end = Date.parse(report.finishedAt);
     if (!Number.isFinite(timestamp) || !Number.isFinite(end) || end < timestamp) reasons.push('Invalid execution timestamps');
@@ -62,10 +72,10 @@ export function combineExecutionEvidence(catalog, reports, families = evidenceFa
       const links = mapping.tests.filter(link => link.level === family.level);
       const matched = links.map(link => assertions.filter(item => item.name === link.name &&
         (family.level === 'L3' ? `e2e/${item.path.replaceAll('\\', '/')}` : item.path) === link.path));
-      const passing = family.level === 'L3' ? matched.every(items => items.length === 2
+      const passing = links.length > 0 && (family.level === 'L3' ? matched.every(items => items.length === 2
         && items.map(item => item.project).sort().join(',') === 'desktop,mobile'
         && items.every(item => item.status === 'expected' && item.results.length === 1 && item.results[0].status === 'passed' && item.results[0].retry === 0))
-        : matched.every(items => items.length === 1 && ['PASS', 'passed'].includes(items[0].status));
+        : matched.every(items => items.length === 1 && ['PASS', 'passed'].includes(items[0].status)));
       const failed = matched.some(items => items.some(item => ['FAIL', 'failed', 'unexpected'].includes(item.status)));
       const status = passing ? 'PARTIAL' : failed ? 'FAIL' : 'BLOCKED';
       if (claim.status !== status) reasons.push('Claim disagrees with observed assertions');

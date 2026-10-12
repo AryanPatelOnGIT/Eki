@@ -10,6 +10,7 @@ const files = ['.github/workflows/deep-qa.yml', '.github/workflows/weekly-reliab
 const allowedActions = new Set([
   'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+  'actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97',
   'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd',
   'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
   'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
@@ -20,7 +21,7 @@ export function verifyIsolatedWorkflow(workflow) {
       || !workflow.concurrency?.group || workflow.concurrency.cancel_in_progress === true
       || workflow.concurrency['cancel-in-progress'] !== false) throw Error('Read-only permissions and bounded overlap required');
   if (Object.keys(workflow.on ?? {}).sort().join(',') !== 'push,schedule,workflow_dispatch'
-      || ![JSON.stringify(['codex/qa-nightly-reliability']), JSON.stringify(['codex/qa-nightly-reliability', 'codex/qa-api-boundaries'])].includes(JSON.stringify(workflow.on.push.branches))
+      || ![JSON.stringify(['codex/qa-nightly-reliability']), JSON.stringify(['codex/qa-nightly-reliability', 'codex/qa-api-boundaries', 'codex/qa-native-evidence', 'codex/qa-reviewed-unit-evidence', 'codex/qa-component-evidence', 'codex/qa-http-unit-evidence'])].includes(JSON.stringify(workflow.on.push.branches))
       || !Array.isArray(workflow.on.schedule) || workflow.on.schedule.length !== 1) throw Error('Only trusted schedule and owned dry-run events permitted');
   if (Object.keys(workflow.jobs ?? {}).sort().join(',') !== 'report,resolve,suites'
       || workflow.jobs.suites.needs !== 'resolve'

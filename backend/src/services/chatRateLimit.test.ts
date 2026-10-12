@@ -15,6 +15,25 @@ import { legacyCensorText } from "../../test-fixtures/chatModerationOracle";
 describe("evaluateChatRate", () => {
   const now = 1_000_000;
 
+  it("enforces literal three-second minute and hour boundary vectors", () => {
+    const clock = 10_000_000;
+    for (const [gap, allowed] of [[2999, false], [3000, true], [3001, true]] as const) {
+      const result = evaluateChatRate({ sentAt: [clock - gap] }, clock);
+      expect(result.allowed).toBe(allowed);
+      if (!allowed) expect(result).toEqual({ allowed: false, reason: "cooldown", retryAfterMs: 1 });
+    }
+    for (const delta of [1, 0, -1]) {
+      const minute = [clock - 60_000 + delta, ...Array.from({ length: 9 }, (_, i) => clock - 55_000 + i * 5000)];
+      const burst = evaluateChatRate({ sentAt: minute }, clock);
+      expect(burst.allowed).toBe(delta <= 0);
+      if (delta > 0) expect(burst).toEqual({ allowed: false, reason: "burst", retryAfterMs: 1 });
+      const hour = [clock - 3_600_000 + delta, ...Array.from({ length: 59 }, (_, i) => clock - 3_000_000 + i * 40_000)];
+      const hourly = evaluateChatRate({ sentAt: hour }, clock);
+      expect(hourly.allowed).toBe(delta <= 0);
+      if (delta > 0) expect(hourly).toEqual({ allowed: false, reason: "hourly", retryAfterMs: 1 });
+    }
+  });
+
   it("allows a first message with no stored window", () => {
     expect(evaluateChatRate(undefined, now)).toEqual({
       allowed: true,
