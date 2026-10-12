@@ -1,9 +1,15 @@
 # Eki deterministic acceptance infrastructure
 
-This first implementation slice imports requirements and inventories current source.
-It changes no application, firmware, database rules or deployment behavior. It does
-not certify the 351-case ledger. Routine commands use Node and existing TypeScript
-dependencies, with no LLM calls or live provider requests.
+Last updated: 2026-10-12 14:39 IST (UTC+05:30).
+
+The infrastructure imports all 399 feature/matrix/experiment definitions and
+inventories current source. Bounded emulator and actual-component browser suites
+record partial software evidence with explicit provider and physical limits;
+they do not certify the 351-case ledger. A source regression also prevents invalid
+operator assignments from partially changing records before rejection. Routine
+commands use Node and locked dependencies, with no LLM calls or live provider
+requests. Default-branch schedules, deployments and field acceptance remain
+separate owner gates.
 
 ## Run locally
 
@@ -92,7 +98,7 @@ remains separate from static configuration validation.
 `npm run qa:browser` runs actual passenger/admin components with the compiled
 backend and disposable Auth/Firestore/RTDB emulators. See
 [browser acceptance](BROWSER_ACCEPTANCE.md) for ports, setup, reports and exact
-provider/navigation/remaining-software boundaries. It runs twenty-six Chromium
+provider/navigation/remaining-software boundaries. It runs thirty Chromium
 viewport tests without replacing boarding/chat/profile children with panels.
 
 ## Audit and next implementation slices

@@ -1,6 +1,6 @@
 # Actual components with disposable browser integration
 
-Updated: 11 October 2026, 19:29 IST (Asia/Calcutta).
+Last updated: 2026-10-12 14:48 IST (UTC+05:30).
 
 This L3 suite mounts PassengerWorkspace with its actual boarding, profile,
 chat and feedback children, actual AuthProvider/hooks/database SDKs, and the
@@ -20,6 +20,13 @@ npx playwright install --with-deps chromium
 npm run qa:check
 npm run qa:browser
 ```
+
+For a targeted provider-boundary reproduction, `npm run qa:browser:providers`
+runs only the two provider cases in both viewports. Reports explicitly record
+scope `providers` and exclude all other case execution claims. Existing CI
+continues to execute the full thirty-test suite.
+`npm run qa:browser:service` likewise runs only the real delay/interruption/
+fresh-fix/restart case in both viewports and reports scope `service`.
 
 The launcher starts Firestore, RTDB and Auth with pinned Firebase CLI 15.14.0,
 validates the running hub, and uses only `demo-eki-qa`. Auth's client endpoints
@@ -41,7 +48,7 @@ These are scoped transport guards, not an OS sandbox for arbitrary native code.
 
 ## Assertions and evidence
 
-Thirteen named cases run once in each Chromium mobile/desktop viewport, one worker,
+Fifteen named cases run once in each Chromium mobile/desktop viewport, one worker,
 no retries. They cover successful boarding and reload restoration, wrong-code
 and distant-position denial with no membership mutation, lost chat response
 after a real commit and idempotent retry/listener delivery, persisted feedback
@@ -76,9 +83,12 @@ fixture request has a deadline and observes the real worker checkpoint before
 the next dependent fix. A reverse ride may already be active at its origin when
 observed; both armed and active are valid, and it must remain separately owned
 and empty of the original passenger.
+Before an interrupted ride is restarted, its test sends a fresh authenticated
+origin fix; it does not rely on a seed that may legitimately age beyond the
+source's sixty-second service-start policy on a busy machine.
 
 `browser-playwright.json`, `browser-junit.xml`, `browser-report.json`,
-`browser-report.md`, `browser-run.log` and failure screenshots are written under
+`browser-report.md`, `browser-run.log`, incremental `browser-progress.json` and failure screenshots are written under
 ignored `artifacts/qa`. Reports record actual source SHA/dirty state, observed
 test results, running emulator targets and browser versions. A visible-control
 census is attached after each test; it is a rendered candidate inventory,
@@ -88,7 +98,14 @@ both viewport assertions pass. Empty, skipped, flaky, timed-out or incomplete
 results cannot promote the execution scope to green. CI uploads failure
 evidence with seven-day retention. Trace recording is off so Auth tokens and
 storage state cannot enter a trace artifact; all identities/coordinates are
-synthetic. The launcher has a six-minute deadline and test child four minutes.
+synthetic. The browser launcher has a seven-minute deadline and test child five
+minutes; the L2 launcher remains six minutes. The expanded suite first measured
+3.9 minutes locally; its next run reached the previous four-minute child limit
+after 27 successful executions and produced BLOCKED, not a passing report. The
+bounded browser budget was adjusted for the additional real provider-abort checks.
+The progress reporter records each finished test without headers/storage, so a
+killed runner can retain its actual partial observations. A missing final report
+still leaves the overall verdict BLOCKED; progress cannot make that run green.
 
 Each test resets only owned demo records and inspects both browser and backend
 transport denials. Playwright closes its contexts and owned web servers;
@@ -105,9 +122,39 @@ redirects. App Check is explicitly disabled for isolated development here;
 the separate existing admin regression covers synthetic enforcement behavior.
 Real attestation/provider configuration is a manual gate.
 
+The fixture also wraps the backend's fetch boundary for exactly the Routes
+compute and Places search URLs. It returns owned synthetic responses in memory;
+those recognized requests never reach the underlying fetch or a provider socket.
+Unknown outbound fetch URLs fail closed and Node socket/DNS guards remain active.
+After rejecting all inherited real provider credentials, the fixture installs a
+constant synthetic key in its own backend process so the actual handlers can
+exercise their configured-provider branches. It is neither a usable provider
+credential nor an exception permitting cloud traffic.
+
+The additional browser cases inject upstream quota responses, the real Places
+five-second abort deadline, successful synthetic search, route creation and a
+lost response after a real route commit. The actual frontend reconciles the
+operation, metadata editing reuses persisted geometry without more provider
+calls, and cancel/confirmed deletion preserves/removes an unassigned route.
+These are L3 boundary-adapter checks, not L4 Google service acceptance. The
+adapter's directional polylines and distance/duration values are synthetic.
+Adapter unit checks demonstrate quota, malformed responses, abort and rejection
+of unknown outbound URLs without forwarding any provider request.
+Every browser test also requires zero denied fetch requests in the adapter, so
+an unexpected outbound attempt cannot be silently ignored by a handler.
+
+The 12 October focused provider run passed four executions in both viewports,
+and a separate service run passed both fresh-fix/restart executions. The new
+progress reporter retained all four provider observations with completed=true.
+These were dirty Linux development runs, not immutable full-suite acceptance.
+The initial full provider run had 29 passed/one failed due to cross-viewport
+Places cache reuse; subsequent runs hit their bounded deadline and are BLOCKED.
+Distinct per-viewport queries and an actual fresh device fix address those
+fixture assumptions. Hosted current-commit full-suite evidence is required.
+
 The primary synthetic completion/automatic return chain, inactive operator CRUD,
 service interruption/restart and terminal history deletion are now exercised.
-Remaining software includes route-save/Places fault scenarios, reassignment and
+Remaining software includes broader route-save/Places fault scenarios, reassignment and
 active-operator mutation denial, broader service/history race partitions, all error/control
 partitions, PWA failure modes or other browser engines. Those remain software
 work in the master roadmap, not physical-test waivers. Hardware/live-motion

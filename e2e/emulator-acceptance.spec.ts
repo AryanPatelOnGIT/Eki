@@ -57,6 +57,84 @@ test.afterEach(async ({ context, request, page }, testInfo) => {
   expect(current.transport.enabled).toBe(true);
   expect(current.transport.allowedConnections).toBeGreaterThan(0);
   expect(current.transport.deniedConnections).toBe(0);
+  expect(current.providers.externalNetworkExecuted).toBe(false);
+  expect(current.providers.deniedRequests).toBe(0);
+});
+
+test('route creation recovers from provider quota and lost acknowledgement then reuses geometry and deletes safely', async ({ page, request }) => {
+  test.setTimeout(45000);
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  await page.getByRole('button', { name: 'Add Route', exact: true }).click();
+  await page.getByLabel('Display Name', { exact: true }).fill('Synthetic provider route');
+  await page.getByLabel('Route ID', { exact: true }).fill('qa_created_route');
+  for (const name of ['origin', 'end']) {
+    await page.getByRole('searchbox', { name: 'Search for a stop', exact: true }).fill(`Synthetic ${name}`);
+    await page.getByRole('button').filter({ hasText: `Synthetic provider ${name}` }).click();
+  }
+  expect((await request.post(`${control}/providers/routes/malformed`)).ok()).toBe(true);
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('invalid geometry');
+  expect((await evidence(request)).routes).toHaveLength(1);
+  await page.getByRole('dialog').getByRole('button', { name: 'OK', exact: true }).click();
+  expect((await request.post(`${control}/providers/routes/rate-limit`)).ok()).toBe(true);
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Route calculation is busy');
+  const failed = await evidence(request);
+  expect(failed.routes.map((route: { id: string }) => route.id)).toEqual(['qa_route']);
+  expect(failed.providers.calls.filter((call: { provider: string }) => call.provider === 'routes').length).toBeGreaterThan(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'OK', exact: true }).click();
+  expect((await request.post(`${control}/providers/routes/valid`)).ok()).toBe(true);
+  let lost = false;
+  await page.route('http://127.0.0.1:3116/api/routes/qa_created_route', async route => {
+    if (route.request().method() !== 'PUT' || lost) { await route.continue(); return; }
+    lost = true; const response = await route.fetch(); expect(response.status()).toBe(200);
+    expect((await response.json()).saved).toBe(true); await route.abort('failed');
+  });
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByText('Route deployed!', { exact: true })).toBeVisible();
+  expect(lost).toBe(true);
+  const created = await evidence(request);
+  const stored = created.routes.find((route: { id: string }) => route.id === 'qa_created_route');
+  expect(stored).toMatchObject({ configVersion: 1, geometryVersion: 1, polylineQuality: 'HIGH_QUALITY' });
+  expect(stored.stops.map((stop: { name: string }) => stop.name)).toEqual(['Synthetic provider origin', 'Synthetic provider end']);
+  expect(stored.forwardPolyline).not.toBe(stored.reversePolyline);
+  expect(created.providers.calls.filter((call: { provider: string; mode: string }) => call.provider === 'routes' && call.mode === 'valid')).toHaveLength(2);
+  await page.getByRole('button', { name: 'Edit route Synthetic provider route', exact: true }).click();
+  await page.getByLabel('Display Name', { exact: true }).fill('Synthetic renamed route');
+  const update = page.waitForResponse(response => response.url() === 'http://127.0.0.1:3116/api/routes/qa_created_route' && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  expect(await (await update).json()).toMatchObject({ saved: true, geometryReused: true, configVersion: 2, geometryVersion: 1 });
+  await expect(page.getByText('Route updated!', { exact: true })).toBeVisible();
+  const renamed = await evidence(request);
+  expect(renamed.providers.calls).toEqual(created.providers.calls);
+  expect(renamed.routes.find((route: { id: string }) => route.id === 'qa_created_route').forwardPolyline).toBe(stored.forwardPolyline);
+  await page.getByRole('button', { name: 'Delete route Synthetic renamed route', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await evidence(request)).routes).toHaveLength(2);
+  await page.getByRole('button', { name: 'Delete route Synthetic renamed route', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Route', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit route Synthetic renamed route', exact: true })).toHaveCount(0);
+  expect((await evidence(request)).routes.map((route: { id: string }) => route.id)).toEqual(['qa_route']);
+});
+
+test('Places provider quota and actual abort deadline surface recoverable errors without adding a stop', async ({ page, request }, testInfo) => {
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  await page.getByRole('button', { name: 'Add Route', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: 'Search for a stop', exact: true });
+  expect((await request.post(`${control}/providers/places/rate-limit`)).ok()).toBe(true);
+  await search.fill(`Synthetic quota query ${testInfo.project.name}`);
+  await expect(page.getByRole('alert')).toContainText('busy');
+  expect((await request.post(`${control}/providers/places/timeout`)).ok()).toBe(true);
+  await search.fill(`Synthetic deadline query ${testInfo.project.name}`);
+  await expect(page.getByRole('alert')).toContainText('too long', { timeout: 10000 });
+  expect((await evidence(request)).routes).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Deploy', exact: true })).toBeDisabled();
+  expect((await request.post(`${control}/providers/places/valid`)).ok()).toBe(true);
+  await search.fill(`Synthetic new origin query ${testInfo.project.name}`);
+  await page.getByRole('button').filter({ hasText: 'Synthetic provider origin' }).click();
+  await expect(page.getByRole('button', { name: 'Deploy', exact: true })).toBeDisabled();
+  const calls = (await evidence(request)).providers.calls;
+  expect(calls.map((call: { mode: string }) => call.mode)).toEqual(['rate-limit', 'timeout', 'valid']);
 });
 
 test('boards through real auth API and persistence then restores one membership on reload', async ({ page, request }) => {
@@ -330,6 +408,10 @@ test('admin live service controls persist bounded delay and interrupt safely bef
   await page.getByRole('dialog').getByRole('button', { name: 'End ride', exact: true }).click();
   await expect(page.getByText('Ride qa_session ended early and was saved to history.', { exact: true })).toBeVisible();
   expect((await evidence(request)).sessions.find((ride: { id: string }) => ride.id === 'qa_session').status).toBe('interrupted');
+  // A slow worker may legitimately age the original seed beyond the real
+  // sixty-second arm policy. Supply a new authenticated fix before restarting.
+  const freshFix = await request.post(`${control}/telemetry/fresh-origin`);
+  expect(freshFix.ok()).toBe(true); expect((await freshFix.json()).statuses).toEqual([202]);
   await select(page, 'Operator', 'Synthetic operator (qa_driver)');
   await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Start service', exact: true }).click();

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
 import { createServer, Server } from 'node:http';
 import { safetyPreflight } from '../../scripts/qa/safety-preflight.mjs';
+import { createProviderAdapter, syntheticProviderKey } from './providers.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 for (const path of ['.env', 'backend/.env', 'e2e/emulator/.env']) {
@@ -24,6 +25,12 @@ const app = initializeApp({ projectId: project, databaseURL: `http://127.0.0.1:9
 const db = getFirestore(app); db.settings({ host: '127.0.0.1:8085', ssl: false });
 const realtime = getDatabase(app); const auth = getAuth(app);
 const { encodePolyline } = require(resolve(root, 'backend/dist/lib/polylineUtils.js'));
+const { routeGeometrySignature } = require(resolve(root, 'backend/dist/lib/routeGeometrySignature.js'));
+const providers = createProviderAdapter(globalThis.fetch, encodePolyline);
+globalThis.fetch = providers.fetch;
+// No inherited provider credential is accepted by preflight. This owned fake
+// key only unlocks the real handler's in-memory provider response adapter.
+process.env.GOOGLE_MAPS_API_KEY = syntheticProviderKey;
 const { hashDeviceSecret, invalidateDeviceCredentialCache } = require(resolve(root, 'backend/dist/services/deviceTelemetryService.js'));
 const deviceSecret = 'synthetic-browser-device-only';
 const secretHash = await hashDeviceSecret(deviceSecret);
@@ -33,7 +40,10 @@ const route = { id: 'qa_route', name: 'Synthetic route', color: '#3B82F6', durat
     { id: 'middle', name: 'Synthetic middle', shortName: 'Middle', lat: 23.0018, lng: 72 },
     { id: 'end', name: 'Synthetic end', shortName: 'End', lat: 23.0036, lng: 72 }] };
 route.forwardPolyline = encodePolyline(route.stops); route.reversePolyline = encodePolyline([...route.stops].reverse());
-Object.assign(route, { polylineQuality: 'HIGH_QUALITY', geometryVersion: 1, configVersion: 1 });
+Object.assign(route, { polylineQuality: 'HIGH_QUALITY', geometryVersion: 1, configVersion: 1,
+  geometrySignature: routeGeometrySignature(route.stops), polyline: route.forwardPolyline,
+  forwardDistanceMeters: 400, reverseDistanceMeters: 400, distanceMeters: 400,
+  forwardDuration: '600s', reverseDuration: '600s' });
 for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
   try { await auth.getUser(uid); } catch { await auth.createUser({ uid, email: `${uid}@example.invalid`, password: 'SyntheticOnly123!', displayName: uid }); }
   await auth.setCustomUserClaims(uid, uid === 'qa_admin' ? { role: 'admin', admin: true } : { role: 'passenger' });
@@ -49,9 +59,10 @@ const databaseRules = await fetch(`http://127.0.0.1:9005/.settings/rules.json?ns
 if (!databaseRules.ok) throw new Error('Browser database rules installation failed');
 
 async function reset() {
+  providers.reset();
   epoch = Date.now() - 45000;
   for (const collection of ['ride_sessions', 'routes', 'buses', 'users', 'feedbacks', 'feedbackCooldowns',
-    'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests'])
+    'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations'])
     await db.recursiveDelete(db.collection(collection));
   for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
     await auth.setCustomUserClaims(uid, uid === 'qa_admin' ? { role: 'admin', admin: true } : { role: 'passenger' });
@@ -84,12 +95,16 @@ await reset();
 const control = createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && req.url === '/reset') { await reset(); res.end('{}'); return; }
-    if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/end'].includes(req.url)) {
+    if (req.method === 'POST' && /^\/providers\/(routes|places)\/(valid|rate-limit|malformed|timeout)$/.test(req.url)) {
+      const segments = req.url.split('/'); providers.setMode(segments[2], segments[3]); res.end('{}'); return;
+    }
+    if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/end', '/telemetry/fresh-origin'].includes(req.url)) {
       // Real authenticated device HTTP ingestion; no direct completion writes.
       const samples = req.url === '/telemetry/middle'
         ? [{ seq: 2, offset: 20000, lat: 23.0018, speed: 45, motionState: 'moving' },
           { seq: 3, offset: 25000, lat: 23.0018, speed: 45, motionState: 'moving' }]
-        : [{ seq: 4, offset: 45000, lat: 23.0036, speed: 0, motionState: 'stopped' }];
+        : req.url === '/telemetry/end' ? [{ seq: 4, offset: 45000, lat: 23.0036, speed: 0, motionState: 'stopped' }]
+        : [{ seq: 5, offset: Date.now() - epoch, lat: 23, speed: 0, motionState: 'stopped' }];
       const statuses = [];
       for (const { offset, ...sample } of samples) {
         const response = await fetch('http://127.0.0.1:3116/api/devices/qa_device/telemetry', {
@@ -119,6 +134,7 @@ const control = createServer(async (req, res) => {
       const sessions = await db.collection('ride_sessions').get();
       const completions = await db.collection('completed_trips').get();
       const drivers = await db.collection('drivers').get();
+      const routes = await db.collection('routes').get();
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ passengers: ride?.passengers ?? {}, passengerIds: ride?.passengerIds ?? [],
         messages: messages.docs.map(doc => ({ id: doc.id, ...doc.data() })), feedbacks: feedbacks.docs.map(doc => doc.data()),
@@ -127,6 +143,7 @@ const control = createServer(async (req, res) => {
         completions: completions.docs.map(doc => ({ id: doc.id, ...doc.data() })),
         drivers: drivers.docs.map(doc => ({ id: doc.id, ...doc.data() })),
         otherAccountClaims: (await auth.getUser('qa_other')).customClaims,
+        routes: routes.docs.map(doc => ({ id: doc.id, ...doc.data() })), providers: providers.evidence(),
         live: (await realtime.ref('activeBuses/qa_bus_qa_route').get()).val(),
         lock: (await db.collection('_active_bus_locks').doc('qa_bus').get()).data() ?? null,
         settings: (await db.collection('settings').doc('global').get()).data(), transport: globalThis.__ekiQaNetworkGuard })); return;
