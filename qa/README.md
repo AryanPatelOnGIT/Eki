@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 14:39 IST (UTC+05:30).
+Last updated: 2026-10-12 15:40 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -116,7 +116,9 @@ deterministic GNSS/property replay; fail-closed demo emulator ingestion/recovery
 complete passenger and admin component/browser flows; scheduled read-only CI;
 measured load/mutation; separate field acceptance package.
 
-No nightly/weekly workflow is installed in this slice. Scheduled workflows need
+See [scheduled reliability](SCHEDULED_RELIABILITY.md) for proposed definitions,
+measured budgets and local reproduction. No nightly/weekly workflow is installed
+on the default branch. Scheduled workflows need
 the default branch and separate owner approval in the supplied specification.
 The existing PR CI can validate the catalog and publish static artifacts without
 production credentials; historical NOT_RUN cases do not make the job fail.

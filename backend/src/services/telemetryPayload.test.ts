@@ -25,6 +25,54 @@ function encode(value: unknown): Buffer {
 }
 
 describe("parseTelemetryPayload", () => {
+  it("rejects primitive and array shapes with the explicit shape reason", () => {
+    for (const value of [null, undefined, false, true, 0, 1, "", "1", [], [valid]]) {
+      expect(parseTelemetryValue(value, now)).toEqual({ ok: false, reason: "invalid_shape" });
+    }
+  });
+
+  it("rejects empty objects and closed-schema prefixes before field validation", () => {
+    expect(parseTelemetryValue({}, now)).toEqual({ ok: false, reason: "unexpected_fields" });
+    for (const schema of [valid, Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "gpsHdop")),
+      { lat: valid.lat, lng: valid.lng, speed: valid.speed, heading: valid.heading, motionState: valid.motionState, timestamp: now }]) {
+      const prefix = Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "timestamp"));
+      expect(parseTelemetryValue(prefix, now)).toEqual({ ok: false, reason: "unexpected_fields" });
+    }
+  });
+
+  it("accepts all three motion states and rejects unknown or non-string states", () => {
+    for (const motionState of ["moving", "stopped", "uncertain"]) {
+      expect(parseTelemetryValue({ ...valid, motionState }, now)).toEqual({ ok: true, value: { ...valid, motionState } });
+    }
+    for (const motionState of ["", "Moving", "stationary", null, 1, {}, []]) {
+      expect(parseTelemetryValue({ ...valid, motionState }, now)).toEqual({ ok: false, reason: "invalid_motion_state" });
+    }
+  });
+
+  it("preserves delayed device send time in both sequenced schemas and rejects invalid send clocks", () => {
+    for (const schema of [valid, Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "gpsHdop"))]) {
+      const input = { ...schema, timestamp: now - 30_000, deviceSentAt: now - 10_000 };
+      expect(parseTelemetryValue(input, now)).toEqual({ ok: true, value: { ...valid, ...input, gpsHdop: "gpsHdop" in schema ? 1.2 : null } });
+      for (const deviceSentAt of [now - 30_001, now + 10_001, now + 0.5, NaN, Infinity, null, String(now), [], {}]) {
+        expect(parseTelemetryValue({ ...input, deviceSentAt }, now)).toEqual({ ok: false, reason: "invalid_device_sent_at" });
+      }
+      expect(parseTelemetryValue({ ...input, deviceSentAt: now + 10_000 }, now)).toEqual({ ok: true,
+        value: { ...valid, ...input, gpsHdop: "gpsHdop" in schema ? 1.2 : null, deviceSentAt: now } });
+    }
+  });
+
+  it("accepts a valid JSON body at 512 bytes and refuses zero and 513 bytes before parsing", () => {
+    const json = JSON.stringify(valid);
+    for (const bytes of [511, 512]) {
+      const body = Buffer.from(json + " ".repeat(bytes - Buffer.byteLength(json)));
+      expect(body).toHaveLength(bytes);
+      expect(parseTelemetryPayload(body, now)).toEqual({ ok: true, value: valid });
+    }
+    expect(parseTelemetryPayload(Buffer.alloc(0), now)).toEqual({ ok: false, reason: "payload_size" });
+    const tooLarge = Buffer.from(json + " ".repeat(513 - Buffer.byteLength(json)));
+    expect(parseTelemetryPayload(tooLarge, now)).toEqual({ ok: false, reason: "payload_size" });
+  });
+
   it("accepts exactly the nine approved telemetry fields", () => {
     const parsed = parseTelemetryPayload(encode(valid), now);
     expect(parsed).toEqual({ ok: true, value: valid });

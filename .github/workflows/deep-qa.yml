@@ -1,0 +1,123 @@
+name: Isolated nightly QA
+
+on:
+  schedule:
+    - cron: '17 20 * * *'
+  workflow_dispatch:
+  # Validate this definition on its owned feature branch before installation.
+  push:
+    branches: [codex/qa-nightly-reliability]
+
+permissions:
+  contents: read
+concurrency:
+  group: isolated-nightly-qa
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      campaign-day: ${{ steps.source.outputs.day }}
+    steps:
+      - name: Resolve one immutable source revision
+        id: source
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            if (context.repo.owner !== 'notnamansinha' || context.repo.repo !== 'Eki') throw new Error('Unexpected repository');
+            let sha;
+            if (context.eventName === 'push') {
+              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability') throw new Error('Untrusted branch');
+              sha = context.sha;
+            } else {
+              if (context.ref !== 'refs/heads/main') throw new Error('Use the owner-approved default-branch definition');
+              const response = await github.rest.git.getRef({ ...context.repo, ref: 'heads/testing' });
+              sha = response.data.object.sha;
+            }
+            if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid immutable revision');
+            core.setOutput('sha', sha);
+            core.setOutput('day', new Date().toISOString().slice(0, 10));
+            core.summary.addRaw(`Source: ${sha}; isolated software only; no LLM, live providers or physical-motion acceptance.`).write();
+
+  suites:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [gnss, emulator, browser]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source-sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify deterministic configuration and catalog
+        run: npm run qa:check
+      - name: Select runner Java 21
+        if: matrix.suite != 'gnss'
+        run: |
+          test -x "$JAVA_HOME_21_X64/bin/java"
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+      - name: Build backend for real isolated integration
+        if: matrix.suite != 'gnss'
+        run: npm run build --workspace=backend
+      - name: Install bounded browser project
+        if: matrix.suite == 'browser'
+        run: npx playwright install --with-deps chromium
+      - name: Execute recorded campaign
+        env:
+          EKI_QA_CAMPAIGN_DAY: ${{ needs.resolve.outputs.campaign-day }}
+          EKI_QA_SUITE: ${{ matrix.suite }}
+        run: node scripts/qa/campaign.mjs "$EKI_QA_SUITE"
+      - name: Retain this suite's observed evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-${{ matrix.suite }}
+          path: artifacts/qa/
+          if-no-files-found: error
+          retention-days: 7
+
+  report:
+    needs: [resolve, suites]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source-sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: nightly-*
+          path: artifacts/qa/
+          merge-multiple: true
+      - name: Validate every scheduled campaign and current-source acceptance scope
+        run: node scripts/qa/campaign-report.mjs
+      - name: Retain honest combined ledger
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-current-source-ledger
+          path: |
+            artifacts/qa/execution-report.*
+            artifacts/qa/campaign-summary.*
+          if-no-files-found: error
+          retention-days: 7
