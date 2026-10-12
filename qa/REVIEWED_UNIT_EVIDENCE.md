@@ -1,15 +1,16 @@
 # Reviewed unit sub-oracles
 
-Last updated: 2026-10-12 16:58 IST (UTC+05:30).
+Last updated: 2026-10-12 17:00 IST (UTC+05:30).
 
-`npm run qa:unit:reviewed` executes ten reviewed backend/frontend unit files and
+`npm run qa:unit:reviewed` executes fifteen reviewed backend/frontend files and
 records exact JSON/JUnit identities, source SHA, dirty state and timestamps. The
-current selection has 77 backend and 37 frontend observations. Every assertion
+current selection has 77 backend and 91 frontend observations. Every assertion
 must pass without skip/block; missing files or workspace reports block the scope.
 The Node socket/DNS guard is preloaded before SDK imports. Unit dependencies are
-pure or mocked; real OAuth/Firebase/provider/browser behavior is not claimed.
+pure, mocked or actual React/jsdom components/hooks; real OAuth/Firebase/provider/browser
+behavior is not claimed.
 
-Thirty explicit feature mappings cover limited sub-oracles for auth cache and
+Explicit feature mappings cover limited sub-oracles for auth cache and
 readiness, boarding code/accuracy/trusted-fix/order, trip reducer/shutdown,
 privacy queue recovery, passenger ride identity, directional views/cache,
 feedback eligibility and history interaction. Each link was compared with its
@@ -25,6 +26,16 @@ values. The ledger requires those positions and still rejects ambiguous title
 matches for a case link. Initial hosted runs passed 114 tests but correctly blocked
 aggregation because these repeated template titles were not unique. The positional
 record preserves all observations while leaving unreviewed parameter rows unmapped.
+
+The component selection adds actual AuthProvider/useAuth, PassengerBoardingView,
+PassengerWorkspace restoration and FeedbackModal. Assertions exercise mounted
+state, selectors, close/Escape, permission denial, late GPS/token/HTTP callbacks,
+sign-out/account transitions, membership verification and stable feedback retry
+IDs. SDK/Auth/App Check, HTTP and GPS are mocked. Workspace map and boarding
+children are replaced; the boarding workflow file separately mounts the real
+selector. The preparation-budget file substitutes a native select and controls
+the clock. These are L1 component sub-oracles, not Chromium, real permissions,
+durable membership or deployed provider acceptance.
 
 New boarding tests establish exact -60000/+10000 millisecond trust boundaries,
 bus/route/session binding, offline/terminal refusal, accuracy 0..100 inclusive
@@ -58,7 +69,7 @@ are needed for this narrow selection. Results are under
 one worker and no file parallelism. The combined runner refuses a mismatched
 file census or absent assertion evidence.
 
-The first local changed-checkout run on 12 October 2026 passed 114/114 assertions
+The expanded local changed-checkout run on 12 October 2026 passed 168/168 assertions
 with zero skips/blocks. That run verifies harness configuration and limited
 oracles; a clean hosted commit is needed for current-source acceptance. Software
 release and physical field deployment remain unverified.

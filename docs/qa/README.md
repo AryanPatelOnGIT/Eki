@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 16:47 IST (UTC+05:30).
+Last updated: 2026-10-12 17:00 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -22,8 +22,8 @@ combined with the L2/L3 links without treating any level as whole-case acceptanc
 The [HTTP authorization sweep](HTTP_AUTHORIZATION.md) adds a separate L2
 published-operation negative matrix. [Native firmware evidence](NATIVE_EVIDENCE.md)
 records exact host-policy assertions. [Reviewed unit sub-oracles](REVIEWED_UNIT_EVIDENCE.md)
-record selected backend/frontend pure or mocked checks. After all six instrumented families
-suites run on one clean commit, `npm run qa:report` builds the
+record selected backend/frontend pure, mocked and React/jsdom checks. After all six instrumented
+families run on one clean commit, `npm run qa:report` builds the
 [current-source execution ledger](EXECUTION_EVIDENCE.md). Stale/dirty or incomplete
 observations cannot satisfy that report's required harness scopes.
 

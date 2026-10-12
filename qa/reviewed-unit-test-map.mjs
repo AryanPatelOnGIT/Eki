@@ -1,3 +1,5 @@
+import { componentTestMap } from './component-test-map.mjs';
+import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 const backend = (file, suite, title) => ({ path: `backend/src/services/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
 const frontend = (file, suite, title) => ({ path: `frontend/src/lib/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
 const rows = [
@@ -65,7 +67,7 @@ const rows = [
   ['HIST01', 'Pure history normalization and earliest event deduplication retain stable stop identity; complete current ledger oracle and durable browser outcomes remain separate.',
     ['frontend/src/lib/rideHistory.ts'], [frontend('rideHistory', 'ride history timestamp normalization', 'normalizes milliseconds, seconds, Date, and Firestore timestamp values'), frontend('rideHistory', 'ride history stop records', 'keeps the earliest trustworthy event for each stop index')]],
 ];
-export const reviewedUnitTestMap = rows.map(([caseId, scope, sourcePaths, tests]) => ({ caseId, scope, sourcePaths,
-  tests: tests.map(link => ({ ...link, semantics: scope })) }));
+export const reviewedUnitTestMap = mergeTestMaps(rows.map(([caseId, scope, sourcePaths, tests]) => ({ caseId, scope, sourcePaths,
+  tests: tests.map(link => ({ ...link, semantics: scope })) })), componentTestMap);
 export const reviewedUnitFiles = Object.freeze(Object.fromEntries(['backend', 'frontend'].map(workspace => [workspace,
   [...new Set(reviewedUnitTestMap.flatMap(item => item.tests).filter(link => link.path.startsWith(`${workspace}/`)).map(link => link.path.slice(workspace.length + 1)))]])));
