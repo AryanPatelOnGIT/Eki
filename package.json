@@ -32,7 +32,8 @@
     "qa:browser": "npm run build --workspace=backend && node scripts/run-rules-emulator.mjs --browser",
     "qa:browser:providers": "npm run build --workspace=backend && node scripts/run-rules-emulator.mjs --browser-providers",
     "qa:browser:service": "npm run build --workspace=backend && node scripts/run-rules-emulator.mjs --browser-service",
-    "qa:budget": "node scripts/qa/coverage-budget.mjs"
+    "qa:budget": "node scripts/qa/coverage-budget.mjs",
+    "qa:gnss": "node scripts/qa/run-gnss.mjs"
   },
   "overrides": {
     "@next/eslint-plugin-next": {

@@ -39,7 +39,10 @@ jobs:
         run: npm run qa:budget
       - name: Publish static acceptance coverage without claiming execution
         run: npm run qa:catalog
+      - name: Record deterministic GNSS unit properties with exact assertion evidence
+        run: npm run qa:gnss
       - name: Retain source-attributed acceptance catalog
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: static-acceptance-catalog

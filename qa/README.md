@@ -13,6 +13,10 @@ separate owner gates.
 
 ## Run locally
 
+`npm run qa:gnss` executes the [deterministic GNSS/property harness](GNSS_PROPERTIES.md)
+with separate L1 evidence, bounded seeds and replay paths. Its exact links are
+combined with the L2/L3 links without treating any level as whole-case acceptance.
+
 ```sh
 npm ci --ignore-scripts
 npm run qa:test
