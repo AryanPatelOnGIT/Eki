@@ -1,6 +1,8 @@
 # Eki deterministic acceptance infrastructure
 
-This first implementation slice imports requirements and inventories current source.
+The catalog imports requirements and inventories current source. The next
+implemented suite adds [deterministic GNSS unit properties](GNSS_PROPERTIES.md)
+with separate execution evidence (`npm run qa:gnss`).
 It changes no application, firmware, database rules or deployment behavior. It does
 not certify the 351-case ledger. Routine commands use Node and existing TypeScript
 dependencies, with no LLM calls or live provider requests.
@@ -50,8 +52,9 @@ every historical PR/comment or rendered browser state.
 - Declared tests are not runtime-expanded test counts. Describe titles are
   context only. Database call candidates need review to identify actual writes.
 - `test-map.mjs` contains justified exact named test mappings. Initially H17
-  maps only the existing L0 OpenAPI/router reconciliation assertion. Everything
-  else is conservatively unmapped, even where existing regressions are present.
+  maps the existing L0 OpenAPI/router reconciliation assertion. GNSS mappings
+  link exact L1 assertions with limited semantics; complete cases remain open.
+  Other cases are conservatively unmapped, even where existing regressions exist.
   Unmapped does **not** mean the repository has no tests.
 - Catalog generation can produce only NOT_RUN or NOT_COVERED. History is
   explicitly separate; PASS cannot be imported by editing a status field.

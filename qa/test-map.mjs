@@ -1,4 +1,5 @@
-// Reviewed static contract mapping only. No whole API01 or application case is closed.
+import { gnssTestMap } from './gnss-test-map.mjs';
+// Current reviewed links preserve boarding regressions; no complete acceptance case is claimed.
 export const testMap = [{
   caseId: 'H17',
   scope: 'Mounted Express methods/paths agree with the published OpenAPI contract; L0 only.',
@@ -31,4 +32,4 @@ export const testMap = [{
     level: 'L1',
     semantics: 'Both HTTP handlers acknowledge boarding and record membership for numeric zero bus/passenger coordinates using mocked storage.',
   }],
-}];
+}, ...gnssTestMap];

@@ -2,35 +2,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { pathToFileURL } from 'node:url';
 
 const profiles = new Set(['moving', 'reverse', 'stationary', 'jitter', 'stop-start',
   'duplicate', 'reorder', 'burst', 'outage45', 'outage120', 'outage301', 'teleport',
   'poor-hdop', 'uncertain', 'missing-hdop', 'invalid-speed', 'invalid-heading',
   'stale', 'future', 'wrong-fields']);
-const args = Object.create(null);
-const booleanFlags = new Set(['send', 'confirm-disposable', 'help']);
-const valueFlags = new Set(['profile', 'count', 'seed', 'out', 'base', 'device', 'path']);
-for (let i = 2; i < process.argv.length; i++) {
-  const key = process.argv[i].replace(/^--/, '');
-  if (!process.argv[i].startsWith('--') || (!booleanFlags.has(key) && !valueFlags.has(key))) {
-    throw new Error(`Unknown argument: ${process.argv[i]}`);
-  }
-  if (booleanFlags.has(key)) args[key] = true;
-  else {
-    const value = process.argv[++i];
-    if (!value || value.startsWith('--')) throw new Error(`Missing value for --${key}`);
-    args[key] = value;
-  }
-}
-if (args.help) {
-  console.log('Offline: --profile NAME --count N --seed N --path coordinates.json --out plan.jsonl');
-  console.log('Opt-in local replay: --send --base http://127.0.0.1:3001 --device ID --confirm-disposable');
-  console.log('Replay secret comes only from EKI_QA_DEVICE_SECRET. Profiles:', [...profiles].join(', '));
-  process.exit(0);
-}
+
+/** Pure generation with caller-supplied points; --path is read only for explicit CLI fixtures. */
+export function generateGnssPlan(args = {}) {
 const profile = args.profile || 'moving';
-const count = Number(args.count || 240);
-let rng = Number(args.seed || 42);
+const count = Number(args.count ?? 240);
+let rng = Number(args.seed ?? 42);
 if (!profiles.has(profile)) throw new Error(`Unknown profile: ${profile}`);
 if (!Number.isSafeInteger(count) || count < 3 || count > 3600) throw new Error('count must be 3..3600');
 if (!Number.isSafeInteger(rng) || rng < 0 || rng > 0xffffffff) throw new Error('seed must be uint32');
@@ -53,13 +36,13 @@ const bearing = (a, b) => {
     Math.cos(radians(a.lat)) * Math.sin(radians(b.lat)) -
     Math.sin(radians(a.lat)) * Math.cos(radians(b.lat)) * Math.cos(dn)) * 180 / Math.PI + 360) % 360;
 };
-let points = args.path ? JSON.parse(fs.readFileSync(args.path, 'utf8')) : [{ lat: 23, lng: 72 }, { lat: 23.05, lng: 72.05 }];
+let points = args.points ?? (args.path ? JSON.parse(fs.readFileSync(args.path, 'utf8')) : [{ lat: 23, lng: 72 }, { lat: 23.05, lng: 72.05 }]);
 if (!Array.isArray(points) || points.length < 2 || points.length > 100000 || points.some(p =>
   !p || !Number.isFinite(p.lat) || Math.abs(p.lat) > 90 || !Number.isFinite(p.lng) || Math.abs(p.lng) > 180)) {
   throw new Error('path must contain 2..100000 finite lat/lng coordinate objects');
 }
 if (profile === 'reverse') {
-  if (args.path) throw new Error('For real reverse roads, supply reverse geometry with --profile moving. Do not reverse a real path.');
+  if (args.path || args.points) throw new Error('For real reverse roads, supply reverse geometry with --profile moving. Do not reverse a real path.');
   points = [...points].reverse();
 }
 const segments = points.slice(1).map((p, i) => distance(points[i], p));
@@ -109,12 +92,38 @@ for (let i = 0; i < count; i++) {
   if (profile === 'invalid-speed' && i === 10) body.speed = 201;
   if (profile === 'invalid-heading' && i === 10) body.heading = 360;
   if (profile === 'wrong-fields' && i === 10) body.busId = 'forged-bus';
-  const event = { profile, seed: Number(args.seed || 42), scheduleOffsetMs, sampleOffsetMs,
+  const event = { profile, seed: Number(args.seed ?? 42), scheduleOffsetMs, sampleOffsetMs,
     sentOffsetMs: Math.max(sampleOffsetMs, scheduleOffsetMs), body };
   plan.push(event);
   if (profile === 'duplicate' && i % 10 === 5) plan.push({ ...event, scheduleOffsetMs: scheduleOffsetMs + 250, body: { ...body } });
 }
 plan.sort((a, b) => a.scheduleOffsetMs - b.scheduleOffsetMs);
+return plan;
+}
+
+async function runCli() {
+const args = Object.create(null);
+const booleanFlags = new Set(['send', 'confirm-disposable', 'help']);
+const valueFlags = new Set(['profile', 'count', 'seed', 'out', 'base', 'device', 'path']);
+for (let i = 2; i < process.argv.length; i++) {
+  const key = process.argv[i].replace(/^--/, '');
+  if (!process.argv[i].startsWith('--') || (!booleanFlags.has(key) && !valueFlags.has(key))) {
+    throw new Error(`Unknown argument: ${process.argv[i]}`);
+  }
+  if (booleanFlags.has(key)) args[key] = true;
+  else {
+    const value = process.argv[++i];
+    if (!value || value.startsWith('--')) throw new Error(`Missing value for --${key}`);
+    args[key] = value;
+  }
+}
+if (args.help) {
+  console.log('Offline: --profile NAME --count N --seed N --path coordinates.json --out plan.jsonl');
+  console.log('Opt-in local replay: --send --base http://127.0.0.1:3001 --device ID --confirm-disposable');
+  console.log('Replay secret comes only from EKI_QA_DEVICE_SECRET. Profiles:', [...profiles].join(', '));
+  process.exit(0);
+}
+const plan = generateGnssPlan(args);
 if (!args.send) {
   const text = plan.map(event => JSON.stringify(event)).join('\n') + '\n';
   if (args.out) { fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true }); fs.writeFileSync(args.out, text); }
@@ -170,3 +179,6 @@ for (const event of plan) {
       elapsedMs: performance.now() - started, outcome: 'unknown-no-auto-retry' }));
   }
 }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await runCli();
