@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 16:00 IST (UTC+05:30).
+Last updated: 2026-10-12 16:06 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -10,6 +10,9 @@ operator assignments from partially changing records before rejection. Routine
 commands use Node and locked dependencies, with no LLM calls or live provider
 requests. Default-branch schedules, deployments and field acceptance remain
 separate owner gates.
+
+The [witnessed field package](FIELD_ACCEPTANCE.md) supplies the unexecuted
+motion/bench/provider matrix and capture form linked to #300/#245/#246.
 
 ## Run locally
 
