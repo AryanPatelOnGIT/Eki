@@ -1,6 +1,6 @@
 # Reviewed unit sub-oracles
 
-Last updated: 2026-10-12 16:47 IST (UTC+05:30).
+Last updated: 2026-10-12 16:58 IST (UTC+05:30).
 
 `npm run qa:unit:reviewed` executes ten reviewed backend/frontend unit files and
 records exact JSON/JUnit identities, source SHA, dirty state and timestamps. The
@@ -18,6 +18,13 @@ Parameterized observations are retained in the complete counts, while mappings
 use reviewed literal identities. The earlier BOARD07 parameterized MUSE mappings
 remain retained and distinct; this scope uses a new explicit clock/binding test
 rather than guessing dynamic titles.
+
+Vitest can retain a literal `%p` template on every parameter row. The collector
+records each observed row's contiguous array position without inferring parameter
+values. The ledger requires those positions and still rejects ambiguous title
+matches for a case link. Initial hosted runs passed 114 tests but correctly blocked
+aggregation because these repeated template titles were not unique. The positional
+record preserves all observations while leaving unreviewed parameter rows unmapped.
 
 New boarding tests establish exact -60000/+10000 millisecond trust boundaries,
 bus/route/session binding, offline/terminal refusal, accuracy 0..100 inclusive

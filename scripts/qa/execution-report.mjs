@@ -41,7 +41,10 @@ export function combineExecutionEvidence(catalog, reports, families = evidenceFa
     else {
       const validIdentity = item => item && typeof item.path === 'string' && typeof item.name === 'string'
         && (family.level !== 'L3' || (typeof item.project === 'string' && Array.isArray(item.results)));
-      const identities = assertions.map(item => `${item?.path}|${item?.name}|${item?.project ?? ''}`);
+      const indexedObservations = family.name === 'reviewedUnit';
+      if (indexedObservations && !assertions.every((item, index) => item?.observationIndex === index))
+        reasons.push('Missing/duplicate/noncontiguous reviewed observation position');
+      const identities = assertions.map(item => `${item?.path}|${item?.name}|${item?.project ?? ''}|${indexedObservations ? item?.observationIndex : ''}`);
       if (!assertions.every(validIdentity) || new Set(identities).size !== identities.length) reasons.push('Invalid/duplicate observed identity');
       const passed = assertions.filter(item => family.level === 'L3' ? item?.status === 'expected'
         && item.results?.length === 1 && item.results[0].status === 'passed' && item.results[0].retry === 0

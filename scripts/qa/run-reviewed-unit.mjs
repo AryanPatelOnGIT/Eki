@@ -46,6 +46,9 @@ try {
     numPassedTests: executions.reduce((sum, item) => sum + item.observation.numPassedTests, 0),
     numFailedTests: executions.reduce((sum, item) => sum + item.observation.numFailedTests, 0) };
   Object.assign(report, summarizeVitest(combined, repositoryRoot, reviewedUnitTestMap));
+  // Vitest may retain a literal %p template for every parameter row. Preserve
+  // each observed row by position; this is not an inferred parameter identity.
+  report.assertions = report.assertions.map((item, observationIndex) => ({ ...item, observationIndex }));
   report.runnerExitCode = executions.every(item => item.exitCode === 0) ? 0 : 1;
   report.verdict = report.runnerExitCode === 0 && report.counts.passed === report.counts.discovered
     && report.cases.every(item => item.status === 'PARTIAL') ? 'GREEN_FOR_REVIEWED_UNIT_SCOPE' : report.counts.failed ? 'RED' : 'BLOCKED';

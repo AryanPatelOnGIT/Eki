@@ -20,6 +20,21 @@ test('current exact observations stay partial and never promote software or vehi
   assert.equal(merged.vehicleFieldDeployment, 'NOT_VERIFIED');
 });
 
+test('reviewed parameter rows retain positional observations without promoting ambiguous template names', () => {
+  const reviewedFamily = [{ ...families[0], name: 'reviewedUnit' }];
+  const value = report();
+  value.counts = { discovered: 3, passed: 3, failed: 0, blocked: 0 };
+  value.assertions = [value.assertions[0], ...Array.from({ length: 2 }, () => ({ path: 'input.test.ts', name: 'unmapped %p', status: 'PASS' }))]
+    .map((item, observationIndex) => ({ ...item, observationIndex }));
+  assert.equal(combineExecutionEvidence(catalog, { reviewedUnit: value }, reviewedFamily).requiredHarnessExecution, 'PASS');
+  const duplicatePosition = structuredClone(value); duplicatePosition.assertions[2].observationIndex = 1;
+  assert.equal(combineExecutionEvidence(catalog, { reviewedUnit: duplicatePosition }, reviewedFamily).requiredHarnessExecution, 'BLOCKED');
+  const noPosition = structuredClone(value); delete noPosition.assertions[0].observationIndex;
+  assert.equal(combineExecutionEvidence(catalog, { reviewedUnit: noPosition }, reviewedFamily).requiredHarnessExecution, 'BLOCKED');
+  const ambiguousMapping = structuredClone(reviewedFamily); ambiguousMapping[0].mappings[0].tests[0].name = 'unmapped %p';
+  assert.equal(combineExecutionEvidence(catalog, { reviewedUnit: value }, ambiguousMapping).requiredHarnessExecution, 'BLOCKED');
+});
+
 test('stale dirty missing invented and inconsistent evidence cannot become current passing scope', () => {
   const mutations = [item => { item.sourceCommit = 'b'.repeat(40); }, item => { item.dirty = true; },
     item => { item.assertions[0].name = 'invented'; }, item => { item.cases[0].status = 'PASS'; },
