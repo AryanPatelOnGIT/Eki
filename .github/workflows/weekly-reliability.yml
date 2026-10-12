@@ -1,0 +1,107 @@
+name: Isolated weekly reliability baseline
+
+on:
+  schedule:
+    - cron: '41 20 * * 6'
+  workflow_dispatch:
+  push:
+    branches: [codex/qa-nightly-reliability]
+
+permissions:
+  contents: read
+concurrency:
+  group: isolated-weekly-reliability
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Resolve one immutable source revision
+        id: source
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            if (context.repo.owner !== 'notnamansinha' || context.repo.repo !== 'Eki') throw new Error('Unexpected repository');
+            let sha;
+            if (context.eventName === 'push') {
+              if (context.ref !== 'refs/heads/codex/qa-nightly-reliability') throw new Error('Untrusted branch');
+              sha = context.sha;
+            } else {
+              if (context.ref !== 'refs/heads/main') throw new Error('Use the owner-approved default-branch definition');
+              const response = await github.rest.git.getRef({ ...context.repo, ref: 'heads/testing' });
+              sha = response.data.object.sha;
+            }
+            if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid immutable revision');
+            core.setOutput('sha', sha);
+
+  suites:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        suite: [mutation, soak]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source-sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:check
+      - name: Execute bounded pure mutation baseline
+        if: matrix.suite == 'mutation'
+        run: npm run qa:mutation
+      - name: Execute bounded production-helper admission campaign
+        if: matrix.suite == 'soak'
+        run: npm run qa:soak
+      - name: Retain observed baseline without publishing sandbox copies
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: weekly-${{ matrix.suite }}
+          path: |
+            artifacts/qa/*-report.*
+            artifacts/qa/mutation-run.log
+            artifacts/qa/mutation/
+          if-no-files-found: error
+          retention-days: 7
+
+  report:
+    needs: [resolve, suites]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source-sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: weekly-*
+          path: artifacts/qa/
+          merge-multiple: true
+      - run: node scripts/qa/weekly-report.mjs
+      - name: Retain measured weekly summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: weekly-current-source-baseline
+          path: artifacts/qa/weekly-summary.*
+          if-no-files-found: error
+          retention-days: 7

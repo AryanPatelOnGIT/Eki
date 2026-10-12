@@ -229,6 +229,40 @@ describe("settings route", () => {
     });
   }
 
+  it("enforces literal text limits and blank policy on both settings aliases with no rejected mutation", async () => {
+    for (const v2 of [false, true]) {
+      for (const [field, limit] of [["serviceStartTime", 64], ["noBusesMessage", 200], ["noBusesSubMessage", 300], ["announcementText", 500]] as const) {
+        for (const length of [limit - 1, limit, limit + 1]) {
+          harness.settings = { announcementActive: true };
+          const previous = { ...harness.settings };
+          const response = await save({ [field]: "a".repeat(length) }, v2);
+          expect(response.status).toBe(length <= limit ? 200 : 400);
+          if (length <= limit) expect(harness.settings[field]).toBe("a".repeat(length));
+          else expect(harness.settings).toEqual(previous);
+        }
+        harness.settings = { announcementActive: true };
+        const response = await save({ [field]: "   " }, v2);
+        expect(response.status).toBe(field === "announcementText" ? 200 : 400);
+        if (field === "announcementText") expect(harness.settings[field]).toBe("   ");
+        else expect(harness.settings).toEqual({ announcementActive: true });
+      }
+    }
+  });
+
+  it("accepts only literal boolean announcement states on both aliases", async () => {
+    for (const v2 of [false, true]) {
+      for (const value of [true, false]) {
+        expect((await save({ announcementActive: value }, v2)).status).toBe(200);
+        expect(harness.settings.announcementActive).toBe(value);
+      }
+      for (const value of ["true", "false", 1, 0, null]) {
+        const previous = { ...harness.settings };
+        expect((await save({ announcementActive: value }, v2)).status).toBe(400);
+        expect(harness.settings).toEqual(previous);
+      }
+    }
+  });
+
   it("rejects empty, unknown, and invalid settings", async () => {
     expect((await save({})).status).toBe(400);
     expect((await save({ role: "admin" })).status).toBe(400);

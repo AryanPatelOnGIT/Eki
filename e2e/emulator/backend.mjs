@@ -90,7 +90,7 @@ async function reset() {
 }
 await reset();
 // A separate test-control listener, bound to loopback. No test endpoints enter
-// the production Express app. Playwright is the only caller; only synthetic
+// the production Express app. Owned QA runners are the only callers; only synthetic
 // demo data is reset/read. Production middleware/routes/workers boot below.
 const control = createServer(async (req, res) => {
   try {
@@ -136,7 +136,7 @@ const control = createServer(async (req, res) => {
       const drivers = await db.collection('drivers').get();
       const routes = await db.collection('routes').get();
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ passengers: ride?.passengers ?? {}, passengerIds: ride?.passengerIds ?? [],
+      res.end(JSON.stringify({ fixtureProcessId: process.pid, passengers: ride?.passengers ?? {}, passengerIds: ride?.passengerIds ?? [],
         messages: messages.docs.map(doc => ({ id: doc.id, ...doc.data() })), feedbacks: feedbacks.docs.map(doc => doc.data()),
         buses: buses.docs.map(doc => ({ id: doc.id, ...doc.data() })),
         sessions: sessions.docs.map(doc => ({ id: doc.id, ...doc.data() })),
@@ -147,6 +147,21 @@ const control = createServer(async (req, res) => {
         live: (await realtime.ref('activeBuses/qa_bus_qa_route').get()).val(),
         lock: (await db.collection('_active_bus_locks').doc('qa_bus').get()).data() ?? null,
         settings: (await db.collection('settings').doc('global').get()).data(), transport: globalThis.__ekiQaNetworkGuard })); return;
+    }
+    if (req.method === 'GET' && req.url === '/authorization-snapshot') {
+      const collections = ['ride_sessions', 'routes', 'buses', 'users', 'feedbacks', 'feedbackCooldowns',
+        'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency',
+        '_privacy_deletion_requests', '_route_save_operations', '_route_geometry_previews', '_fleet_reconciliation_jobs', '_device_diagnostics'];
+      const documents = {};
+      for (const name of collections) {
+        const snapshot = await db.collection(name).get();
+        documents[name] = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() })).sort((a, b) => a.id.localeCompare(b.id));
+      }
+      const accounts = await auth.listUsers(100);
+      const principals = accounts.users.map(user => ({ uid: user.uid, email: user.email, displayName: user.displayName,
+        disabled: user.disabled, customClaims: user.customClaims ?? {} })).sort((a, b) => a.uid.localeCompare(b.uid));
+      const telemetry = (await realtime.ref('activeBuses').get()).val();
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ documents, principals, telemetry })); return;
     }
     res.statusCode = 404; res.end('{}');
   } catch { res.statusCode = 500; res.end('{"error":"Synthetic fixture operation failed"}'); }

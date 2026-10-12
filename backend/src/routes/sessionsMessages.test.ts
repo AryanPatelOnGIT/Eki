@@ -130,6 +130,26 @@ async function send(text = "Hello", requestId = "request_12345678", extra = {}) 
   });
 }
 
+it("preserves message replay identity across both aliases and rejects changed content without another write", async () => {
+  for (const mode of [false, true]) {
+    v2 = mode; harness.messages.clear(); harness.rate = undefined;
+    harness.setKinds = []; harness.session.status = "active";
+    const created = await send(); expect(created.status).toBe(201);
+    const original = await created.json();
+    expect(harness.setKinds).toEqual(["rate", "message"]);
+    harness.setKinds = [];
+    const replay = await send(); expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(original); expect(harness.setKinds).toEqual([]);
+    expect((await send("Changed payload")).status).toBe(409);
+    expect(harness.messages.size).toBe(1); expect(harness.setKinds).toEqual([]);
+    harness.session.status = "completed";
+    expect((await send("New message", "request_after_end_01")).status).toBe(409);
+    const afterEnd = await send(); expect(afterEnd.status).toBe(200);
+    expect(await afterEnd.json()).toEqual(original);
+    expect(harness.messages.size).toBe(1); expect(harness.setKinds).toEqual([]);
+  }
+});
+
 describe.each([false, true])("session message route v2=%s", mode => {
   beforeEach(() => { v2 = mode; });
   it.each(["pre_departure", "in_service"])("allows member chat at zero speed while %s", async tripState => {
