@@ -1,13 +1,13 @@
 # Reviewed unit sub-oracles
 
-Last updated: 2026-10-12 17:00 IST (UTC+05:30).
+Last updated: 2026-10-12 17:13 IST (UTC+05:30).
 
-`npm run qa:unit:reviewed` executes fifteen reviewed backend/frontend files and
+`npm run qa:unit:reviewed` executes twenty-three reviewed backend/frontend files and
 records exact JSON/JUnit identities, source SHA, dirty state and timestamps. The
-current selection has 77 backend and 91 frontend observations. Every assertion
+current selection has 224 backend and 91 frontend observations. Every assertion
 must pass without skip/block; missing files or workspace reports block the scope.
 The Node socket/DNS guard is preloaded before SDK imports. Unit dependencies are
-pure, mocked or actual React/jsdom components/hooks; real OAuth/Firebase/provider/browser
+pure, mocked, loopback Express or actual React/jsdom components/hooks; real OAuth/Firebase/provider/browser
 behavior is not claimed.
 
 Explicit feature mappings cover limited sub-oracles for auth cache and
@@ -36,6 +36,12 @@ children are replaced; the boarding workflow file separately mounts the real
 selector. The preparation-budget file substitutes a native select and controls
 the clock. These are L1 component sub-oracles, not Chromium, real permissions,
 durable membership or deployed provider acceptance.
+
+The [reviewed HTTP policy selection](HTTP_UNIT_EVIDENCE.md) adds exact feedback,
+settings and chat boundary regressions and scoped bootstrap/membership/privacy
+route checks. Sixty-two case scopes combine all current reviewed-unit links.
+Responses use actual Express handlers with mocked auth/storage; they retain L1
+classification and do not certify real datastore transaction or provider behavior.
 
 New boarding tests establish exact -60000/+10000 millisecond trust boundaries,
 bus/route/session binding, offline/terminal refusal, accuracy 0..100 inclusive
@@ -69,7 +75,7 @@ are needed for this narrow selection. Results are under
 one worker and no file parallelism. The combined runner refuses a mismatched
 file census or absent assertion evidence.
 
-The expanded local changed-checkout run on 12 October 2026 passed 168/168 assertions
+The expanded local changed-checkout run on 12 October 2026 passed 315/315 assertions
 with zero skips/blocks. That run verifies harness configuration and limited
 oracles; a clean hosted commit is needed for current-source acceptance. Software
 release and physical field deployment remain unverified.

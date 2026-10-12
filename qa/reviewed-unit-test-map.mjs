@@ -1,4 +1,5 @@
 import { componentTestMap } from './component-test-map.mjs';
+import { httpUnitTestMap } from './http-unit-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 const backend = (file, suite, title) => ({ path: `backend/src/services/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
 const frontend = (file, suite, title) => ({ path: `frontend/src/lib/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
@@ -68,6 +69,6 @@ const rows = [
     ['frontend/src/lib/rideHistory.ts'], [frontend('rideHistory', 'ride history timestamp normalization', 'normalizes milliseconds, seconds, Date, and Firestore timestamp values'), frontend('rideHistory', 'ride history stop records', 'keeps the earliest trustworthy event for each stop index')]],
 ];
 export const reviewedUnitTestMap = mergeTestMaps(rows.map(([caseId, scope, sourcePaths, tests]) => ({ caseId, scope, sourcePaths,
-  tests: tests.map(link => ({ ...link, semantics: scope })) })), componentTestMap);
+  tests: tests.map(link => ({ ...link, semantics: scope })) })), componentTestMap, httpUnitTestMap);
 export const reviewedUnitFiles = Object.freeze(Object.fromEntries(['backend', 'frontend'].map(workspace => [workspace,
   [...new Set(reviewedUnitTestMap.flatMap(item => item.tests).filter(link => link.path.startsWith(`${workspace}/`)).map(link => link.path.slice(workspace.length + 1)))]])));
