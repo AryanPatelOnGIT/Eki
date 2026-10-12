@@ -10,14 +10,17 @@ import { classifyBrowserCase } from './browser-evidence.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const directory = resolve(root, 'artifacts/qa'); mkdirSync(directory, { recursive: true });
-for (const path of ['browser-playwright.json', 'browser-junit.xml', 'browser-run.log', 'browser-results']) rmSync(resolve(directory, path), { force: true, recursive: true });
+for (const path of ['browser-playwright.json', 'browser-progress.json', 'browser-junit.xml', 'browser-run.log', 'browser-results']) rmSync(resolve(directory, path), { force: true, recursive: true });
 const report = { sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   dirty: Boolean(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' }).trim()),
   startedAt: new Date().toISOString(), node: process.version, platform: process.platform,
   workflowRunId: process.env.GITHUB_RUN_ID ?? null, level: 'L3', verdict: 'BLOCKED',
-  providers: 'synthetic Maps; real local Auth/Firestore/RTDB emulators', realProvidersExecuted: false, physicalMotionExecuted: false,
+  providers: 'synthetic map SDK and in-memory Routes/Places HTTP responses; real local Auth/Firestore/RTDB emulators', realProvidersExecuted: false, physicalMotionExecuted: false,
   fullNextProductionExportExecuted: false, appCheckAttestationExecuted: false, osNetworkSandboxVerified: false };
 try {
+  const scope = process.env.EKI_QA_BROWSER_SCOPE ?? 'all';
+  if (!['all', 'providers', 'service'].includes(scope)) throw new Error('Unknown bounded browser scope');
+  report.scope = scope;
   removeGeneratedDemoConfig(process.env); safetyPreflight(process.env, { mode: 'emulator' });
   const response = await fetch('http://127.0.0.1:4405/emulators', { signal: AbortSignal.timeout(5000), redirect: 'error' });
   if (!response.ok) throw new Error('Emulator hub unavailable');
@@ -29,10 +32,12 @@ try {
   const require = createRequire(resolve(root, 'package.json'));
   const cli = require.resolve('@playwright/test/cli');
   const result = spawnSync(process.execPath, [cli, 'test', '--config', 'playwright.emulator.config.ts'], {
-    cwd: root, env: process.env, encoding: 'utf8', timeout: 240000, maxBuffer: 8 * 1024 * 1024 });
+    cwd: root, env: process.env, encoding: 'utf8', timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
   process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '');
   writeFileSync(resolve(directory, 'browser-run.log'), (result.stdout ?? '') + (result.stderr ?? ''));
   report.exitCode = result.status; report.runnerError = result.error?.code ?? null;
+  const progressPath = resolve(directory, 'browser-progress.json');
+  if (existsSync(progressPath)) report.partialProgress = JSON.parse(readFileSync(progressPath, 'utf8'));
   const json = resolve(directory, 'browser-playwright.json');
   if (!existsSync(json)) throw new Error('Browser runner produced no observed report');
   const observed = JSON.parse(readFileSync(json, 'utf8'));
@@ -44,7 +49,8 @@ try {
   report.counts = { discovered: report.tests.length, passed: observed.stats.expected, failed: observed.stats.unexpected,
     skipped: observed.stats.skipped, flaky: observed.stats.flaky };
   if (report.tests.length !== Object.values(report.counts).slice(1).reduce((a, b) => a + b, 0) || !report.tests.length) throw new Error('Browser assertion census inconsistent/empty');
-  report.cases = browserTestMap.map(mapping => {
+  report.cases = browserTestMap.filter(mapping => scope === 'all' || mapping.tests.some(link =>
+    link.name.includes(scope === 'providers' ? 'provider quota' : 'admin live service controls'))).map(mapping => {
     return { caseId: mapping.caseId, scope: mapping.scope, level: 'L3',
       status: classifyBrowserCase(mapping, report.tests) };
   });
@@ -54,7 +60,7 @@ try {
 } catch (error) { report.setupError = error.message; console.error(`Browser QA blocked: ${error.message}`); }
 report.finishedAt = new Date().toISOString();
 writeFileSync(resolve(directory, 'browser-report.json'), JSON.stringify(report, null, 2) + '\n');
-const markdown = `# Disposable browser acceptance\n\nCommit: ${report.sourceCommit}; dirty: ${report.dirty}; verdict: ${report.verdict}.\n\nObserved test executions: ${JSON.stringify(report.counts ?? { blocked: 'setup unavailable' })}.\n\nActual passenger components, AuthProvider, database SDKs and backend bootstrap; loopback-only browser routes and backend Node transport guard. Maps is synthetic and App Check is explicitly off for this isolated development fixture. No production Next export, real OAuth/Maps, physical motion or OS sandbox claim.\n\n${report.setupError ?? ''}\n`;
+const markdown = `# Disposable browser acceptance\n\nCommit: ${report.sourceCommit}; dirty: ${report.dirty}; scope: ${report.scope ?? 'setup blocked'}; verdict: ${report.verdict}.\n\nObserved test executions: ${JSON.stringify(report.counts ?? { blocked: 'setup unavailable' })}.\n\nActual passenger components, AuthProvider, database SDKs and backend bootstrap; loopback-only browser routes and backend Node transport guard. Maps/Places responses are synthetic and App Check is explicitly off for this isolated development fixture. No production Next export, real OAuth/Maps, physical motion or OS sandbox claim.\n\n${report.setupError ?? ''}\n`;
 writeFileSync(resolve(directory, 'browser-report.md'), markdown);
 if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, markdown, { flag: 'a' });
 if (report.verdict !== 'GREEN_FOR_EXECUTED_BROWSER_SCOPE') process.exitCode = 1;
