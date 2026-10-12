@@ -15,7 +15,7 @@ const report = { schemaVersion: 1, sourceCommit: execFileSync('git', ['rev-parse
   dirty: Boolean(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repositoryRoot, encoding: 'utf8' }).trim()),
   startedAt: new Date().toISOString(), workflowRunId: process.env.GITHUB_RUN_ID ?? null, level: 'L1',
   verdict: 'BLOCKED', realProvidersExecuted: false, physicalMotionExecuted: false, node: process.version,
-  scope: 'Reviewed backend/frontend pure or mocked unit files only. Real SDK authentication, persistence and complete browser acceptance remain separate.' };
+  scope: 'Reviewed backend/frontend pure, mocked, loopback Express and React/jsdom files only. Route HTTP responses use real handlers; SDK/datastores/GPS and component HTTP/selected children are mocked. Real SDK authentication, persistence and complete browser acceptance remain separate.' };
 const executions = [];
 for (const workspace of ['backend', 'frontend']) {
   const require = createRequire(resolve(repositoryRoot, workspace, 'package.json'));
