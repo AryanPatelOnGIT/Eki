@@ -107,6 +107,9 @@ jobs:
         run: npm run test:e2e:admin
       - name: Verify actual passenger components and backend with disposable emulators
         run: node scripts/run-rules-emulator.mjs --browser
+      - name: Summarize current-source QA scopes without claiming complete release acceptance
+        if: always()
+        run: npm run qa:report
       - name: Retain observed browser integration evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -114,6 +117,14 @@ jobs:
           name: browser-acceptance-evidence
           path: artifacts/qa/browser-*
           if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain current-source execution ledger
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: current-source-execution-evidence
+          path: artifacts/qa/execution-report.*
+          if-no-files-found: warn
           retention-days: 7
       - name: Strict production build (fail-closed gate + CSP regeneration)
         # Issue #39 D1: the strict build (EKI_STRICT_PRODUCTION_BUILD) and the
