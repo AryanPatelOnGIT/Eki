@@ -25,7 +25,7 @@
     "realtime:analyze": "node scripts/analyze-realtime-trace.mjs",
     "verify": "npm run lint && npm test && npm run build && npm audit --omit=dev --omit=optional",
     "verify:openapi": "node scripts/verify-openapi.mjs",
-    "qa:check": "node scripts/qa/safety-preflight.mjs && node scripts/qa/acceptance-catalog.mjs --check",
+    "qa:check": "node scripts/qa/safety-preflight.mjs && node scripts/qa/acceptance-catalog.mjs --check && node scripts/qa/workflow-policy.mjs",
     "qa:catalog": "node scripts/qa/acceptance-catalog.mjs",
     "qa:safety": "node scripts/qa/safety-preflight.mjs",
     "qa:test": "node --test scripts/qa*.test.mjs",
@@ -34,9 +34,19 @@
     "qa:browser:service": "npm run build --workspace=backend && node scripts/run-rules-emulator.mjs --browser-service",
     "qa:budget": "node scripts/qa/coverage-budget.mjs",
     "qa:gnss": "node scripts/qa/run-gnss.mjs",
-    "qa:report": "node scripts/qa/execution-report.mjs"
+    "qa:report": "node scripts/qa/execution-report.mjs",
+    "qa:nightly": "npm run qa:check && node scripts/qa/campaign.mjs gnss && node scripts/qa/campaign.mjs reviewedUnit && npm run build --workspace=backend && node scripts/qa/campaign.mjs emulator && node scripts/qa/campaign.mjs browser && node scripts/qa/campaign.mjs api && node scripts/qa/campaign.mjs native && node scripts/qa/campaign-report.mjs",
+    "qa:native": "node scripts/qa/run-native.mjs",
+    "qa:unit:reviewed": "node scripts/qa/run-reviewed-unit.mjs",
+    "qa:api": "npm run build --workspace=backend && node scripts/run-rules-emulator.mjs --api",
+    "qa:mutation": "node scripts/qa/run-mutation.mjs",
+    "qa:soak": "npm run build --workspace=backend && node scripts/qa/run-soak.mjs",
+    "qa:weekly": "npm run qa:check && npm run qa:mutation && npm run qa:soak"
   },
   "overrides": {
+    "typed-rest-client": {
+      "qs": "6.16.0"
+    },
     "@next/eslint-plugin-next": {
       "fast-glob": "$fast-glob"
     },
@@ -54,6 +64,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "concurrently": "^8.2.2",
     "fast-glob": "file:tools/next-lint-glob",
     "parse5": "8.0.1"

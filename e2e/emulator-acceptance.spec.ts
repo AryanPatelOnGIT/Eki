@@ -1,4 +1,6 @@
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext, type BrowserContext } from '@playwright/test';
+
+const feedbackStatusGates = new WeakMap<BrowserContext, () => Promise<void>>();
 
 const control = 'http://127.0.0.1:3117';
 const evidence = async (request: APIRequestContext) => (await request.get(`${control}/evidence`)).json();
@@ -31,7 +33,12 @@ test.beforeEach(async ({ context, request, browser }, testInfo) => {
   const denied: string[] = [];
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
-    if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) await route.continue();
+    if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) {
+      const gate = url.port === '3116' && route.request().method() === 'PATCH' &&
+        /^\/api\/v2\/feedback\/[A-Za-z0-9_-]+$/.test(url.pathname) ? feedbackStatusGates.get(context) : undefined;
+      if (gate) { feedbackStatusGates.delete(context); await gate(); }
+      await route.continue();
+    }
     else { denied.push(`${url.protocol}//${url.hostname}:${url.port}`); await route.abort('blockedbyclient'); }
   });
   await context.routeWebSocket('**/*', websocket => {
@@ -280,7 +287,7 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
 });
 
-test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request }) => {
+test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request, context }) => {
   test.setTimeout(60000);
   await page.goto('/'); await login(page); await board(page);
   const joined = (await evidence(request)).passengers.qa_passenger;
@@ -330,13 +337,29 @@ test('authenticated telemetry completes the joined ride and arms a distinct retu
   expect(deleted.sessions.map((ride: { id: string }) => ride.id)).toEqual([returning.id]);
   expect(deleted.completions).toEqual([]); expect(deleted.lock.sessionId).toBe(returning.id);
   await page.goto('/?panel=feedback');
-  await page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' }).click();
-  await page.getByRole('button', { name: 'reviewed', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
-  expect((await evidence(request)).feedbacks[0].status).toBe('reviewed');
+  const feedbackCard = page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' });
+  await feedbackCard.click();
+  let statusRequestPending = false;
+  let releaseStatusWrite: () => void = () => {};
+  const statusWriteGate = new Promise<void>(resolve => { releaseStatusWrite = resolve; });
+  feedbackStatusGates.set(context, async () => {
+    statusRequestPending = true;
+    await statusWriteGate;
+  });
+  try {
+    await page.getByRole('button', { name: 'reviewed', exact: true }).click();
+    await expect.poll(() => statusRequestPending).toBe(true);
+    await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
+    // Pending disable is not a confirmed write: no request has reached Express yet.
+    expect((await evidence(request)).feedbacks[0].status).toBe('new');
+  } finally { feedbackStatusGates.delete(context); releaseStatusWrite(); }
+  await expect.poll(async () => (await evidence(request)).feedbacks[0].status).toBe('reviewed');
+  await expect(feedbackCard).toContainText('reviewed');
+  await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'resolved', exact: true }).click();
+  await expect.poll(async () => (await evidence(request)).feedbacks[0].status).toBe('resolved');
+  await expect(feedbackCard).toContainText('resolved');
   await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeDisabled();
-  expect((await evidence(request)).feedbacks[0].status).toBe('resolved');
 });
 
 test('admin operator creation edit cancellation and deletion update real claims without changing a running operator', async ({ page, request }) => {
