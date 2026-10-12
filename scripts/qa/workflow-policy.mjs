@@ -21,7 +21,7 @@ export function verifyIsolatedWorkflow(workflow) {
       || !workflow.concurrency?.group || workflow.concurrency.cancel_in_progress === true
       || workflow.concurrency['cancel-in-progress'] !== false) throw Error('Read-only permissions and bounded overlap required');
   if (Object.keys(workflow.on ?? {}).sort().join(',') !== 'push,schedule,workflow_dispatch'
-      || ![JSON.stringify(['codex/qa-nightly-reliability']), JSON.stringify(['codex/qa-nightly-reliability', 'codex/qa-api-boundaries', 'codex/qa-native-evidence'])].includes(JSON.stringify(workflow.on.push.branches))
+      || ![JSON.stringify(['codex/qa-nightly-reliability']), JSON.stringify(['codex/qa-nightly-reliability', 'codex/qa-api-boundaries', 'codex/qa-native-evidence', 'codex/qa-reviewed-unit-evidence', 'codex/qa-component-evidence', 'codex/qa-http-unit-evidence'])].includes(JSON.stringify(workflow.on.push.branches))
       || !Array.isArray(workflow.on.schedule) || workflow.on.schedule.length !== 1) throw Error('Only trusted schedule and owned dry-run events permitted');
   if (Object.keys(workflow.jobs ?? {}).sort().join(',') !== 'report,resolve,suites'
       || workflow.jobs.suites.needs !== 'resolve'

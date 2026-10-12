@@ -1,6 +1,6 @@
 # Eki deterministic acceptance infrastructure
 
-Last updated: 2026-10-12 16:31 IST (UTC+05:30).
+Last updated: 2026-10-12 17:13 IST (UTC+05:30).
 
 The infrastructure imports all 399 feature/matrix/experiment definitions and
 inventories current source. Bounded emulator and actual-component browser suites
@@ -21,8 +21,9 @@ with separate L1 evidence, bounded seeds and replay paths. Its exact links are
 combined with the L2/L3 links without treating any level as whole-case acceptance.
 The [HTTP authorization sweep](HTTP_AUTHORIZATION.md) adds a separate L2
 published-operation negative matrix. [Native firmware evidence](NATIVE_EVIDENCE.md)
-records exact host-policy assertions. After the GNSS, emulator, browser, API and native
-suites run on one clean commit, `npm run qa:report` builds the
+records exact host-policy assertions. [Reviewed unit sub-oracles](REVIEWED_UNIT_EVIDENCE.md)
+record selected backend/frontend pure, mocked, loopback HTTP and React/jsdom checks. After all six instrumented
+families run on one clean commit, `npm run qa:report` builds the
 [current-source execution ledger](EXECUTION_EVIDENCE.md). Stale/dirty or incomplete
 observations cannot satisfy that report's required harness scopes.
 
@@ -115,6 +116,13 @@ provider/navigation/remaining-software boundaries. It runs thirty Chromium
 viewport tests without replacing boarding/chat/profile children with panels.
 
 ## Audit and next implementation slices
+
+On 12 October 2026 the owner authorized merging the QA draft stack into `testing`
+once the remaining software work and checks are complete. That approval is
+conditional; uncovered software oracles and failed checks still require work.
+Default-branch schedule installation, release deployment and witnessed hardware
+acceptance remain separate gates. No merge has been performed by recording this
+authorization.
 
 See [the baseline audit](BASELINE_2026_10_11.md) for diagrams, gaps and risks.
 Next: expand reviewed P0 test/source mappings and refine the coverage budget;

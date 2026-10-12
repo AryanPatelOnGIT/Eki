@@ -41,6 +41,8 @@ jobs:
         run: npm run qa:catalog
       - name: Record deterministic GNSS unit properties with exact assertion evidence
         run: npm run qa:gnss
+      - name: Record reviewed backend and frontend unit sub-oracles
+        run: npm run qa:unit:reviewed
       - name: Retain source-attributed acceptance catalog
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -312,7 +314,7 @@ jobs:
           pattern: '*-evidence'
           path: artifacts/qa/
           merge-multiple: true
-      - name: Validate all five current-source evidence families
+      - name: Validate all six current-source evidence families
         if: always()
         run: npm run qa:report
       - name: Retain current-source execution ledger
