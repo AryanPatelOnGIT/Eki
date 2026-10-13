@@ -27,6 +27,9 @@ async function withFreshBackend(label, work) {
   const log = openSync(resolve(directory, `api-backend-${label}.log`), 'w');
   const child = spawn(process.execPath, ['--import', './scripts/qa/network-guard.mjs', 'e2e/emulator/backend.mjs'],
     { cwd: repositoryRoot, stdio: ['ignore', log, log], env: { ...process.env, PORT: '3116',
+      // Authorization sweeps measure request effects, not independent telemetry
+      // startup writes. Browser/worker suites keep background processing enabled.
+      WORKER_ENABLED: 'false',
       CORS_ORIGIN: 'http://127.0.0.1:3115', NODE_ENV: 'development', API_APPCHECK_MODE: 'off' } });
   closeSync(log);
   const exit = new Promise(done => child.once('exit', code => done(code)));
