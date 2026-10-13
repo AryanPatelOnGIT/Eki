@@ -1,10 +1,13 @@
 import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
   authenticated: true,
+  validSecret: "a".repeat(20),
+  deviceEnabled: true,
   unassigned: false,
   activeRide: false,
   activeBusLock: false,
@@ -12,6 +15,7 @@ const harness = vi.hoisted(() => ({
   transactionTail: Promise.resolve() as Promise<unknown>,
   disabled: new Map<string, Record<string, unknown>>(),
   invalidated: [] as string[],
+  credentialChecks: 0,
 }));
 
 vi.mock("../middleware/requireAdmin", () => ({
@@ -19,6 +23,7 @@ vi.mock("../middleware/requireAdmin", () => ({
 }));
 
 vi.mock("../lib/firebaseAdmin", () => ({
+  firebaseAdminApp: {},
   db: {
     collection: (name: string) => ({
       doc: (id: string) => ({
@@ -26,7 +31,7 @@ vi.mock("../lib/firebaseAdmin", () => ({
           exists: name === "active_rides"
             ? harness.activeRide
             : name === "devices" || harness.activeBusLock || !!harness.maintenance,
-          data: () => name === "devices" ? { busId: "bus_1", routeId: "route_1", enabled: true } : harness.maintenance,
+          data: () => name === "devices" ? { busId: "bus_1", routeId: "route_1", enabled: harness.deviceEnabled } : harness.maintenance,
         }),
         create: (value: Record<string, unknown>) => { harness.maintenance = value; },
         delete: () => { harness.maintenance = null; },
@@ -56,16 +61,19 @@ vi.mock("../services/deviceTelemetryService", () => ({
   authenticateDeviceCredentials: async () => harness.authenticated
     ? { busId: "bus_1", routeId: "route_1" }
     : null,
-  checkDeviceCredentials: async () => !harness.authenticated ? { status: "invalid" }
+  checkDeviceCredentials: async (_deviceId: string, secret: string) => {
+    harness.credentialChecks += 1;
+    return !harness.authenticated || !harness.deviceEnabled || secret !== harness.validSecret ? { status: "invalid" }
     : harness.unassigned ? { status: "unassigned" }
-      : { status: "assigned", assignment: { busId: "bus_1", routeId: "route_1" } },
+      : { status: "assigned", assignment: { busId: "bus_1", routeId: "route_1" } };
+  },
   ingestDeviceTelemetry: async () => ({ ok: false, reason: "credentials" }),
   invalidateDeviceCredentialCache: () => undefined,
   publishDeviceCredentialInvalidation: async (id: string) => {
     harness.invalidated.push(id);
   },
   parseDeviceAuthorization: (header: string | undefined) =>
-    header?.startsWith("Device ") ? header.slice("Device ".length) : null,
+    header?.startsWith("Device ") && header.length >= 27 && header.length <= 519 ? header.slice("Device ".length) : null,
   recordTelemetryRejection: () => undefined,
 }));
 
@@ -75,9 +83,13 @@ vi.mock("../services/deviceDiagnostics", () => ({
 }));
 
 import devicesRouter, { devicesV2Router } from "./devices";
+import { createBrowserAdmission, createBrowserIngressLimiter } from "../lib/browserAdmission";
+import { createBrowserAppCheck } from "../middleware/browserAppCheck";
+import { isDeviceIngressPath } from "../lib/deviceIngressPolicy";
 
 let server: Server;
 let baseUrl = "";
+const integrationServers: Server[] = [];
 const releaseVariables = [
   "FIRMWARE_RELEASE_VERSION",
   "FIRMWARE_RELEASE_SEQUENCE",
@@ -105,10 +117,16 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
+  await Promise.all(integrationServers.map(listener => new Promise<void>((resolve, reject) => {
+    listener.close(error => error ? reject(error) : resolve());
+    listener.closeAllConnections();
+  })));
 });
 
 beforeEach(() => {
   harness.authenticated = true;
+  harness.validSecret = "a".repeat(20);
+  harness.deviceEnabled = true;
   harness.unassigned = false;
   harness.activeRide = false;
   harness.activeBusLock = false;
@@ -116,6 +134,7 @@ beforeEach(() => {
   harness.transactionTail = Promise.resolve();
   harness.disabled = new Map();
   harness.invalidated = [];
+  harness.credentialChecks = 0;
   process.env.FIRMWARE_RELEASE_VERSION = "s2-gnss-v2";
   process.env.FIRMWARE_RELEASE_SEQUENCE = "2";
   process.env.FIRMWARE_RELEASE_URL = "https://releases.example.edu/firmware.bin";
@@ -217,5 +236,112 @@ describe("device firmware release endpoint", () => {
   it("fails closed when release configuration is partial", async () => {
     delete process.env.FIRMWARE_RELEASE_SHA256;
     expect((await requestFirmware()).status).toBe(503);
+  });
+});
+
+async function bootDeviceIngress(mode: "off" | "enforce") {
+  const app = express();
+  app.use(createBrowserIngressLimiter(1, 1000));
+  app.use(express.json());
+  app.use("/api", rateLimit({ windowMs: 60_000, limit: 1000 }), createBrowserAdmission(1, { read: 100, mutation: 100 }));
+  app.use("/api", createBrowserAppCheck(mode));
+  app.use("/api/devices", devicesRouter);
+  const listener = await new Promise<Server>(resolve => {
+    const running = app.listen(0, "127.0.0.1", () => resolve(running));
+  });
+  integrationServers.push(listener);
+  const address = listener.address();
+  if (!address || typeof address === "string") throw Error("Test server did not bind.");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function installation(base: string, action: string, authorization?: string, deviceId = "device_1") {
+  return fetch(`${base}/api/devices/${deviceId}/firmware/installation`, {
+    method: "POST", headers: {
+      ...(authorization === undefined ? {} : { Authorization: authorization }),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action }),
+  });
+}
+
+describe("device OTA through browser admission, App Check and the production router", () => {
+  const valid = `Device ${"a".repeat(20)}`;
+  it("acquires and releases in enforce mode without browser identity or App Check", async () => {
+    const base = await bootDeviceIngress("enforce");
+    expect((await installation(base, "acquire", valid)).status).toBe(200);
+    expect(harness.maintenance).toMatchObject({ kind: "firmware", deviceId: "device_1" });
+    expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toBeNull();
+    expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.credentialChecks).toBe(3);
+  });
+
+  it("releases a reservation acquired before enforcement was enabled", async () => {
+    const off = await bootDeviceIngress("off");
+    const enforce = await bootDeviceIngress("enforce");
+    expect((await installation(off, "acquire", valid)).status).toBe(200);
+    expect(harness.maintenance).toMatchObject({ deviceId: "device_1" });
+    expect((await installation(enforce, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toBeNull();
+  });
+
+  it("keeps missing, malformed, invalid, rotated, disabled and unassigned credentials denied", async () => {
+    const base = await bootDeviceIngress("enforce");
+    for (const authorization of [undefined, "Bearer browser", "Device short", `Device ${"b".repeat(20)}`]) {
+      expect((await installation(base, "acquire", authorization)).status).toBe(401);
+    }
+    harness.validSecret = "b".repeat(20);
+    expect((await installation(base, "acquire", valid)).status).toBe(401);
+    expect((await installation(base, "acquire", `Device ${harness.validSecret}`)).status).toBe(200);
+    expect((await installation(base, "release", `Device ${harness.validSecret}`)).status).toBe(200);
+    harness.deviceEnabled = false;
+    expect((await installation(base, "acquire", `Device ${harness.validSecret}`)).status).toBe(401);
+    harness.deviceEnabled = true;
+    harness.unassigned = true;
+    expect((await installation(base, "acquire", `Device ${harness.validSecret}`)).status).toBe(403);
+    expect(harness.maintenance).toBeNull();
+  });
+
+  it("preserves ride, conflicting lock, owner and retry safeguards", async () => {
+    const base = await bootDeviceIngress("enforce");
+    harness.activeRide = true;
+    expect((await installation(base, "acquire", valid)).status).toBe(409);
+    harness.activeRide = false;
+    harness.maintenance = { kind: "firmware", deviceId: "other" };
+    expect((await installation(base, "acquire", valid)).status).toBe(409);
+    expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toMatchObject({ deviceId: "other" });
+    harness.maintenance = null;
+    const concurrent = await Promise.all([installation(base, "acquire", valid), installation(base, "acquire", valid)]);
+    expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
+    expect((await installation(base, "release", valid, "device_2")).status).toBe(200);
+    expect(harness.maintenance).toMatchObject({ deviceId: "device_1" });
+    expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toBeNull();
+  });
+
+  it("applies one exact device path policy to all ingress endpoints", async () => {
+    const base = await bootDeviceIngress("enforce");
+    for (const [method, path] of [
+      ["POST", "/api/devices/device_1/telemetry"],
+      ["POST", "/api/devices/device_1/diagnostics"],
+      ["GET", "/api/devices/device_1/firmware"],
+      ["POST", "/api/devices/device_1/firmware/installation"],
+    ]) expect(isDeviceIngressPath(method, path)).toBe(true);
+    expect((await fetch(`${base}/api/devices/device_1/telemetry`, { method: "POST", headers: { Authorization: valid, "Content-Type": "application/json" }, body: "{}" })).status).toBe(400);
+    expect((await fetch(`${base}/api/devices/device_1/diagnostics`, { method: "POST", headers: { Authorization: valid, "Content-Type": "application/json" }, body: "{}" })).status).toBe(400);
+    expect((await fetch(`${base}/api/devices/device_1/firmware?sequence=1`, { headers: { Authorization: valid } })).status).toBe(200);
+    const checks = harness.credentialChecks;
+    for (const [method, path] of [
+      ["POST", "/api/devices/device_1/firmware/installation/extra"],
+      ["PUT", "/api/devices/device_1/firmware/installation"],
+      ["POST", "/api/devices/device_1/firmware"],
+      ["GET", "/api/devices/device_1/telemetry"],
+    ]) {
+      expect(isDeviceIngressPath(method, path)).toBe(false);
+      expect((await fetch(base + path, { method, headers: { Authorization: valid } })).status).toBe(401);
+    }
+    expect(harness.credentialChecks).toBe(checks);
   });
 });
