@@ -8,6 +8,19 @@ import { reviewedUnitTestMap } from './reviewed-unit-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 // Exact limited assertion links; no complete feature acceptance is claimed.
 export const testMap = mergeTestMaps([{
+  caseId: 'SEC04',
+  scope: 'Mounted Express fixture checks App Check routing, identity and role boundaries for protected reads and exact device exemptions. Firebase verification and physical OTA acceptance are mocked or outside this test.',
+  sourcePaths: ['backend/src/middleware/browserAppCheck.ts'],
+  tests: [{ path: 'backend/src/middleware/browserAppCheck.routing.test.ts',
+    name: 'App Check through mounted browser and device routers > blocks missing and invalid attestation before GET or HEAD work for accepted route spellings',
+    level: 'L1', semantics: 'Mounted browser admission and App Check reject lowercase and mixed-case GET/HEAD requests for Places, planning, legacy routes and v2 geometry before fixture handler work.' },
+  { path: 'backend/src/middleware/browserAppCheck.routing.test.ts',
+    name: 'App Check through mounted browser and device routers > permits verified requests while preserving identity and admin checks',
+    level: 'L1', semantics: 'Mocked valid App Check and identity allow the intended handlers while a passenger or invalid identity remains denied; route identifier case is preserved.' },
+  { path: 'backend/src/middleware/browserAppCheck.routing.test.ts',
+    name: 'App Check through mounted browser and device routers > retains off mode and exact device credential exemptions',
+    level: 'L1', semantics: 'Off mode retains authenticated reads; exact firmware installation POST uses device credential authentication, while wrong credentials and extra path segments fail.' }],
+}, {
   caseId: 'H17',
   scope: 'Mounted Express methods/paths agree with the published OpenAPI contract; L0 only.',
   sourcePaths: ['scripts/verify-openapi.mjs'],
