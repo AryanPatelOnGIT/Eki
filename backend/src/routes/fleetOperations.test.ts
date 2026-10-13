@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
   rejectClaims: false,
   claimsRejected: false,
   revokeGate: null as Promise<void> | null,
+  registryReadGate: null as Promise<void> | null,
+  registryReadStarted: false,
 }));
 vi.mock("../middleware/requireAdmin", () => ({
   requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -32,7 +34,12 @@ vi.mock("../lib/firebaseAdmin", () => {
     id: path.split("/").at(-1)!, ref: document(path) });
   function document(path: string) {
     return { path, id: path.split("/").at(-1)!,
-      get: async () => snapshot(path),
+      get: async () => {
+        if (path.startsWith("drivers/") && state.registryReadGate) {
+          state.registryReadStarted = true; await state.registryReadGate;
+        }
+        return snapshot(path);
+      },
       delete: async () => { state.docs.delete(path); },
       set: async (data: Record<string, unknown>, options?: { merge: boolean }) => {
         if (state.failFinalWrite && path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
@@ -137,6 +144,7 @@ beforeEach(async () => {
   state.writes = 0; state.revocations = 0; state.gate = null; state.tail = Promise.resolve(); state.failFinalWrite = false;
   state.admissionGate = null; state.admissionStarted = false;
   state.rejectClaims = false; state.claimsRejected = false; state.revokeGate = null;
+  state.registryReadGate = null; state.registryReadStarted = false;
   state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId: "bus_1" });
   state.docs.set("buses/bus_1", { assignedRoutes: ["route_1"] });
 });
@@ -147,6 +155,25 @@ const poll = (id = key) => contractFetch(`${base}/api/v2/fleet-reconciliation-jo
 const waitTerminal = (id = key) => vi.waitFor(() => expect(state.docs.get(`_fleet_reconciliation_jobs/${id}`)?.status).not.toBe("processing"));
 
 describe("fleet operation resources", () => {
+  it("rejects ownership drift between reconciliation discovery and authorization publication", async () => {
+    let release!: () => void;
+    state.registryReadGate = new Promise(resolve => { release = resolve; });
+    const reconciliation = reconcileFleetAuthorization();
+    try {
+      await vi.waitFor(() => expect(state.registryReadStarted).toBe(true));
+      state.docs.set("drivers/driver_1", { authUid: "replacement_uid", assignedBusId: "bus_1" });
+    } finally { release(); }
+    expect(await reconciliation).toMatchObject({ checked: 1, repaired: 0, failed: 1 });
+    expect(state.writes).toBe(0); expect(state.revocations).toBe(0);
+    expect(state.docs.has("_userAuthorization/auth_uid")).toBe(false);
+  });
+  it("rejects invalid persisted bus assignments before changing authorization", async () => {
+    state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId: "invalid/bus" });
+    const result = await reconcileFleetAuthorization();
+    expect(result).toMatchObject({ checked: 1, repaired: 0, failed: 1 });
+    expect(state.writes).toBe(0); expect(state.revocations).toBe(0);
+    expect(state.docs.has("_userAuthorization/auth_uid")).toBe(false);
+  });
   it("keeps failed offboarding retryable and invalidates both databases before removing the registry", async () => {
     state.userClaims.set("auth_uid", { role: "driver", driverId: "driver_1", assignedBusId: "bus_1", authorizationVersion: "old" });
     state.rejectClaims = true;

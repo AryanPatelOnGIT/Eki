@@ -65,10 +65,20 @@ async function demoteDriverAccount(authUid: string): Promise<void> {
 async function applyDriverAuthorization(
   driverId: string,
   authUid: string,
-  assignedBusId: string | null,
   reconciliationCache?: FleetReconciliationCache,
   context?: OperationExecutionContext,
 ): Promise<boolean> {
+  // Publish from canonical backend state, not the requested assignment. This
+  // also rejects registry deletion/ownership drift before touching Auth claims.
+  const driver = await db.collection("drivers").doc(driverId).get();
+  const assignment = driver.data();
+  if (!driver.exists || assignment?.authUid !== authUid) {
+    throw new Error("Operator ownership changed before authorization publication.");
+  }
+  if (assignment.assignedBusId !== null && assignment.assignedBusId !== undefined && !validId(assignment.assignedBusId)) {
+    throw new InvalidBusAssignmentError("Operator has an invalid persisted bus assignment.");
+  }
+  const assignedBusId = validId(assignment.assignedBusId) ? assignment.assignedBusId : null;
   const user = await auth.getUser(authUid);
   const existing = user.customClaims ?? {};
   const authorizationCurrent = await authorizationIsCurrent(authUid, existing);
@@ -182,7 +192,6 @@ export async function reconcileFleetAuthorization(deadlineAt = Date.now() + 30_0
           const changed = await applyDriverAuthorization(
             driver.id,
             data.authUid,
-            validId(data.assignedBusId) ? data.assignedBusId : null,
             reconciliationCache, context,
           );
           if (changed) repaired += 1;
@@ -292,7 +301,7 @@ router.put("/buses/:id", fleetMutation(async (req: Request, res: Response) => {
         await checkpointFleetMutation(res, { phase: "authorizing", checked, batchDriverIds: batch.map(driver => driver.id) });
         await forEachBounded(batch, 10, async driver => {
           const data = driver.data();
-          if (validId(data.authUid)) await applyDriverAuthorization(driver.id, data.authUid, id);
+          if (validId(data.authUid)) await applyDriverAuthorization(driver.id, data.authUid);
         });
         checked += batch.length;
         await checkpointFleetMutation(res, { phase: "authorizing", checked, cursor: batch.at(-1)!.id, batchDriverIds: [] });
@@ -340,7 +349,7 @@ router.delete("/buses/:id", fleetMutation(async (req: Request, res: Response) =>
             if (current.data()?.assignedBusId !== id) return null;
             transaction.set(driver.ref, { assignedBusId: null }, { merge: true }); return current.data()!;
           });
-          if (data && validId(data.authUid)) await applyDriverAuthorization(driver.id, data.authUid, null);
+          if (data && validId(data.authUid)) await applyDriverAuthorization(driver.id, data.authUid);
           else if (data) await rtdb.ref(`driverRouteAssignments/${driver.id}`).remove();
         });
         checked += group.length;
@@ -426,7 +435,7 @@ router.put("/drivers/:id", fleetMutation(async (req: Request, res: Response) => 
     }
     await db.collection("drivers").doc(id).set({ id, name, authUid, assignedBusId }, { merge: true });
     await db.collection("users").doc(authUid).set({ role: "driver" }, { merge: true });
-    await applyDriverAuthorization(id, authUid, assignedBusId);
+    await applyDriverAuthorization(id, authUid);
     res.json({ saved: true });
   } catch (error) {
     if (error instanceof InvalidBusAssignmentError) {
