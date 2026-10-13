@@ -437,10 +437,22 @@ test('admin live service controls persist bounded delay and interrupt safely bef
   expect(freshFix.ok()).toBe(true); expect((await freshFix.json()).statuses).toEqual([202]);
   await select(page, 'Operator', 'Synthetic operator (qa_driver)');
   await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
+  // The API has a ten-second request budget. Observe its acknowledgement before
+  // checking the UI, rather than treating a valid pending request as a failure
+  // after Playwright's default five-second assertion window.
+  const startAcknowledgement = page.waitForResponse(response =>
+    response.url() === 'http://127.0.0.1:3116/api/v2/ride-sessions'
+      && response.request().method() === 'POST', { timeout: 15_000 });
   await page.getByRole('button', { name: 'Start service', exact: true }).click();
+  const startResponse = await startAcknowledgement;
+  expect(startResponse.ok()).toBe(true);
+  const startResult = await startResponse.json();
+  expect(startResult.sessionId).toEqual(expect.any(String));
+  expect(startResult.resumed).not.toBe(true);
   await expect(page.getByText(/^Service started /)).toBeVisible();
   const restarted = await evidence(request);
   const fresh = restarted.sessions.find((ride: { id: string }) => ride.id !== 'qa_session');
+  expect(fresh.id).toBe(startResult.sessionId);
   expect(fresh).toMatchObject({ busId: 'qa_bus', driverId: 'qa_driver', routeId: 'qa_route', passengers: {} });
   expect(restarted.sessions).toHaveLength(2); expect(restarted.lock.sessionId).toBe(fresh.id);
   expect(restarted.completions).toEqual([]);
