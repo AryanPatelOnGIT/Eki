@@ -1,5 +1,6 @@
 import { FieldPath, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { auth, db, rtdb } from "./lib/firebaseAdmin";
+import { publishUserAuthorization } from "./services/userAuthorization";
 
 const roles = new Set(["passenger", "driver", "admin"]);
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -27,8 +28,7 @@ async function syncUser(user: QueryDocumentSnapshot): Promise<boolean> {
       ? await db.collection("drivers").where("authUid", "==", user.id).limit(2).get()
       : null;
     if (role === "driver" && driverAssignment?.size !== 1) {
-      await auth.setCustomUserClaims(user.id, { ...preservedClaims, role: "driver" });
-      await auth.revokeRefreshTokens(user.id);
+      await publishUserAuthorization(user.id, { ...preservedClaims, role: "driver" });
       await Promise.all(
         [...new Set([user.id, previousDriverId].filter(Boolean))]
           .map((driverId) => rtdb.ref(`driverRouteAssignments/${driverId}`).remove()),
@@ -59,7 +59,7 @@ async function syncUser(user: QueryDocumentSnapshot): Promise<boolean> {
       routeAssignments = Object.fromEntries(validRouteIds.map((routeId) => [routeId, true]));
     }
 
-    await auth.setCustomUserClaims(user.id, {
+    await publishUserAuthorization(user.id, {
       ...preservedClaims,
       role,
       ...(role === "admin" ? { admin: true } : {}),
@@ -68,7 +68,6 @@ async function syncUser(user: QueryDocumentSnapshot): Promise<boolean> {
         assignedBusId,
       } : {}),
     });
-    await auth.revokeRefreshTokens(user.id);
 
     if (role === "driver" && routeAssignments) {
       await rtdb.ref(`driverRouteAssignments/${driver!.id}`).set({

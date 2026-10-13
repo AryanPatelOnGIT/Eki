@@ -8,6 +8,7 @@ import { contractFetch } from "../../test-support/openapi";
 const state = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
   mirrors: {} as Record<string, unknown>,
+  authorizations: {} as Record<string, unknown>,
   claims: {} as Record<string, unknown>, userClaims: new Map<string, Record<string, unknown>>(), liveNodes: {} as Record<string, any>, activeAuth: 0, maxAuth: 0, mirrorRoots: 0,
   admin: true, writes: 0, revocations: 0, sequence: 0,
   gate: null as Promise<void> | null,
@@ -91,12 +92,19 @@ vi.mock("../lib/firebaseAdmin", () => {
     rtdb: { ref: (path: string) => {
       const ref: any = {
         once: async () => {
+          if (path.startsWith("_userAuthorization/")) return { val: () => state.authorizations[path.split("/").at(-1)!] ?? null };
           if (path === "driverRouteAssignments") state.mirrorRoots++;
           return { val: () => path === "driverRouteAssignments" ? state.mirrors : path === "activeBuses" ? state.liveNodes : state.mirrors[path.split("/").at(-1)!] ?? null };
         },
-        set: async (value: unknown) => { state.mirrors[path.split("/").at(-1)!] = value; },
+        set: async (value: unknown) => { (path.startsWith("_userAuthorization/") ? state.authorizations : state.mirrors)[path.split("/").at(-1)!] = value; },
         remove: async () => { delete state.mirrors[path.split("/").at(-1)!]; },
-        transaction: async (work: any) => { const key = path.split("/").at(-1)!; const value = work(state.liveNodes[key] ?? null); if (value !== undefined) { if (value === null) delete state.liveNodes[key]; else state.liveNodes[key] = value; } return { committed: value !== undefined }; },
+        transaction: async (work: any) => {
+          if (path.startsWith("_userAuthorization/")) {
+            const uid = path.split("/").at(-1)!; const value = work(state.authorizations[uid] ?? null);
+            if (value !== undefined) state.authorizations[uid] = value;
+            return { committed: value !== undefined, snapshot: { val: () => state.authorizations[uid] } };
+          }
+          const key = path.split("/").at(-1)!; const value = work(state.liveNodes[key] ?? null); if (value !== undefined) { if (value === null) delete state.liveNodes[key]; else state.liveNodes[key] = value; } return { committed: value !== undefined }; },
         orderByKey: () => {
           const query = (cap = Infinity, cursor = ""): any => ({ limitToFirst: (count: number) => query(count, cursor), startAfter: (id: string) => query(cap, id), once: async () => {
             const entries = Object.entries(state.liveNodes).filter(([key]) => key > cursor).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).slice(0, cap);
@@ -124,6 +132,7 @@ beforeAll(async () => {
 afterAll(async () => { await drainFleetMutations(false); await drainHttpOperations(); await new Promise<void>(resolve => server.close(() => resolve())); });
 beforeEach(async () => {
   await drainFleetMutations(false);
+  state.authorizations = {};
   state.docs.clear(); state.mirrors = {}; state.claims = {}; state.userClaims.clear(); state.liveNodes = {}; state.activeAuth = 0; state.maxAuth = 0; state.mirrorRoots = 0; state.admin = true;
   state.writes = 0; state.revocations = 0; state.gate = null; state.tail = Promise.resolve(); state.failFinalWrite = false;
   state.admissionGate = null; state.admissionStarted = false;
@@ -138,6 +147,35 @@ const poll = (id = key) => contractFetch(`${base}/api/v2/fleet-reconciliation-jo
 const waitTerminal = (id = key) => vi.waitFor(() => expect(state.docs.get(`_fleet_reconciliation_jobs/${id}`)?.status).not.toBe("processing"));
 
 describe("fleet operation resources", () => {
+  it("keeps failed offboarding retryable and invalidates both databases before removing the registry", async () => {
+    state.userClaims.set("auth_uid", { role: "driver", driverId: "driver_1", assignedBusId: "bus_1", authorizationVersion: "old" });
+    state.rejectClaims = true;
+    const failed = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" });
+    expect(failed.status).toBe(500);
+    expect(state.docs.has("drivers/driver_1")).toBe(true);
+    expect(state.docs.get("_userAuthorization/auth_uid")?.role).toBe("blocked");
+    expect(state.authorizations.auth_uid).toMatchObject({ role: "blocked" });
+    state.rejectClaims = false;
+    const retry = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" });
+    expect(retry.status).toBe(200);
+    expect(state.docs.has("drivers/driver_1")).toBe(false);
+    expect(state.docs.get("users/auth_uid")?.role).toBe("passenger");
+    expect(state.docs.get("_userAuthorization/auth_uid")).toEqual(state.authorizations.auth_uid);
+    expect(state.docs.get("_userAuthorization/auth_uid")?.version).not.toBe("old");
+  });
+  it("demotes the previous principal before publishing a replacement's assignment", async () => {
+    state.docs.set("users/auth_uid", { role: "driver" });
+    const result = await contractFetch(`${base}/api/fleet/drivers/driver_1`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Replacement", authUid: "replacement_uid", assignedBusId: "bus_1" }),
+    });
+    expect(result.status).toBe(200);
+    expect(state.docs.get("users/auth_uid")?.role).toBe("passenger");
+    expect(state.authorizations.auth_uid).toMatchObject({ role: "passenger" });
+    expect(state.authorizations.replacement_uid).toMatchObject({ role: "driver", driverId: "driver_1", assignedBusId: "bus_1" });
+    expect(state.userClaims.get("auth_uid")).not.toHaveProperty("driverId");
+    expect(state.docs.get("drivers/driver_1")?.authUid).toBe("replacement_uid");
+  });
   it("rejects missing or route-less operator assignment before changing records or authorization", async () => {
     const original = { name: "Original", authUid: "auth_uid", assignedBusId: "bus_1", badge: "retained" };
     state.docs.set("drivers/driver_1", original);
@@ -253,10 +291,11 @@ describe("fleet operation resources", () => {
     expect(await (await poll()).json()).toMatchObject({ status: "processing", outcomeUnknown: true });
     expect((await post()).status).toBe(202); expect(state.revocations).toBe(1);
   });
-  it("holds ownership until all side effects settle even when one write rejects early", async () => {
+  it("holds ownership through revocation before a failed claims publication", async () => {
     state.rejectClaims = true;
     let release!: () => void; state.revokeGate = new Promise<void>(resolve => { release = resolve; });
-    await post(); await vi.waitFor(() => expect(state.claimsRejected).toBe(true));
+    await post(); await vi.waitFor(() => expect(state.docs.get("_userAuthorization/auth_uid")?.role).toBe("blocked"));
+    expect(state.claimsRejected).toBe(false);
     expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(true);
     expect(await (await poll()).json()).toMatchObject({ status: "processing" });
     await expect(reconcileFleetAuthorization()).rejects.toBeInstanceOf(FleetReconciliationBusy);

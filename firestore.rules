@@ -9,7 +9,27 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.role == 'admin';
+      return hasCurrentRole('admin');
+    }
+
+    // Missing migration state, stale versions and interrupted publications
+    // fail closed. Only the backend may write authorization state or roles.
+    function hasCurrentRole(role) {
+      return isAuthenticated() && request.auth.token.role == role &&
+        request.auth.token.authorizationVersion is string &&
+        get(/databases/$(database)/documents/_userAuthorization/$(request.auth.uid)).data.version == request.auth.token.authorizationVersion &&
+        get(/databases/$(database)/documents/_userAuthorization/$(request.auth.uid)).data.role == role &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+
+    function isAssignedDriver(driverId, busId) {
+      return hasCurrentRole('driver') &&
+        request.auth.token.driverId == driverId &&
+        request.auth.token.assignedBusId == busId && busId is string &&
+        get(/databases/$(database)/documents/_userAuthorization/$(request.auth.uid)).data.driverId == driverId &&
+        get(/databases/$(database)/documents/_userAuthorization/$(request.auth.uid)).data.assignedBusId == busId &&
+        get(/databases/$(database)/documents/drivers/$(driverId)).data.authUid == request.auth.uid &&
+        get(/databases/$(database)/documents/drivers/$(driverId)).data.assignedBusId == busId;
     }
 
     function isOwner(uid) {
@@ -27,7 +47,7 @@ service cloud.firestore {
     function isSessionOperator(sessionId) {
       return isAdmin() ||
         (isAuthenticated() && request.auth.token.role == 'driver' &&
-         request.auth.token.driverId == sessionDoc(sessionId).data.driverId);
+         isAssignedDriver(sessionDoc(sessionId).data.driverId, sessionDoc(sessionId).data.busId));
     }
 
     // Operator OR passenger membership with a single get(): chat reads check
@@ -38,7 +58,7 @@ service cloud.firestore {
       return isAdmin() ||
         (isAuthenticated() &&
          ((request.auth.token.role == 'driver' &&
-           request.auth.token.driverId == sessionDoc(sessionId).data.driverId) ||
+           isAssignedDriver(sessionDoc(sessionId).data.driverId, sessionDoc(sessionId).data.busId)) ||
           (sessionDoc(sessionId).data.passengers is map &&
            request.auth.uid in sessionDoc(sessionId).data.passengers &&
            sessionDoc(sessionId).data.passengers[request.auth.uid].userId == request.auth.uid)));
@@ -121,8 +141,7 @@ service cloud.firestore {
     // ── Drivers collection ──
     match /drivers/{driverId} {
       allow read: if isAdmin() ||
-        (isAuthenticated() &&
-         request.auth.token.role == 'driver' &&
+        (hasCurrentRole('driver') &&
          resource.data.authUid == request.auth.uid);
       allow create, update, delete: if false;
     }
@@ -158,6 +177,10 @@ service cloud.firestore {
     // HTTPS ingestion uses the Admin SDK, which bypasses these rules. Devices
     // receive only an independent per-device HTTPS secret.
     match /devices/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /_userAuthorization/{uid} {
       allow read, write: if false;
     }
 

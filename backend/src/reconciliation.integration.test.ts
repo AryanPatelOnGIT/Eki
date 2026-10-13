@@ -4,6 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { initializeApp, deleteApp, type App } from "firebase-admin/app";
 import { Firestore, Timestamp } from "firebase-admin/firestore";
 import { getDatabase, type Database } from "firebase-admin/database";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { doc, getDoc } from "firebase/firestore";
 const state = vi.hoisted(() => ({ firestore: null as Firestore | null, realtime: null as Database | null,
   claims: new Map<string, Record<string, unknown>>(), active: 0, maximum: 0 }));
 vi.mock("./lib/firebaseAdmin", () => ({
@@ -38,7 +42,7 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
   });
   beforeEach(async () => {
     await drainFleetMutations(false);
-    for (const name of ["ride_sessions", "active_rides", "_active_bus_locks", "drivers", "buses", "_fleet_reconciliation_locks", "devices", "routes", "_fleet_operations", "bus_locations"]) {
+    for (const name of ["ride_sessions", "active_rides", "_active_bus_locks", "drivers", "buses", "_fleet_reconciliation_locks", "devices", "routes", "_fleet_operations", "bus_locations", "_userAuthorization", "users"]) {
       const docs = await state.firestore!.collection(name).get();
       for (let index = 0; index < docs.size; index += 400) {
         const batch = state.firestore!.batch(); docs.docs.slice(index, index + 400).forEach(doc => batch.delete(doc.ref)); await batch.commit();
@@ -124,4 +128,41 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
     expect((await state.firestore!.collection("buses").doc("new_bus").get()).data()).toEqual({ id: "new_bus", name: "New", assignedRoutes: [] });
   });
 
+  it("denies a saved token through actual rules after production fleet reassignment and deletion", async () => {
+    const [host, port] = process.env.FIRESTORE_EMULATOR_HOST!.split(":");
+    const environment = await initializeTestEnvironment({ projectId: "demo-eki-reconciliation-test", firestore: {
+      host, port: Number(port), rules: readFileSync(process.env.FIRESTORE_RULES_PATH ?? resolve(__dirname, "../../firestore.rules"), "utf8"),
+    } });
+    try {
+      await state.firestore!.collection("buses").doc("security_bus").set({ assignedRoutes: ["route"] });
+      const assign = (uid: string, assignedBusId: string | null = "security_bus") => fetch(`${base}/api/fleet/drivers/security_driver`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Synthetic operator", authUid: uid, assignedBusId }) });
+      const original = await assign("former_uid"); expect(original.status).toBe(200); await original.json(); await drainFleetMutations(false);
+      const oldClaims = { ...state.claims.get("former_uid")! };
+      const old = environment.authenticatedContext("former_uid", oldClaims);
+      const session = (client: ReturnType<typeof environment.authenticatedContext>) => doc(client.firestore(), "ride_sessions", "security_session");
+      await state.firestore!.collection("ride_sessions").doc("security_session").set({ driverId: "security_driver", busId: "security_bus", passengers: {}, boardingCode: "SYNTHETIC" });
+      await assertSucceeds(getDoc(session(old)));
+      const replacement = await assign("replacement_uid"); expect(replacement.status).toBe(200); await replacement.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(old)));
+      const fresh = environment.authenticatedContext("replacement_uid", state.claims.get("replacement_uid")!);
+      await assertSucceeds(getDoc(session(fresh)));
+      const removed = await fetch(`${base}/api/fleet/drivers/security_driver`, { method: "DELETE" });
+      expect(removed.status).toBe(200); await removed.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(fresh)));
+      // Reusing the original principal and assignment cannot restore old access.
+      const restored = await assign("former_uid"); expect(restored.status).toBe(200); await restored.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(old)));
+      const restoredClient = environment.authenticatedContext("former_uid", state.claims.get("former_uid")!);
+      await assertSucceeds(getDoc(session(restoredClient)));
+      const unassigned = await assign("former_uid", null); expect(unassigned.status).toBe(200); await unassigned.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(restoredClient)));
+      const unassignedClient = environment.authenticatedContext("former_uid", state.claims.get("former_uid")!);
+      await assertSucceeds(getDoc(doc(unassignedClient.firestore(), "drivers", "security_driver")));
+      await assertFails(getDoc(session(unassignedClient)));
+      // RTDB omits null fields; this must not cause recurring revocation.
+      const reconciliation = await reconcileFleetAuthorization();
+      expect(reconciliation).toMatchObject({ checked: 1, repaired: 0, failed: 0 });
+    } finally { await environment.cleanup(); }
+  }, 60000);
 });

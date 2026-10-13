@@ -1,4 +1,5 @@
 import { withFleetLock, FleetReconciliationBusy } from "../services/fleetMutationLock";
+import { authorizationIsCurrent, publishUserAuthorization } from "../services/userAuthorization";
 import { assertWorkerLeadership } from "../lib/workerFence";
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -57,11 +58,8 @@ async function demoteDriverAccount(authUid: string): Promise<void> {
   delete claims.admin;
   delete claims.driverId;
   delete claims.assignedBusId;
-  await settleAuthorizationUpdates([
-    auth.setCustomUserClaims(authUid, { ...claims, role: "passenger" }),
-    auth.revokeRefreshTokens(authUid),
-    db.collection("users").doc(authUid).set({ role: "passenger" }, { merge: true }),
-  ]);
+  await publishUserAuthorization(authUid, { ...claims, role: "passenger" });
+  await db.collection("users").doc(authUid).set({ role: "passenger" }, { merge: true });
 }
 
 async function applyDriverAuthorization(
@@ -73,6 +71,7 @@ async function applyDriverAuthorization(
 ): Promise<boolean> {
   const user = await auth.getUser(authUid);
   const existing = user.customClaims ?? {};
+  const authorizationCurrent = await authorizationIsCurrent(authUid, existing);
   const claims = { ...existing };
   delete claims.admin;
   delete claims.driverId;
@@ -84,7 +83,7 @@ async function applyDriverAuthorization(
       ? await reconciliationCache.mirrorFor(driverId)
       : (await mirrorRef.once("value")).val();
     const claimsChanged =
-      existing.role !== "driver" ||
+      !authorizationCurrent || existing.role !== "driver" ||
       existing.admin !== undefined ||
       existing.driverId !== undefined ||
       existing.assignedBusId !== undefined;
@@ -94,10 +93,7 @@ async function applyDriverAuthorization(
     assertWorkerLeadership();
     const updates: Promise<unknown>[] = [];
     if (claimsChanged) {
-      updates.push(
-        auth.setCustomUserClaims(authUid, { ...claims, role: "driver" }),
-        auth.revokeRefreshTokens(authUid),
-      );
+      updates.push(publishUserAuthorization(authUid, { ...claims, role: "driver" }));
     }
     if (mirror !== null) {
       updates.push(mirrorRef.remove());
@@ -124,7 +120,7 @@ async function applyDriverAuthorization(
     )],
   ]);
   const claimsChanged =
-    existing.role !== "driver" ||
+    !authorizationCurrent || existing.role !== "driver" ||
     existing.admin !== undefined ||
     existing.driverId !== driverId ||
     existing.assignedBusId !== assignedBusId;
@@ -136,12 +132,12 @@ async function applyDriverAuthorization(
   assertWorkerLeadership();
   const updates: Promise<unknown>[] = [];
   if (claimsChanged) {
-    updates.push(auth.setCustomUserClaims(authUid, {
+    updates.push(publishUserAuthorization(authUid, {
       ...claims,
       role: "driver",
       driverId,
       assignedBusId,
-    }), auth.revokeRefreshTokens(authUid));
+    }));
   }
   if (mirrorChanged) {
     updates.push(mirrorRef.set(expectedMirror));
@@ -465,13 +461,15 @@ router.delete("/drivers/:id", fleetMutation(async (req: Request, res: Response) 
       return;
     }
     const authUid = driverDoc.data()?.authUid;
+    // Keep the registry record until invalidation succeeds, so a failed
+    // offboarding can be retried instead of losing its principal lookup.
+    if (validId(authUid)) {
+      await demoteDriverAccount(authUid);
+    }
     await settleTogether([
       driverRef.delete(),
       rtdb.ref(`driverRouteAssignments/${id}`).remove(),
     ]);
-    if (validId(authUid)) {
-      await demoteDriverAccount(authUid);
-    }
     res.json({ deleted: true });
   } catch (error) {
     console.error("[Fleet] Failed to delete driver:", error);
