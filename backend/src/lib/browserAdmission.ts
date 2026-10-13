@@ -2,14 +2,13 @@ import type { Request, RequestHandler } from "express";
 import { createIdentityAwareLimiter } from "./rateLimitIdentity";
 import { requireAuth } from "../middleware/requireAuth";
 import { shardedLimit } from "./rateLimitShard";
+import { isDeviceIngressPath } from "./deviceIngressPolicy";
 
 const pathOf = (req: Request) => req.originalUrl.split("?")[0];
 export const isMutation = (req: Request) => ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
 
 export function isDeviceIngressRequest(req: Request): boolean {
-  const path = pathOf(req);
-  return (req.method === "POST" && /^\/api\/devices\/[A-Za-z0-9_-]{1,128}\/(telemetry|diagnostics|firmware\/installation)$/.test(path)) ||
-    (req.method === "GET" && /^\/api\/devices\/[A-Za-z0-9_-]{1,128}\/firmware$/.test(path));
+  return isDeviceIngressPath(req.method, pathOf(req));
 }
 
 export function isPublicProbe(req: Request): boolean {

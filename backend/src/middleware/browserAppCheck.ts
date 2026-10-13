@@ -3,15 +3,17 @@ import type { Request, Response, NextFunction } from "express";
 import { getAppCheck } from "firebase-admin/app-check";
 import { firebaseAdminApp } from "../lib/firebaseAdmin";
 import { createBoundedSingleFlight } from "../lib/boundedSingleFlight";
+import { isDeviceIngressPath } from "../lib/deviceIngressPolicy";
 
 const verifications = createBoundedSingleFlight<void>({ maxFills: 64, maxWaitersPerFill: 32, responseMs: 2000 });
 const invalidCodes = new Set(["app-check/invalid-argument", "app-check/invalid-token", "app-check/app-check-token-expired"]);
 export function requiresBrowserAttestation(method: string, path: string): boolean {
-  if (method === "OPTIONS" || method === "HEAD") return false;
-  if ((method === "POST" && /^\/api\/devices\/[A-Za-z0-9_-]{1,128}\/(telemetry|diagnostics)$/.test(path)) ||
-      (method === "GET" && /^\/api\/devices\/[A-Za-z0-9_-]{1,128}\/firmware$/.test(path))) return false;
-  return !["GET", "HEAD"].includes(method) || /^\/api\/(places|plan|routes)(\/|$)/.test(path) ||
-    /^\/api\/v2\/routes\/[A-Za-z0-9_-]{1,128}\/geometry(\/|$)/.test(path);
+  if (method === "OPTIONS" || isDeviceIngressPath(method, path)) return false;
+  if (method !== "GET" && method !== "HEAD") return true;
+  // Express matches route names without regard to case and dispatches HEAD to GET handlers.
+  // Match only fixed segments here; leave identifier values in the original request untouched.
+  return /^\/api\/(?:places|plan|routes)(?:\/|$)/i.test(path) ||
+    /^\/api\/v2\/routes\/[A-Za-z0-9_-]{1,128}\/geometry(?:\/|$)/i.test(path);
 }
 /** Opt-in staged API enforcement; bearer identity/RBAC and device auth remain independent. */
 export function createBrowserAppCheck(mode = process.env.API_APPCHECK_MODE ?? "off") {
