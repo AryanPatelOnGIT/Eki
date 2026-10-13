@@ -26,7 +26,7 @@ async function boot(mode: "enforce" | "off" = "enforce") {
   const app = express();
   let work = 0;
   const fixtureLimiter = rateLimit({ windowMs: 60_000, limit: 1000 });
-  app.use("/api", createBrowserAdmission(1, { read: 100, mutation: 100 }));
+  app.use("/api", fixtureLimiter, createBrowserAdmission(1, { read: 100, mutation: 100 }));
   app.use("/api", createBrowserAppCheck(mode));
   const places = express.Router();
   places.get("/search", fixtureLimiter, requireAdmin, (_req, res) => { work++; res.json({ ok: true }); });
