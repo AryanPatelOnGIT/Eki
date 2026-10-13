@@ -404,7 +404,9 @@ test('admin operator creation edit cancellation and deletion update real claims 
   await page.getByRole('dialog').getByRole('button', { name: 'Delete Operator', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Edit operator Synthetic new operator', exact: true })).toHaveCount(0);
   const removed = await evidence(request);
-  expect(removed.otherAccountClaims).toEqual({ role: 'passenger' });
+  expect(removed.otherAccountClaims).toEqual({ role: 'passenger', authorizationVersion: expect.any(String) });
+  expect(removed.otherAccountClaims.authorizationVersion).toMatch(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+  expect(removed.otherAccountClaims.authorizationVersion).not.toBe(created.otherAccountClaims.authorizationVersion);
   expect(removed.drivers.map((driver: { id: string }) => driver.id)).toEqual(['qa_driver']);
   expect(removed.lock.sessionId).toBe('qa_session');
 });
