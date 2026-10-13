@@ -1,4 +1,5 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import type { Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,19 +25,20 @@ afterEach(async () => {
 async function boot(mode: "enforce" | "off" = "enforce") {
   const app = express();
   let work = 0;
+  const fixtureLimiter = rateLimit({ windowMs: 60_000, limit: 1000 });
   app.use("/api", createBrowserAdmission(1, { read: 100, mutation: 100 }));
   app.use("/api", createBrowserAppCheck(mode));
   const places = express.Router();
-  places.get("/search", requireAdmin, (_req, res) => { work++; res.json({ ok: true }); });
+  places.get("/search", fixtureLimiter, requireAdmin, (_req, res) => { work++; res.json({ ok: true }); });
   app.use("/api/places", places);
   const plan = express.Router();
-  plan.get("/:routeId", requireAuth, (_req, res) => { work++; res.json({ ok: true }); });
+  plan.get("/:routeId", fixtureLimiter, requireAuth, (_req, res) => { work++; res.json({ ok: true }); });
   app.use("/api/plan", plan);
   const routes = express.Router();
-  routes.get("/:routeId", requireAuth, (_req, res) => { work++; res.json({ ok: true }); });
+  routes.get("/:routeId", fixtureLimiter, requireAuth, (_req, res) => { work++; res.json({ ok: true }); });
   app.use("/api/routes", routes);
   const geometry = express.Router();
-  geometry.get("/:routeId/geometry", requireAuth, (req, res) => {
+  geometry.get("/:routeId/geometry", fixtureLimiter, requireAuth, (req, res) => {
     work++;
     res.json({ routeId: req.params.routeId });
   });
