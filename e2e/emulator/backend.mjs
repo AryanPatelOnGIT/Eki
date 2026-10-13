@@ -32,6 +32,7 @@ globalThis.fetch = providers.fetch;
 // key only unlocks the real handler's in-memory provider response adapter.
 process.env.GOOGLE_MAPS_API_KEY = syntheticProviderKey;
 const { hashDeviceSecret, invalidateDeviceCredentialCache } = require(resolve(root, 'backend/dist/services/deviceTelemetryService.js'));
+const { publishUserAuthorization } = require(resolve(root, 'backend/dist/services/userAuthorization.js'));
 const deviceSecret = 'synthetic-browser-device-only';
 const secretHash = await hashDeviceSecret(deviceSecret);
 let epoch;
@@ -62,7 +63,7 @@ async function reset() {
   providers.reset();
   epoch = Date.now() - 45000;
   for (const collection of ['ride_sessions', 'routes', 'buses', 'users', 'feedbacks', 'feedbackCooldowns',
-    'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations'])
+    'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations', '_userAuthorization'])
     await db.recursiveDelete(db.collection(collection));
   for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
     await auth.setCustomUserClaims(uid, uid === 'qa_admin' ? { role: 'admin', admin: true } : { role: 'passenger' });
@@ -87,6 +88,9 @@ async function reset() {
     publicRouteBuses: { [`route:${route.id}`]: { buses: { [`node:qa_bus_${route.id}`]: live } } },
     liveRouteCatalog: { values: { [`route:${route.id}`]: { active: 1, available: 0, availableReceipts: [], freshestAt: Date.now() } } },
     clientProjectionStatus: { public: { schemaVersion: 1, ready: true } } });
+  // Initialize current admin authority after replacing the RTDB fixture root.
+  // Use the real publisher so browser reads exercise the migrated rules policy.
+  await publishUserAuthorization('qa_admin', { role: 'admin', admin: true });
 }
 await reset();
 // A separate test-control listener, bound to loopback. No test endpoints enter
