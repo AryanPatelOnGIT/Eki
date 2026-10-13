@@ -1,6 +1,6 @@
 # Passenger deletion queue and recovery
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-13 IST (UTC+05:30).
 
 `POST /api/v2/privacy-deletion-requests` and the legacy passenger alias derive
 UID from the verified token. Current Auth, profile role and driver membership
@@ -8,6 +8,33 @@ must exclude privileged accounts. A missing role claim alone does not deny a
 passenger. Operator/admin accounts require the existing IT offboarding process.
 A request returns `202 {accepted:true}`; this acknowledges registration,
 including an existing failed request, and does not certify deletion.
+
+## Passenger experience
+
+In Profile, select **Delete Account** and confirm. The confirmation explains
+that feedback, passenger ride entries and messages are retained. Canceling this
+confirmation sends no request and does not sign the passenger out.
+
+After a valid server acknowledgement, the app opens **Deletion requested**.
+Selecting **OK**, pressing Escape or dismissing the backdrop closes the popup
+and signs the passenger out. Invalid acknowledgements and failed requests do
+not show the success popup or trigger sign-out. Errors remain available in the
+account view. Confirmation dialogs render into the document body so the
+profile's scrolling and animated containers cannot clip them.
+
+Sign-out does not mean deletion has completed. The worker scans on startup
+and every minute while it holds leadership; there is no multi-day waiting
+period and no routine administrator approval. An available worker can pick up
+a due request on a subsequent scan, but backlog, rate-limit cleanup, lock
+contention or dependency failures can extend processing. There is no guaranteed
+completion deadline. A disabled/offline worker leaves requests queued; failed
+or interrupted processing can require the recovery steps below.
+
+Successful account deletion removes Firebase Auth, the profile, feedback
+cooldown, passenger request, message rate limits and the queue record. It
+preserves feedback, passenger ride entries and messages unchanged, including
+stored names and IDs. Separate retention and administrator history-deletion
+flows still apply to those records.
 
 ## Admission and resubmission
 
@@ -33,13 +60,12 @@ No timeout frees an unsettled dependency's execution permit or fleet mutex.
 
 Each execution claims an executor UUID/generation and has a thirty-second
 monotonic dispatch budget. Ordinary progress/deletion transactions validate both
-the claim and worker lease at commit. A turn handles at most two 200-session
-manifest pages (indexed array and legacy dynamic field), and one 200-document
-page each for feedback, message and rate-limit collection groups. A full page
-schedules another fair turn; lifetime `attempts` count these turns. A successful
-continuation resets consecutive `failures`, so a large history is not dead-lettered
-merely because it needs more than five chunks. Manifest updates preserve other
-passengers and remove both the array and legacy field.
+the claim and worker lease at commit. Account deletion preserves feedback,
+indexed and legacy passenger ride entries, and messages unchanged, including
+stored author and passenger details. Their independent retention policies still
+apply. It drains only account-owned message rate limits in 200-document pages;
+a full page schedules another fair turn. Lifetime attempts count these turns,
+and a successful continuation resets consecutive failures.
 
 Transient failures use exponential one-minute backoff with jitter, capped at one
 hour. Five consecutive failed executions produce `failed`, which ordinary scans
@@ -47,9 +73,9 @@ exclude. Fleet mutex contention postpones work without consuming a failure.
 Ineligible/currently privileged or changed-account identities fail immediately.
 Error logs omit UIDs, dependency payloads and stack traces; admin monitoring uses
 fixed error codes. Profiles/cooldowns/passenger requests and Auth are retired
-only after bounded personal-data queries are drained. An already absent Auth
+only after account-owned message rate limits are drained. An already absent Auth
 account is an idempotent success. Completed queue records are removed as before.
-No retention period, privacy entitlement or product policy is changed here.
+This flow deletes the account while retaining its feedback, ride entries and messages; it is not a complete personal-data erasure workflow.
 
 ## Monitor and recover
 
@@ -84,10 +110,10 @@ operationally during deletion: the mutex cannot fence actors outside this API.
 ## Evidence and acceptance limits
 
 Regressions reproduce overwritten retry history, first-twenty poison starvation
-and indefinite retries, and check current/claim-less eligibility, large-history
+and indefinite retries, and check current/claim-less eligibility, large-rate-limit
 fairness, raw stalls, bounded capacity and late-generation fencing. Actual local
-Firestore SDK tests exercise cursor mutation, manifests/collection groups,
-1001-record chunking and a disposable executor killed during synthetic Auth.
+Firestore SDK tests exercise cursor mutation, retained manifests/messages/feedback,
+1001-record feedback preservation and a disposable executor killed during synthetic Auth.
 No live Auth account, hardware, board firmware or production project is touched.
 
 Suitable staging still must verify deployed collection-group indexes, actual

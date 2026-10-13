@@ -22,6 +22,7 @@ export default function AccountTab() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeletionAccepted, setShowDeletionAccepted] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletionStatus, setDeletionStatus] = useState("");
 
@@ -42,13 +43,18 @@ export default function AccountTab() {
         fallbackError: "Deletion request failed.",
       });
       if (result?.accepted !== true) throw new Error("Deletion acknowledgement is missing.");
-      setDeletionStatus("Deletion queued. Your account will be removed shortly.");
+      setDeletionStatus("");
       setShowDeleteConfirm(false);
+      setShowDeletionAccepted(true);
     } catch (error) {
       setDeletionStatus(error instanceof Error ? error.message : "Deletion request failed.");
     } finally {
       setIsDeleting(false);
     }
+  };
+  const dismissDeletionAccepted = () => {
+    setShowDeletionAccepted(false);
+    void logout();
   };
   return (
     <div className="flex-1 overflow-y-auto flex flex-col pt-safe px-5" style={{ background: "var(--surface-0)" }}>
@@ -223,13 +229,23 @@ export default function AccountTab() {
       <ConfirmModal
         isOpen={showDeleteConfirm}
         title="Delete Account?"
-        description="Permanently delete your Eki account and associated personal data? This action cannot be undone."
+        description="Permanently delete your Eki profile and login account? Your feedback, passenger ride entries, and messages will be retained. This action cannot be undone."
         confirmText="Delete Account"
         cancelText="Cancel"
         variant="danger"
         loading={isDeleting}
         onConfirm={confirmDeletion}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        isOpen={showDeletionAccepted}
+        title="Deletion requested"
+        description="Your account deletion request has been queued. You will now be signed out. Your feedback, passenger ride entries, and messages will be retained."
+        confirmText="OK"
+        showCancel={false}
+        variant="info"
+        onConfirm={dismissDeletionAccepted}
+        onCancel={dismissDeletionAccepted}
       />
     </div>
   );

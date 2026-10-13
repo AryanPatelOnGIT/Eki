@@ -444,6 +444,15 @@ surface (issues #72 + #73); the admin route above is the only lifecycle path.
 
 ### `POST /api/privacy/deletion-request` — passenger
 
+The canonical resource is `POST /api/v2/privacy-deletion-requests`. A successful
+`202 {accepted:true}` queues account deletion; it does not confirm completion.
+The worker scans every minute without routine admin approval or a multi-day
+waiting period. It removes the profile, Auth account and account-owned controls,
+preserving feedback, passenger ride entries and messages unchanged. Separate
+retention policies still apply. After acceptance, the passenger app shows a
+confirmation popup and signs out when it is dismissed. Failed or invalid
+acknowledgements do not trigger this sign-out flow.
+
 Registers `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}` without resetting existing retry/error/status history. Current Auth/profile/driver membership permits claim-less passengers while excluding operators (409, IT offboarding). Admission has a three-second caller budget and returns 503/Retry-After on an uncertain or unavailable acknowledgement. Admin `GET /api/v2/privacy-deletion-requests` monitors twenty-record cursor pages; `POST /api/v2/privacy-deletion-requests/{uid}/recovery` compares executor/generation and audits a deliberate retry. Expired processing additionally requires independently verified executor termination and `executorStopped:true`. See [privacy deletion recovery](../docs/operations/PRIVACY_DELETION.md) for bounds, backoff, linked fleet lock recovery and staging limits.
 
 ## Consistency/retry guidance
