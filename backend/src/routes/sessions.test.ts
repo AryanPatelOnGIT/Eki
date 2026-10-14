@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 const harness = vi.hoisted(() => ({
   liveReads: 0,
+  profileExists: true,
   removePassengerBeforeTransaction: false,
   sessionPassengers: {} as Record<string, Record<string, unknown>>,
   updates: [] as unknown[][],
@@ -41,12 +42,13 @@ vi.mock("../lib/firebaseAdmin", () => {
     passengers: harness.sessionPassengers,
   });
   const document = (collectionName: string) => ({
+    collectionName,
     get: async () => {
       if (collectionName === "ride_sessions") return snapshot(true, sessionData());
       if (collectionName === "routes") {
         return snapshot(true, { stops: [{ id: "stop_1" }, { id: "stop_2" }] });
       }
-      if (collectionName === "users") return snapshot(true, { displayName: "Profile Name" });
+      if (collectionName === "users") return snapshot(harness.profileExists, { displayName: "Profile Name" });
       return snapshot(false);
     },
   });
@@ -58,14 +60,14 @@ vi.mock("../lib/firebaseAdmin", () => {
       }),
       runTransaction: async (
         callback: (transaction: {
-          get: () => Promise<ReturnType<typeof snapshot>>;
+          get: (ref: { collectionName: string }) => Promise<ReturnType<typeof snapshot>>;
           update: (...args: unknown[]) => void;
         }) => Promise<unknown>,
       ) => {
         if (harness.removePassengerBeforeTransaction) harness.sessionPassengers = {};
         if (harness.completeBeforeTransaction) harness.sessionStatus = "completed";
         return callback({
-          get: async () => snapshot(true, sessionData()),
+          get: async ref => ref.collectionName === "users" ? snapshot(harness.profileExists, { displayName: "Profile Name" }) : snapshot(true, sessionData()),
           update: (...args: unknown[]) => harness.updates.push(args),
         });
       },
@@ -118,7 +120,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  harness.liveReads = 0;
+  harness.liveReads = 0; harness.profileExists = true;
   harness.removePassengerBeforeTransaction = false;
   harness.sessionPassengers = {};
   harness.updates = [];
@@ -144,6 +146,11 @@ async function join(body: Record<string, unknown>) {
 
 describe.each([false, true])("session passenger join route v2=%s", mode => {
   beforeEach(() => { v2 = mode; });
+  it("cannot modify retained membership after profile retirement", async () => {
+    harness.profileExists = false;
+    harness.sessionPassengers = { passenger_1: { userId: "passenger_1", userName: "Retained name" } };
+    expect((await join({})).status).toBe(403); expect(harness.updates).toEqual([]);
+  });
   it.each([undefined, null, "", "sideways", 123])(
     "keeps unresolved direction %p from creating forward boarding options",
     async (direction) => {

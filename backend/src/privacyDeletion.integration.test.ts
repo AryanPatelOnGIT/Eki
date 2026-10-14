@@ -40,10 +40,13 @@ integration("privacy recovery against actual loopback Firestore", () => {
   it("preserves feedback, ride manifests and messages while retiring the account and its rate limits", async () => {
     const uid = "big"; const batch = state.firestore!.batch();
     batch.set(state.firestore!.collection("users").doc(uid), { role: "passenger" });
+    batch.set(state.firestore!.collection("feedbackCooldowns").doc(uid), { userId: uid });
+    batch.set(state.firestore!.collection("passenger_requests").doc(uid), { userId: uid });
     batch.set(state.firestore!.collection("ride_sessions").doc("indexed"), { passengerIds: [uid, "keep"], passengers: { [uid]: { userId: uid }, keep: { userId: "keep" } } });
     batch.set(state.firestore!.collection("ride_sessions").doc("legacy"), { passengers: { [uid]: { userId: uid } } });
     batch.set(state.firestore!.collection("chats").doc("thread").collection("messages").doc("personal"), { senderId: uid });
     batch.set(state.firestore!.collection("chats").doc("thread").collection("messageRateLimits").doc("personal"), { userId: uid });
+    batch.set(state.firestore!.collection("chats").doc("thread").collection("messageRateLimits").doc("other"), { userId: "keep" });
     await batch.commit();
     for (let start = 0; start < 1001; start += 400) { const part = state.firestore!.batch(); for (let index = start; index < Math.min(start + 400, 1001); index++) part.set(state.firestore!.collection("feedbacks").doc(`f_${String(index).padStart(4, "0")}`), { userId: uid }); await part.commit(); }
     await requestPrivacyDeletion(uid); await requestPrivacyDeletion("later");
@@ -53,8 +56,28 @@ integration("privacy recovery against actual loopback Firestore", () => {
     expect((await state.firestore!.collection("ride_sessions").doc("indexed").get()).data()).toEqual({ passengerIds: [uid, "keep"], passengers: { [uid]: { userId: uid }, keep: { userId: "keep" } } });
     expect((await state.firestore!.collection("ride_sessions").doc("legacy").get()).data()).toEqual({ passengers: { [uid]: { userId: uid } } });
     expect((await state.firestore!.collection("chats").doc("thread").collection("messages").doc("personal").get()).data()).toEqual({ senderId: uid });
-    expect((await state.firestore!.collectionGroup("messageRateLimits").get()).empty).toBe(true);
-    expect((await state.firestore!.collection("users").doc(uid).get()).exists).toBe(false);
+    expect((await state.firestore!.collectionGroup("messageRateLimits").get()).docs.map(document => document.data())).toEqual([{ userId: "keep" }]);
+    for (const collection of ["users", "feedbackCooldowns", "passenger_requests"]) {
+      expect((await state.firestore!.collection(collection).doc(uid).get()).exists).toBe(false);
+    }
+  }, 60000);
+  it("drains 1001 account rate limits through bounded fair turns while retaining history", async () => {
+    const uid = "large_rate_limits";
+    await state.firestore!.collection("feedbacks").doc("retained").set({ userId: uid, comment: "Retain history" });
+    const limits = state.firestore!.collection("chats").doc("large").collection("messageRateLimits");
+    for (let start = 0; start < 1001; start += 400) {
+      const batch = state.firestore!.batch();
+      for (let index = start; index < Math.min(start + 400, 1001); index++) batch.set(limits.doc(`limit_${index}`), { userId: uid });
+      await batch.commit();
+    }
+    await requestPrivacyDeletion(uid); await requestPrivacyDeletion("later_rate_limits");
+    await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false);
+    expect((await limits.get()).size).toBe(801);
+    expect(state.deleted).toEqual(["later_rate_limits"]);
+    for (let turn = 0; turn < 5; turn++) { await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false); }
+    expect((await limits.get()).empty).toBe(true);
+    expect(state.deleted).toContain(uid);
+    expect((await state.firestore!.collection("feedbacks").doc("retained").get()).data()).toEqual({ userId: uid, comment: "Retain history" });
   }, 60000);
   it("recovers a killed raw executor in claim-before-lock order without deleting a recreated identity", async () => {
     await requestPrivacyDeletion("crashed");

@@ -8,6 +8,15 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import { auth } from "@/lib/firebaseAuth";
 import { apiRequest } from "@/lib/apiClient";
 
+function ProfilePhoto({ photoURL }: { photoURL?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!photoURL || failed) {
+    return <CircleUserRound role="img" aria-label="Default profile" className="w-9 h-9" style={{ color: "var(--text-ghost)" }} />;
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={photoURL} alt="Profile" onError={() => setFailed(true)} className="w-full h-full object-cover" />;
+}
+
 export default function AccountTab() {
   const {
     user,
@@ -48,6 +57,7 @@ export default function AccountTab() {
       setShowDeletionAccepted(true);
     } catch (error) {
       setDeletionStatus(error instanceof Error ? error.message : "Deletion request failed.");
+      setShowDeleteConfirm(false);
     } finally {
       setIsDeleting(false);
     }
@@ -66,12 +76,7 @@ export default function AccountTab() {
           <div className="flex flex-col items-center gap-5 relative z-10">
             <div className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden"
               style={{ background: "var(--surface-3)", border: "1px solid var(--border-default)" }}>
-               {user?.photoURL ? (
-                 // eslint-disable-next-line @next/next/no-img-element
-                 <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-               ) : (
-                 <CircleUserRound className="w-9 h-9" style={{ color: "var(--text-ghost)" }} />
-               )}
+               <ProfilePhoto key={JSON.stringify([user?.uid, user?.photoURL])} photoURL={user?.photoURL} />
             </div>
             
             <div className="text-center">

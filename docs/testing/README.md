@@ -5,7 +5,13 @@ A-Z requirements and current source census, preserves historical evidence
 separately, and defines the PR coverage-budget/safety checks. Its static report
 does not certify application, provider or physical acceptance.
 
-Last updated: 2026-10-11 (Asia/Kolkata).
+Last updated: 2026-10-14 (Asia/Kolkata).
+
+The [Antigravity browser testing skill](EKI_Antigravity_Webapp_Testing_Skill.md)
+provides a standalone playbook for PR #323 and current Eki checkouts. Its
+[installable skill](skills/eki-antigravity-webapp-audit/SKILL.md) includes source
+census and evidence validation helpers. Both require actual browser actions and
+separate synthetic/emulator results from provider, deployment and hardware gates.
 
 ## Start with the current gates
 

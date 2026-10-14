@@ -30,8 +30,8 @@ service cloud.firestore {
          request.auth.token.driverId == sessionDoc(sessionId).data.driverId);
     }
 
-    // Operator OR passenger membership with a single get(): chat reads check
-    // both roles in one billable session fetch instead of two (issue #40).
+    // Operator OR passenger membership with a single session get(). A retained
+    // historical manifest cannot authorize a passenger whose profile is gone.
     // Authentication is evaluated BEFORE the session fetch (audit #112): a
     // denied unauthenticated read must never evaluate the billable get().
     function canReadSession(sessionId) {
@@ -41,7 +41,8 @@ service cloud.firestore {
            request.auth.token.driverId == sessionDoc(sessionId).data.driverId) ||
           (sessionDoc(sessionId).data.passengers is map &&
            request.auth.uid in sessionDoc(sessionId).data.passengers &&
-           sessionDoc(sessionId).data.passengers[request.auth.uid].userId == request.auth.uid)));
+           sessionDoc(sessionId).data.passengers[request.auth.uid].userId == request.auth.uid &&
+           exists(/databases/$(database)/documents/users/$(request.auth.uid)))));
     }
 
     // SEC: Boarding is server-issued (POST /api/sessions/:sessionId/join).

@@ -26,7 +26,7 @@ const canonical = value => Array.isArray(value) ? value.map(canonical) : value &
 async function withFreshBackend(label, work) {
   const log = openSync(resolve(directory, `api-backend-${label}.log`), 'w');
   const child = spawn(process.execPath, ['--import', './scripts/qa/network-guard.mjs', 'e2e/emulator/backend.mjs'],
-    { cwd: repositoryRoot, stdio: ['ignore', log, log], env: { ...process.env, PORT: '3116',
+    { cwd: repositoryRoot, stdio: ['ignore', log, log, 'ipc'], env: { ...process.env, PORT: '3116',
       // Authorization sweeps measure request effects, not independent telemetry
       // startup writes. Browser/worker suites keep background processing enabled.
       WORKER_ENABLED: 'false',
@@ -45,7 +45,10 @@ async function withFreshBackend(label, work) {
     assert.equal(state.transport.deniedConnections, 0); assert.equal(state.providers.deniedRequests, 0);
     assert.equal(state.providers.externalNetworkExecuted, false);
   } finally {
-    child.kill('SIGTERM');
+    // Windows terminates on child.kill(SIGTERM) without running Node handlers.
+    // Ask the verified owned fixture to enter the real server shutdown path.
+    if (child.connected) child.send({ type: 'eki-qa-shutdown', pid: child.pid }, error => { if (error) child.kill('SIGTERM'); });
+    else child.kill('SIGTERM');
     const backstop = setTimeout(() => child.kill('SIGKILL'), 12_000);
     const code = await exit; clearTimeout(backstop);
     assert.equal(code, 0, 'Owned backend must drain without forced termination');

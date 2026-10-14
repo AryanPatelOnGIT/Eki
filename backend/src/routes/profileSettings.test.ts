@@ -13,6 +13,9 @@ const harness = vi.hoisted(() => ({
     picture: "https://images.example.test/avatar.png",
   } as Record<string, unknown>,
   authClaims: {} as Record<string, unknown>,
+  authErrorCode: "",
+  authDisabled: false,
+  deletion: undefined as Record<string, unknown> | undefined,
   setCustomClaimsCalls: [] as Array<{ uid: string; claims: Record<string, unknown> }>,
   revokeCalls: [] as string[],
 }));
@@ -61,7 +64,10 @@ vi.mock("../lib/firebaseAdmin", () => {
 
   return {
     auth: {
-      getUser: async () => ({ customClaims: harness.authClaims }),
+      getUser: async () => {
+        if (harness.authErrorCode) throw Object.assign(new Error("Synthetic missing identity"), { code: harness.authErrorCode });
+        return { customClaims: harness.authClaims, disabled: harness.authDisabled };
+      },
       setCustomUserClaims: async (uid: string, claims: Record<string, unknown>) => {
         harness.authClaims = { ...claims };
         harness.setCustomClaimsCalls.push({ uid, claims: { ...claims } });
@@ -84,7 +90,9 @@ vi.mock("../lib/firebaseAdmin", () => {
           if (harness.profile) throw new Error("already exists");
           harness.profile = value;
         },
-        get: async () => snapshot(),
+        get: async ref => ref.collection === "_privacy_deletion_requests"
+          ? { exists: Boolean(harness.deletion), data: () => harness.deletion }
+          : snapshot(),
       }),
     },
   };
@@ -120,6 +128,7 @@ beforeEach(() => {
   harness.profile = undefined;
   harness.settings = {};
   harness.authClaims = {};
+  harness.authErrorCode = ""; harness.authDisabled = false; harness.deletion = undefined;
   harness.setCustomClaimsCalls = [];
   harness.revokeCalls = [];
   harness.user = {
@@ -131,6 +140,21 @@ beforeEach(() => {
 });
 
 describe("profile bootstrap route", () => {
+  it.each(["auth/user-not-found", "auth/user-disabled"])("a cached token cannot recreate a profile for %s", async code => {
+    if (code === "auth/user-disabled") harness.authDisabled = true;
+    else harness.authErrorCode = code;
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(401);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
+  it("does not recreate a missing profile while its deletion request is present", async () => {
+    harness.deletion = { status: "processing", phase: "auth_deletion_dispatched" };
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(409);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
   it("creates a passenger profile only from verified token claims", async () => {
     const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, {
       method: "POST",

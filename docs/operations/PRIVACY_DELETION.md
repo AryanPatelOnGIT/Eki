@@ -19,7 +19,8 @@ After a valid server acknowledgement, the app opens **Deletion requested**.
 Selecting **OK**, pressing Escape or dismissing the backdrop closes the popup
 and signs the passenger out. Invalid acknowledgements and failed requests do
 not show the success popup or trigger sign-out. Errors remain available in the
-account view. Confirmation dialogs render into the document body so the
+account view after the confirmation closes, allowing a visible error and retry.
+Confirmation dialogs render into the document body so the
 profile's scrolling and animated containers cannot clip them.
 
 Sign-out does not mean deletion has completed. The worker scans on startup
@@ -35,6 +36,22 @@ cooldown, passenger request, message rate limits and the queue record. It
 preserves feedback, passenger ride entries and messages unchanged, including
 stored names and IDs. Separate retention and administrator history-deletion
 flows still apply to those records.
+
+Retained membership is historical data, not continuing chat authorization.
+Firestore passenger chat reads also require the backend-owned profile to
+exist. Removing that profile therefore denies subsequent reads even when
+the client still presents an unexpired token. Operator/admin history access
+is unchanged. This adds one profile-existence check only to the passenger
+membership branch; unauthenticated and non-member reads remain short-circuited.
+
+Retirement also fences the cached-token API paths: passenger ride-status reads,
+boarding updates, chat messages/replays and feedback/replays require an existing
+profile. Boarding and feedback use the profile read already needed for their
+transaction; passenger chat adds a profile read while privileged chat is unchanged.
+Bootstrap checks the deletion request and current Auth before creating a missing
+profile. Deleted/disabled Auth returns 401, and an outstanding deletion request
+returns 409 without recreating the profile or repairing claims. These checks prevent
+retained history or a still-cached token from recreating account-owned controls.
 
 ## Admission and resubmission
 
