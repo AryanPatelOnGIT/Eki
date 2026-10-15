@@ -19,7 +19,7 @@ const FIREBASE_CLI_SCOPES = [
 ].join(" ");
 
 function usageError(message) {
-  return new Error(`${message} Usage: node scripts/verify-appcheck-enforcement.mjs --project <project-id>`);
+  return new Error(`${message} Usage: node scripts/disable-appcheck-enforcement.mjs --project <project-id>`);
 }
 
 export function projectIdFromArgs(argv) {
@@ -30,8 +30,8 @@ export function projectIdFromArgs(argv) {
   return argv[projectFlagIndex + 1];
 }
 
-export function shouldEnforceFromArgs(argv) {
-  return argv.includes("--enforce");
+export function shouldDisableFromArgs(argv) {
+  return argv.includes("--disable");
 }
 
 export function projectNumberFromMetadata(metadata) {
@@ -42,10 +42,10 @@ export function projectNumberFromMetadata(metadata) {
   return String(projectNumber);
 }
 
-export function assertEnforced(service, serviceId) {
-  if (service?.enforcementMode !== "ENFORCED") {
+export function assertUnenforced(service, serviceId) {
+  if (service?.enforcementMode !== "UNENFORCED") {
     throw new Error(
-      `Firebase App Check is not enforced for ${serviceId} (mode: ${service?.enforcementMode ?? "UNKNOWN"}).`,
+      `Firebase App Check is still enforced for ${serviceId} (mode: ${service?.enforcementMode ?? "UNKNOWN"}).`,
     );
   }
   return service;
@@ -96,7 +96,7 @@ export async function accessTokenFromFirebaseToken(firebaseToken, fetchImpl = fe
   throw new Error(`Firebase token refresh failed (${response.status}).`);
 }
 
-export async function verifyAppCheckEnforcement({ projectId, token, fetchImpl = fetch }) {
+export async function verifyAppCheckDisabled({ projectId, token, fetchImpl = fetch }) {
   if (!projectId) throw usageError("Missing Firebase project ID.");
   if (!token) throw new Error("FIREBASE_TOKEN is required to verify App Check enforcement.");
 
@@ -116,16 +116,16 @@ export async function verifyAppCheckEnforcement({ projectId, token, fetchImpl = 
         accessToken,
         fetchImpl,
       );
-      return assertEnforced(service, serviceId);
+      return assertUnenforced(service, serviceId);
     }),
   );
 
   return { projectId, projectNumber, services };
 }
 
-export async function enforceAppCheckEnforcement({ projectId, token, fetchImpl = fetch }) {
+export async function disableAppCheckEnforcement({ projectId, token, fetchImpl = fetch }) {
   if (!projectId) throw usageError("Missing Firebase project ID.");
-  if (!token) throw new Error("FIREBASE_TOKEN is required to enforce App Check.");
+  if (!token) throw new Error("FIREBASE_TOKEN is required to disable App Check.");
 
   const accessToken = await accessTokenFromFirebaseToken(token, fetchImpl);
   const metadata = await getJson(
@@ -145,10 +145,10 @@ export async function enforceAppCheckEnforcement({ projectId, token, fetchImpl =
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, enforcementMode: "ENFORCED" }),
+          body: JSON.stringify({ name, enforcementMode: "UNENFORCED" }),
         },
       );
-      return assertEnforced(service, serviceId);
+      return assertUnenforced(service, serviceId);
     }),
   );
 
@@ -159,13 +159,13 @@ const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.arg
 if (isMain) {
   try {
     const projectId = projectIdFromArgs(process.argv.slice(2));
-    const enforce = shouldEnforceFromArgs(process.argv.slice(2));
-    const result = await (enforce ? enforceAppCheckEnforcement : verifyAppCheckEnforcement)({
+    const disable = shouldDisableFromArgs(process.argv.slice(2));
+    const result = await (disable ? disableAppCheckEnforcement : verifyAppCheckDisabled)({
       projectId,
       token: process.env.FIREBASE_TOKEN,
     });
     console.log(
-      `Firebase App Check enforcement ${enforce ? "enabled" : "verified"} for ${result.projectId}: ${REQUIRED_SERVICES.join(", ")}.`,
+      `Firebase App Check enforcement ${disable ? "disabled" : "verified disabled"} for ${result.projectId}: ${REQUIRED_SERVICES.join(", ")}.`,
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

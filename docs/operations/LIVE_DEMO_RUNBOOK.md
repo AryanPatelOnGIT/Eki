@@ -34,7 +34,7 @@ Record the final non-secret values:
 ## 2. Prepare the laptop backend
 
 - [ ] Install dependencies with `npm ci`.
-- [ ] Fill the ignored environment files using [local setup](../GETTING_STARTED.md#local-development); set backend development mode/port and configure App Check before sign-in.
+- [ ] Fill the ignored environment files using [local setup](../GETTING_STARTED.md#local-development); set backend development mode/port and configure Firebase Auth before sign-in.
 - [ ] Keep `AUTH_REVOCATION_CACHE_MS=15000` for the demo; `0` is a
   troubleshooting option that adds a Firebase Auth network round trip to every
   protected backend action.
@@ -89,12 +89,12 @@ domain** to `http://localhost:3000`; reserve the account's assigned backend doma
   If the frontend hostname serves or proxies those helper routes, set the Auth
   domain to that hostname and register
   `https://<frontend-host>/__/auth/handler` in the Google OAuth client's
-  authorized redirect URIs before testing sign-in. See [Auth configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+  authorized redirect URIs before testing sign-in. See [Auth configuration](../CONFIGURATION.md#local-auth-setup).
 - [ ] Test sign-in on each intended phone/browser. If storage restrictions break
   a cross-origin helper, use the approved Firebase Hosting frontend or a
   correctly configured same-origin helper before continuing the demo.
-- [ ] If App Check enforcement is enabled, register a temporary debug token and
-  set `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` only for this local demo.
+- [ ] Disable any existing App Check enforcement for Firestore/RTDB before
+  using this browser; no App Check site key or debug token is needed.
 - [ ] Restart both dev servers after environment changes, then open the frontend
   HTTPS URL on the laptop and each professor phone.
 

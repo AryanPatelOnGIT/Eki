@@ -35,17 +35,15 @@ local professor demonstration.
   in the controlled shell, set `RTDB_EXPECTED_REGION`, and run
   `npm run verify:rtdb-instance` before either deployment. Follow the
   [RTDB region decision and rollback plan](../design/RTDB_REGION_LATENCY_DECISION.md).
-- [ ] Enforce App Check (console toggle) on Firestore and Realtime Database in
-  both projects. Security Rules authorize Firebase Authentication identities
-  and roles; App Check is enforced by Firebase, not a `request.app` rule
-  predicate. The Admin SDK backend is unaffected. Emulator tests use isolated
-  temporary copies via `scripts/rules-for-emulator.mjs`.
+- [ ] Disable App Check enforcement on Firestore and Realtime Database in both
+  projects before publishing this browser. The deploy workflow applies and
+  verifies UNENFORCED mode. Security Rules retain Firebase Authentication
+  identity and role authorization; the Admin SDK backend is unaffected.
 
 ## Staging and deployment pipeline
 
 - [ ] Confirm the approved staging Firebase project configured in `.firebaserc`
-  and the deploy workflow, and configure it with App Check (ReCaptcha
-  Enterprise). Provision a separate university-owned production project before
+  and the deploy workflow. Provision a separate university-owned production project before
   enabling the manual production deploy job.
 - [ ] Configure the `staging` and `production` GitHub environments with
   `FIREBASE_TOKEN` plus all `NEXT_PUBLIC_*` build variables listed in
@@ -57,7 +55,7 @@ local professor demonstration.
   university handover record.
 - [ ] Verify the `Deploy` workflow promotes main to staging automatically after
   a green `Production verification` run, and that staging smoke checks (rules,
-  hosting headers, App Check) pass before any production dispatch.
+  hosting headers, Auth and role checks) pass before any production dispatch.
 - [ ] Deploy and monitor the committed `firestore.indexes.json`; retention and
   privacy deletion depend on those indexes.
 - [ ] Deploy `activeBuses/.indexOn: timestamp` from `database.rules.json`

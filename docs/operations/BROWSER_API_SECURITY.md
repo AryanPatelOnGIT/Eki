@@ -1,5 +1,7 @@
 # Browser API security and fleet viewing
 
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+
 The owner confirmed on 9 October 2026 that any signed-in Google account may
 view a bus while it is live. Institutional affiliation is not an access
 requirement. Mutation privileges remain server-authorized: administrator and
@@ -7,36 +9,17 @@ operator roles do not come from profile editing or browser storage. Freshness
 and service state still control passenger availability; authentication does
 not make an offline bus bookable.
 
-## App Check transport and staged enforcement
+## Browser authentication
 
-The browser API client sends `X-Firebase-AppCheck` when an App Check provider is
-configured, alongside the caller's existing ID-token authorization. Token
-acquisition shares the existing bounded SDK work and the API's ten-second
-response deadline. An unavailable token cannot leave an unbounded request
-waiting or turn into an administrator grant. Non-loopback HTTP backend URLs
-are rejected; only localhost, 127.0.0.1 and ::1 may use HTTP for development.
+App Check is removed from the browser and API. Browser requests use Firebase
+ID tokens; role checks, revocation checks, identity quotas and per-device
+credential authentication still apply. Protected listeners wait for trusted
+Auth role verification. API calls retain their response deadline.
 
-`API_APPCHECK_MODE=off|enforce` controls additional backend attestation.
-`off` is the compatibility default; invalid values fail startup. `enforce`
-verifies Firebase App Check for browser mutations, legacy route/Places/planning
-reads and v2 route geometry reads. Ordinary identity/RBAC checks still apply.
-Exact device POST telemetry/diagnostics and GET firmware routes remain under
-device credential authentication and do not require browser attestation.
-Method/path mismatches cannot obtain a device exemption by supplying a header.
-
-Verification permits at most 64 raw fills and 32 coalesced waiters per token
-digest, with a two-second response budget. Unsettled fills retain their permits.
-Missing or invalid attestation is 403; dependency/capacity failure is 503 with
-Retry-After. No token, verifier detail or precise location is included in the
-public error body. Invalidations and identity quotas retain their own contracts.
-
-Before enabling enforcement in a deployed environment, inventory supported
-API consumers, deploy the attestation-capable browser, register its real
-hostname/provider and exercise valid/missing/expired tokens plus authenticated
-device intake there. This PR adds and tests enforcement software; it does not
-change Firebase Console settings or enable enforcement in the current backend.
-See [admin enrollment](../testing/ADMIN_PERMISSION_RECOVERY.md) and
-[API retirement](API_READS_AND_RETIREMENT.md) for separate acceptance gates.
+Deployment workflows disable App Check enforcement for Firestore and RTDB
+before publishing the browser. For a manual rollout, follow
+[Auth configuration](../CONFIGURATION.md#local-auth-setup). An already deployed
+Firebase project's enforcement setting does not change when source is edited.
 
 ## Diagnostic interpretation
 

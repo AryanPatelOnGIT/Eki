@@ -307,7 +307,7 @@ describe("production security configuration", () => {
     expect(rules).not.toContain("isAppChecked");
   });
 
-  it("keeps Realtime Database rules valid while App Check is enforced by Firebase", () => {
+  it("keeps Realtime Database identity and role authorization after App Check removal", () => {
     const database = JSON.parse(workspaceFile("database.rules.json"));
     expect(database.rules.activeBuses[".read"]).toBe(false);
     expect(database.rules.publicRouteBuses.$routeId.buses[".read"]).toBe("auth != null");
@@ -524,11 +524,11 @@ describe("production security configuration", () => {
     expect(settingsHook).not.toContain('setDoc(doc(db, "settings"');
   });
 
-  it("allows the minimal reCAPTCHA Enterprise CSP surface required by App Check", () => {
+  it("omits the retired reCAPTCHA CSP surface while keeping Google sign-in frames", () => {
     const cspBuild = workspaceFile("scripts/update-csp.mjs");
 
-    expect(cspBuild).toContain('"https://www.google.com/recaptcha/"');
-    expect(cspBuild).toContain('"https://recaptcha.google.com/recaptcha/"');
+    expect(cspBuild).not.toContain('recaptcha/');
+    expect(cspBuild).toContain('"https://accounts.google.com"');
     expect(cspBuild).toContain("const frameSources");
     expect(cspBuild).toContain("/frame-src [^;]+;/");
   });
@@ -919,10 +919,8 @@ describe("production security configuration", () => {
       "'self'",
       "https://accounts.google.com",
       "https://*.firebaseapp.com",
-      "https://www.google.com/recaptcha/",
-      "https://recaptcha.google.com/recaptcha/",
     ]);
-    expect(directives.get("connect-src")).toContain("https://www.google.com/recaptcha/");
+    expect(directives.get("connect-src")).not.toContain("https://www.google.com/recaptcha/");
     expect(directives.get("connect-src")).toContain("https://*.gstatic.com");
     expect(directives.get("connect-src")).toContain("https://*.ggpht.com");
     expect(headers.get("Strict-Transport-Security")).toMatch(/^max-age=\d+/);

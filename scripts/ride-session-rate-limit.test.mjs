@@ -16,6 +16,7 @@ function loadHelper(name, dependencies = {}) {
 const { createBrowserAdmission } = loadHelper("browserAdmission", {
   "./rateLimitIdentity": loadHelper("rateLimitIdentity"),
   "./rateLimitShard": loadHelper("rateLimitShard"),
+  "./deviceIngressPolicy": loadHelper("deviceIngressPolicy"),
   "../middleware/requireAuth": { requireAuth: async (req, res, next) => {
     // This harness isolates mount accounting; the HTTP Vitest suite verifies
     // admission with the actual authentication middleware and denied tokens.
