@@ -4,18 +4,23 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { initializeApp, deleteApp, type App } from "firebase-admin/app";
 import { Firestore, Timestamp } from "firebase-admin/firestore";
 import { getDatabase, type Database } from "firebase-admin/database";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { doc, getDoc } from "firebase/firestore";
 const state = vi.hoisted(() => ({ firestore: null as Firestore | null, realtime: null as Database | null,
-  claims: new Map<string, Record<string, unknown>>(), active: 0, maximum: 0 }));
+  claims: new Map<string, Record<string, unknown>>(), authGate: null as Promise<void> | null, active: 0, maximum: 0 }));
 vi.mock("./lib/firebaseAdmin", () => ({
   db: { collection: (name: string) => state.firestore!.collection(name), runTransaction: (work: any) => state.firestore!.runTransaction(work) },
   rtdb: { ref: (path: string) => state.realtime!.ref(path) },
   // Never make live Auth calls. Firestore and RTDB below are actual loopback SDKs.
   auth: { getUser: async (uid: string) => {
     state.active++; state.maximum = Math.max(state.maximum, state.active);
-    try { await new Promise(done => setTimeout(done, 1)); return { customClaims: state.claims.get(uid) ?? {} }; }
+    try { if (state.authGate) await state.authGate; await new Promise(done => setTimeout(done, 1)); return { customClaims: state.claims.get(uid) ?? {} }; }
     finally { state.active--; }
   }, setCustomUserClaims: async (uid: string, value: Record<string, unknown>) => { state.claims.set(uid, value); }, revokeRefreshTokens: async () => {} },
 }));
+import { syncRoleClaimsChunk } from "./syncRoleClaims";
 import { runAbandonedRideReconciliation } from "./services/abandonedRideReconciler";
 vi.mock("./middleware/requireAdmin", () => ({ requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next() }));
 import fleetRouter, { reconcileFleetAuthorization, drainFleetMutations } from "./routes/fleet";
@@ -38,13 +43,13 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
   });
   beforeEach(async () => {
     await drainFleetMutations(false);
-    for (const name of ["ride_sessions", "active_rides", "_active_bus_locks", "drivers", "buses", "_fleet_reconciliation_locks", "devices", "routes", "_fleet_operations", "bus_locations"]) {
+    for (const name of ["ride_sessions", "active_rides", "_active_bus_locks", "drivers", "buses", "_fleet_reconciliation_locks", "devices", "routes", "_fleet_operations", "bus_locations", "_userAuthorization", "users"]) {
       const docs = await state.firestore!.collection(name).get();
       for (let index = 0; index < docs.size; index += 400) {
         const batch = state.firestore!.batch(); docs.docs.slice(index, index + 400).forEach(doc => batch.delete(doc.ref)); await batch.commit();
       }
     }
-    await state.realtime!.ref().set(null); state.claims.clear(); state.maximum = 0;
+    await state.realtime!.ref().set(null); state.claims.clear(); state.maximum = 0; state.authGate = null;
   });
   afterAll(async () => { await drainFleetMutations(false); await new Promise<void>(done => server.close(() => done())); await state.firestore?.terminate(); if (app) await deleteApp(app); });
   it("interrupts 201 stale sessions through mutating cursors and preserves newer/unknown lifecycles", async () => {
@@ -74,6 +79,31 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
     // The checkpoint remains valid after earlier candidates disappear from the query.
     expect((await runAbandonedRideReconciliation({ firestore: state.firestore!, realtimeDatabase: state.realtime!, now, cursor: "session_0199" })).scanned).toBe(2);
   }, 60000);
+  it("serializes CLI publication and fleet demotion with the real durable mutex", async () => {
+    const userRef = state.firestore!.collection("users").doc("auth_uid");
+    await userRef.set({ role: "admin" });
+    await state.firestore!.collection("drivers").doc("driver").set({ authUid: "auth_uid", assignedBusId: null });
+    let release!: () => void;
+    state.authGate = new Promise<void>(done => { release = done; });
+    const publication = syncRoleClaimsChunk(["auth_uid"]);
+    try {
+      await vi.waitFor(() => expect(state.active).toBe(1));
+      expect((await fetch(`${base}/api/fleet/drivers/driver`, { method: "DELETE" })).status).toBe(409);
+      await expect(syncRoleClaimsChunk(["auth_uid"])).rejects.toThrow("Fleet authorization");
+    } finally { release(); await publication; state.authGate = null; }
+    expect((await fetch(`${base}/api/fleet/drivers/driver`, { method: "DELETE" })).status).toBe(200);
+    // HTTP responses may precede the fleet wrapper's lock/audit cleanup.
+    await drainFleetMutations(false);
+    expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([true]);
+    expect(state.claims.get("auth_uid")?.role).toBe("passenger");
+    expect(state.claims.get("auth_uid")?.admin).toBeUndefined();
+    const authorization = (await state.firestore!.collection("_userAuthorization").doc("auth_uid").get()).data();
+    expect(authorization?.role).toBe("passenger");
+    expect((await state.realtime!.ref("_userAuthorization/auth_uid").get()).val()).toMatchObject({
+      role: "passenger", version: authorization?.version,
+    });
+    expect((await state.firestore!.collection("_fleet_reconciliation_locks").doc("singleton").get()).exists).toBe(false);
+  });
   it("visits 1001 drivers with bounded real queries and targeted RTDB repair; Auth is synthetic", async () => {
     await state.firestore!.collection("buses").doc("bus").set({ assignedRoutes: ["route"] });
     for (let start = 0; start < 1001; start += 400) {
@@ -124,4 +154,41 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
     expect((await state.firestore!.collection("buses").doc("new_bus").get()).data()).toEqual({ id: "new_bus", name: "New", assignedRoutes: [] });
   });
 
+  it("denies a saved token through actual rules after production fleet reassignment and deletion", async () => {
+    const [host, port] = process.env.FIRESTORE_EMULATOR_HOST!.split(":");
+    const environment = await initializeTestEnvironment({ projectId: "demo-eki-reconciliation-test", firestore: {
+      host, port: Number(port), rules: readFileSync(process.env.FIRESTORE_RULES_PATH ?? resolve(__dirname, "../../firestore.rules"), "utf8"),
+    } });
+    try {
+      await state.firestore!.collection("buses").doc("security_bus").set({ assignedRoutes: ["route"] });
+      const assign = (uid: string, assignedBusId: string | null = "security_bus") => fetch(`${base}/api/fleet/drivers/security_driver`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Synthetic operator", authUid: uid, assignedBusId }) });
+      const original = await assign("former_uid"); expect(original.status).toBe(200); await original.json(); await drainFleetMutations(false);
+      const oldClaims = { ...state.claims.get("former_uid")! };
+      const old = environment.authenticatedContext("former_uid", oldClaims);
+      const session = (client: ReturnType<typeof environment.authenticatedContext>) => doc(client.firestore(), "ride_sessions", "security_session");
+      await state.firestore!.collection("ride_sessions").doc("security_session").set({ driverId: "security_driver", busId: "security_bus", passengers: {}, boardingCode: "SYNTHETIC" });
+      await assertSucceeds(getDoc(session(old)));
+      const replacement = await assign("replacement_uid"); expect(replacement.status).toBe(200); await replacement.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(old)));
+      const fresh = environment.authenticatedContext("replacement_uid", state.claims.get("replacement_uid")!);
+      await assertSucceeds(getDoc(session(fresh)));
+      const removed = await fetch(`${base}/api/fleet/drivers/security_driver`, { method: "DELETE" });
+      expect(removed.status).toBe(200); await removed.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(fresh)));
+      // Reusing the original principal and assignment cannot restore old access.
+      const restored = await assign("former_uid"); expect(restored.status).toBe(200); await restored.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(old)));
+      const restoredClient = environment.authenticatedContext("former_uid", state.claims.get("former_uid")!);
+      await assertSucceeds(getDoc(session(restoredClient)));
+      const unassigned = await assign("former_uid", null); expect(unassigned.status).toBe(200); await unassigned.json(); await drainFleetMutations(false);
+      await assertFails(getDoc(session(restoredClient)));
+      const unassignedClient = environment.authenticatedContext("former_uid", state.claims.get("former_uid")!);
+      await assertSucceeds(getDoc(doc(unassignedClient.firestore(), "drivers", "security_driver")));
+      await assertFails(getDoc(session(unassignedClient)));
+      // RTDB omits null fields; this must not cause recurring revocation.
+      const reconciliation = await reconcileFleetAuthorization();
+      expect(reconciliation).toMatchObject({ checked: 1, repaired: 0, failed: 0 });
+    } finally { await environment.cleanup(); }
+  }, 60000);
 });
