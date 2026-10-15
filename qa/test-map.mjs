@@ -8,6 +8,13 @@ import { reviewedUnitTestMap } from './reviewed-unit-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 // Exact limited assertion links; no complete feature acceptance is claimed.
 export const testMap = mergeTestMaps([{
+  caseId: 'SEC04',
+  scope: 'App Check removal retains browser identity/admin checks; no live Firebase configuration claim.',
+  sourcePaths: ['backend/src/middleware/browserAppCheck.ts'],
+  tests: [{ path: 'backend/src/lib/browserAdmission.test.ts',
+    name: 'production browser admission > admits browser requests without attestation while retaining identity and admin authorization',
+    level: 'L1', semantics: 'Mounted admission and role middleware admit verified admin GET/HEAD and mutation requests without attestation, but reject forged/missing identity and non-admin access.' }],
+}, {
   caseId: 'H17',
   scope: 'Mounted Express methods/paths agree with the published OpenAPI contract; L0 only.',
   sourcePaths: ['scripts/verify-openapi.mjs'],

@@ -5,20 +5,20 @@ const boarding = title => ({ path: 'frontend/src/components/passenger/PassengerB
 const budget = title => ({ path: 'frontend/src/components/passenger/PassengerBoardingView.budgets.test.tsx', name: `boarding preparation and API budgets > ${title}`, level: 'L1' });
 const restore = title => ({ path: 'frontend/src/components/passenger/PassengerWorkspace.restore.test.tsx', name: `verified reload boarding recovery > ${title}`, level: 'L1' });
 const feedback = title => ({ path: 'frontend/src/components/shared/FeedbackModal.test.tsx', name: `passenger feedback workflow > ${title}`, level: 'L1' });
-const authSources = ['frontend/src/hooks/useAuth.tsx', 'frontend/src/lib/authState.ts'];
+const authSources = ['frontend/src/hooks/useAuth.ts', 'frontend/src/lib/authState.ts', 'frontend/src/lib/firebaseAppCheck.ts'];
 const boardingSources = ['frontend/src/components/passenger/PassengerBoardingView.tsx'];
 const feedbackSources = ['frontend/src/components/shared/FeedbackModal.tsx'];
 const rows = [
-  ['AUTH07', 'Mounted auth provider keeps readiness closed after the eight-second restoration guard and before mocked App Check resolves; actual ten-second role-fetch/browser recovery remains separate.', authSources, [
-    auth('does not mark an auth restoration timeout ready'), auth('does not publish cached/admin identity or open readiness before App Check')]],
-  ['AUTH08', 'Mounted auth provider rejects an admin role string without the trusted admin bit and exposes mocked App Check failure/recovery; real Firestore permission/malformed/profile partitions remain separate.', authSources, [
-    auth('does not publish admin access from a role string without the trusted admin bit'), auth('keeps App Check failures visible and data readiness closed')]],
+  ['AUTH07', 'Mounted auth provider keeps readiness closed after the eight-second restoration guard and before mocked role verification resolves; actual ten-second role-fetch/browser recovery remains separate.', authSources, [
+    auth('does not mark an auth restoration timeout ready'), auth('does not publish cached/admin identity or open readiness before trusted role verification')]],
+  ['AUTH08', 'Mounted auth provider rejects an admin role string without the trusted admin bit and exposes mocked role verification failure/recovery; real Firestore permission/malformed/profile partitions remain separate.', authSources, [
+    auth('does not publish admin access from a role string without the trusted admin bit'), auth('keeps role verification failures visible and data readiness closed')]],
   ['AUTH11', 'Mounted auth provider suppresses pending verification/sign-out completions and shows sign-out failure recovery; private listener/chat/map cleanup and focus remain separate.', authSources, [
     auth('keeps pending verification from republishing access during sign-out'), auth('discards a token completion after sign-out'), auth('shows recovery when Firebase sign-out fails instead of leaving a silent closed gate')]],
   ['AUTH12', 'Mounted auth provider discards old-account completion; workspace refuses another UID local hint and aborts delayed previous-account recovery. Map/boarding children and status transport are mocked; all private listener/cache isolation remains separate.', [...authSources, 'frontend/src/components/passenger/PassengerWorkspace.tsx', 'frontend/src/lib/joinedRidePointer.ts'], [
     auth('discards old-account completion during a switch'), restore("does not query another account's local ride hint"), restore('ignores a delayed previous-account response')]],
   ['AUTH13', 'Manual access refresh publishes current mocked passenger claims after admin revocation and forces token refresh; actual deployed revocation and operator assignment propagation remain separate.', authSources, [auth('observes a revoked admin role during manual access refresh')]],
-  ['AUTH18', 'Mounted auth provider coalesces retries, closes the old gate and forces security verification before publishing refreshed claims; HTTP retry identity/listener reconnect/live App Check remain separate.', authSources, [
+  ['AUTH18', 'Mounted auth provider coalesces retries, closes the old gate and forces security verification before publishing refreshed claims; HTTP retry identity/listener reconnect/live role verification remain separate.', authSources, [
     auth('coalesces simultaneous access retries, closes the old data gate and forces new security verification'), auth('refreshes a persisted passenger token to the current trusted admin claims before publishing access')]],
   ['BOARD01', 'Actual boarding component sends selected code/stops and mocked GPS once, announces only a joined acknowledgement. Server UID manifest/proximity/transaction acceptance remains separate.', boardingSources, [boarding('submits code, chosen stops and GPS once and only announces a confirmed join')]],
   ['BOARD02', 'Actual boarding component resets destination when boarding stop changes and disables incomplete boarding. Full 0/7/8/9 code-length UI partition remains separate.', boardingSources, [boarding('keeps boarding and destination stops distinct')]],

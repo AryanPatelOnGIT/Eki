@@ -91,22 +91,6 @@ export async function apiRequest<T>(
   }, timeoutMs);
 
   try {
-    if (typeof window !== "undefined" &&
-        (process.env.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY ||
-         (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN))) {
-      let abortVerification!: () => void;
-      const aborted = new Promise<never>((_resolve, reject) => {
-        abortVerification = () => reject(requestController.signal.reason);
-        if (requestController.signal.aborted) abortVerification();
-        else requestController.signal.addEventListener("abort", abortVerification, { once: true });
-      });
-      try {
-        const token = await Promise.race([
-          import("./firebaseAppCheck").then(module => module.browserAppCheckToken()), aborted,
-        ]);
-        if (token) headers.set("X-Firebase-AppCheck", token);
-      } finally { requestController.signal.removeEventListener("abort", abortVerification); }
-    }
     const response = await fetch(`${backendUrl}${path}`, {
       ...init,
       headers,

@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-08 08:22 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -22,12 +22,9 @@ curl -i https://api.example.edu/live
 Browser endpoints use a Firebase ID token. The frontend obtains that token
 after sign-in and sends it as a bearer token:
 
-Configured browsers also send `X-Firebase-AppCheck`. Backend
-`API_APPCHECK_MODE=off|enforce` stages additional attestation for mutations and
-high-cost lookup/geometry reads, with independent ID-token/RBAC authorization.
-The compatibility default is `off`; device-authenticated intake is separate.
-See [browser API security and diagnostic interpretation](../docs/operations/BROWSER_API_SECURITY.md)
-before enabling enforcement or interpreting the extended health fields.
+Browser requests use Firebase ID-token authorization without App Check.
+Device-authenticated intake retains separate credentials and rate limits.
+See [browser API security](../docs/operations/BROWSER_API_SECURITY.md).
 
 ```bash
 TOKEN="<firebase-id-token>"

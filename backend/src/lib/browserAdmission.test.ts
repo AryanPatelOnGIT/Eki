@@ -29,6 +29,8 @@ async function boot(ingress = 50) {
   app.use(createBrowserIngressLimiter(1, ingress));
   app.use("/api", createBrowserAdmission(1, { read: 3, mutation: 2 }));
   app.get("/api/health", requireAdmin, (_req, res) => res.json({ ok: true }));
+  app.get("/api/places/search", requireAdmin, (_req, res) => res.json({ ok: true }));
+  app.patch("/api/v2/settings/global", requireAdmin, (_req, res) => res.json({ ok: true }));
   app.use((_req, res) => res.json({ ok: true }));
   const server = await new Promise<Server>(resolve => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -40,6 +42,15 @@ async function boot(ingress = 50) {
   });
 }
 describe("production browser admission", () => {
+  it("admits browser requests without attestation while retaining identity and admin authorization", async () => {
+    const request = await boot();
+    expect((await request("alice", "GET", "/api/places/search")).status).toBe(200);
+    expect((await request("alice", "HEAD", "/API/PLACES/search")).status).toBe(200);
+    expect((await request("alice", "PATCH", "/api/v2/settings/global")).status).toBe(200);
+    expect((await request("bob", "GET", "/api/places/search")).status).toBe(403);
+    expect((await request("forged", "GET", "/api/places/search")).status).toBe(401);
+    expect((await request("", "PATCH", "/api/v2/settings/global")).status).toBe(401);
+  });
   it("separates verified users sharing one IP, including mutation quotas", async () => {
     const request = await boot();
     for (const method of ["GET", "POST"]) {

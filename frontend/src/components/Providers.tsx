@@ -11,8 +11,7 @@ import TelemetryTraceControls from "@/components/TelemetryTraceControls";
  * route-planner). This keeps the Maps JS SDK out of the root bundle and
  * off the landing page, reducing TTI for unauthenticated visitors.
  *
- * Firebase AppCheck is initialised lazily inside useAuth (post first-paint)
- * rather than here as a side-effect import, so it no longer blocks LCP.
+ * Authentication initializes lazily inside useAuth after first paint.
  */
 export default function Providers({ children }: { children: React.ReactNode }) {
   return <AuthProvider>{children}<TelemetryTraceControls /></AuthProvider>;

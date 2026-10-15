@@ -30,7 +30,7 @@ async function withFreshBackend(label, work) {
       // Authorization sweeps measure request effects, not independent telemetry
       // startup writes. Browser/worker suites keep background processing enabled.
       WORKER_ENABLED: 'false',
-      CORS_ORIGIN: 'http://127.0.0.1:3115', NODE_ENV: 'development', API_APPCHECK_MODE: 'off' } });
+      CORS_ORIGIN: 'http://127.0.0.1:3115', NODE_ENV: 'development' } });
   closeSync(log);
   const exit = new Promise(done => child.once('exit', code => done(code)));
   try {
