@@ -1,0 +1,1 @@
+control_id,source_id,page,component,source_path,source_line,role,viewport,environment,evidence_tier,entry_state,control_name,locator,precondition,action,expected,observed,status,executed,oracle_passed,evidence_path,bug_id,blocker_reason

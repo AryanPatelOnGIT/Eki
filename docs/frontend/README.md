@@ -1,6 +1,6 @@
 # Eki frontend
 
-Last updated: 2026-10-06 00:35 IST (UTC+05:30).
+Last updated: 2026-10-13 IST (UTC+05:30).
 
 Next.js 16 App Router application with React 19, Firebase Auth and a static-export PWA. Passenger and administrator workspaces are protected; `/feedback` is an admin review view sharing the same panel as the Admin Feedback tab.
 
@@ -22,6 +22,7 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 ## Workflows
 
 - Passenger: select a route, bus and destination; track live position; join an armed/active ride using the boarding code; view the timeline, messages, account and feedback.
+- Passenger account deletion: **Profile → Delete Account** opens a confirmation explaining that feedback, passenger ride entries and messages are retained. A valid API acknowledgement opens **Deletion requested**; OK, Escape or backdrop dismissal signs the passenger out. Failed requests keep the passenger signed in. Sign-out confirms neither deletion completion nor a deadline; the backend worker processes the queue asynchronously. See [account deletion and recovery](../operations/PRIVACY_DELETION.md).
 - Passenger selectors: destination and bus controls stay inside the web app. Destination order follows the ride direction, falls back to the terminal stop, and carries into boarding as `alightingStopId`. Device-only presence supports planning but cannot grant boarding eligibility.
 - Passenger boarding: Auth-token and location preparation each have a ten-second deadline, followed by a separate full ten-second API budget. Location denial, unavailable position and acquisition timeout are distinct; session changes and unmount cancel old work. Existing members may still correct stops without another location prompt. See [boarding request checks](../testing/BOARDING_REQUEST_BUDGETS.md).
 - Administrator: use Live Ops, routes, fleet/personnel, history, feedback and settings. Only the active tab is mounted to limit listeners/maps/timers.
@@ -29,6 +30,10 @@ Open `http://localhost:3000`. Restart after changing public environment variable
 - Route editor: submit one versioned PUT with a stable `saveId`. A 202 or unknown write outcome is reconciled through the legacy save-operation GET for up to 35 seconds. Temporary network/read 503, `AUTH_BUSY` 503, generic 5xx and read-quota 429 failures back off using the server retry hint within that deadline; stored save failures and other 4xx stop immediately. Keep the same `saveId` and payload for any explicit retry after an unknown outcome.
 
 ## Runtime boundaries
+
+Confirmation dialogs render through a portal into `document.body`, keeping them
+above the page and outside transformed or scrolling profile containers. The
+accepted-deletion popup has a single OK button; all dismissal paths sign out.
 
 | Module | Responsibility |
 |---|---|

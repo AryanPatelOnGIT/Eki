@@ -24,6 +24,11 @@ const prepareBoarding = async (page: Page, code = 'ABCD2345') => {
 };
 const board = async (page: Page) => {
   await prepareBoarding(page);
+  const boardButton = page.getByRole('button', { name: 'Board', exact: true });
+  expect(await boardButton.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+  })).toBe(true);
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await expect(page.getByRole('button', { name: 'On board', exact: true })).toBeVisible();
 };
@@ -48,6 +53,53 @@ test.beforeEach(async ({ context, request, browser }, testInfo) => {
   });
   (context as typeof context & { qaDenied?: string[] }).qaDenied = denied;
   expect((await request.post(`${control}/reset`)).ok()).toBe(true);
+});
+
+test('stop rename Escape discards the draft before blur and save', async ({ page, request }) => {
+  await page.goto('/?panel=routes'); await login(page, 'qa_admin');
+  // Use an idle route: editing the active fixture's route is correctly denied
+  // once the real worker has established its service state.
+  await page.getByRole('button', { name: 'Add Route', exact: true }).click();
+  await page.getByLabel('Display Name', { exact: true }).fill('Synthetic rename route');
+  await page.getByLabel('Route ID', { exact: true }).fill('qa_rename_route');
+  for (const name of ['origin', 'end']) {
+    await page.getByRole('searchbox', { name: 'Search for a stop', exact: true }).fill(`Synthetic ${name}`);
+    await page.getByRole('button').filter({ hasText: `Synthetic provider ${name}` }).click();
+  }
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await expect(page.getByText('Route deployed!', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit route Synthetic rename route', exact: true }).click();
+  await page.getByRole('button', { name: /^Synthetic provider origin / }).click();
+  const rename = page.getByRole('textbox', { name: 'Rename stop Synthetic provider origin', exact: true });
+  await rename.fill('Discard this stop name'); await rename.press('Escape');
+  await expect(rename).toHaveCount(0);
+  await page.keyboard.press('Tab');
+  const saveAcknowledgement = page.waitForResponse(response => response.url().endsWith('/api/routes/qa_rename_route') && response.request().method() === 'PUT', { timeout: 15000 });
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  expect((await saveAcknowledgement).ok()).toBe(true);
+  await expect(page.getByText('Route updated!', { exact: true })).toBeVisible();
+  expect((await evidence(request)).routes.find((route: { id: string }) => route.id === 'qa_rename_route').stops[0].name).toBe('Synthetic provider origin');
+});
+
+test('profile photo decodes and a denied photo shows the accessible fallback', async ({ page, request }) => {
+  let token = '';
+  page.on('response', async response => {
+    if (response.url().includes('accounts:signInWithPassword')) token = (await response.json()).idToken;
+  });
+  await page.route('**/qa-profile.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="green"/></svg>' }));
+  await page.goto('/'); await login(page); await expect.poll(() => token).not.toBe('');
+  const setPhoto = async (photoUrl: string) => {
+    expect((await request.post('http://127.0.0.1:9095/identitytoolkit.googleapis.com/v1/accounts:update?key=synthetic-emulator-key', { data: { idToken: token, photoUrl } })).ok()).toBe(true);
+    await page.evaluate(async () => { const { auth } = await import('/firebase.ts'); await auth.currentUser!.reload(); });
+    await page.reload(); await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+    await page.getByRole('button', { name: 'Profile', exact: true }).click();
+  };
+  await setPhoto('http://127.0.0.1:3115/qa-profile.svg');
+  await expect.poll(() => page.getByRole('img', { name: 'Profile', exact: true }).evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  await page.route('**/qa-profile-denied.svg', route => route.fulfill({ status: 403, body: 'Synthetic denied image' }));
+  await setPhoto('http://127.0.0.1:3115/qa-profile-denied.svg');
+  await expect(page.getByRole('img', { name: 'Default profile', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Profile', exact: true })).toHaveCount(0);
 });
 test.afterEach(async ({ context, request, page }, testInfo) => {
   if (!page.isClosed()) {
@@ -222,6 +274,93 @@ test('profile cancellation preserves auth and confirmation signs out the real em
   await page.getByRole('dialog').getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByLabel('Verified fixture account')).toHaveText('signed out');
   await expect(page.getByRole('heading', { name: 'Guest', exact: true })).toBeVisible();
+});
+
+test('accepted account deletion signs out on dismissal and the real worker preserves ride feedback and messages', async ({ page, request }) => {
+  test.setTimeout(45000);
+  let retiredAuthorization = '';
+  page.on('request', request => {
+    if (request.url().endsWith('/api/v2/privacy-deletion-requests')) retiredAuthorization = request.headers().authorization;
+  });
+  await page.goto('/'); await login(page); await board(page);
+  await page.getByRole('button', { name: 'Open live chat', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Chat message' }).fill('Retained synthetic message');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByRole('textbox', { name: 'Chat message' })).toHaveValue('');
+  await page.getByRole('button', { name: 'Close chat' }).click();
+  await page.getByRole('button', { name: 'Profile', exact: true }).click();
+  await page.getByRole('button', { name: 'Send Feedback', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('Retained synthetic feedback');
+  await page.getByRole('button', { name: 'Submit Feedback' }).click();
+  await expect(page.getByRole('heading', { name: 'Thank you!' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const before = await evidence(request);
+  expect(before.messages).toHaveLength(1); expect(before.feedbacks).toHaveLength(1);
+  await page.getByRole('button', { name: 'Delete Account', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Delete Account?', exact: true });
+  expect(await confirmation.evaluate(element => element.parentElement === document.body)).toBe(true);
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+  await page.getByRole('button', { name: 'Delete Account', exact: true }).click();
+  const acknowledged = page.waitForResponse(response => response.url().endsWith('/api/v2/privacy-deletion-requests') && response.request().method() === 'POST');
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete Account', exact: true }).click();
+  const response = await acknowledged; expect(response.status()).toBe(202); expect(await response.json()).toMatchObject({ accepted: true });
+  const accepted = page.getByRole('dialog', { name: 'Deletion requested', exact: true });
+  await expect(accepted).toBeVisible(); await expect(accepted.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+  await accepted.getByRole('button', { name: 'OK', exact: true }).click();
+  await expect(page.getByLabel('Verified fixture account')).toHaveText('signed out');
+  await expect(page.getByRole('heading', { name: 'Guest', exact: true })).toBeVisible();
+  expect((await request.post(`${control}/privacy/drain`)).ok()).toBe(true);
+  const snapshot = await (await request.get(`${control}/authorization-snapshot`)).json();
+  expect(snapshot.principals.some((account: { uid: string }) => account.uid === 'qa_passenger')).toBe(false);
+  for (const collection of ['users', 'feedbackCooldowns', '_privacy_deletion_requests']) {
+    expect(snapshot.documents[collection].some((document: { id: string }) => document.id === 'qa_passenger')).toBe(false);
+  }
+  expect(snapshot.rateLimitCount).toBe(0);
+  expect(retiredAuthorization).toMatch(/^Bearer /);
+  const headers = { Authorization: retiredAuthorization };
+  // 403 from the handler (rather than verifier 401) proves the still-cached
+  // token reached the profile fence after Auth retirement.
+  expect((await request.get('http://127.0.0.1:3116/api/sessions/qa_session/status', { headers })).status()).toBe(403);
+  expect((await request.post('http://127.0.0.1:3116/api/sessions/qa_session/messages', {
+    headers, data: { text: 'Retired account must not write', requestId: 'retired_message_12345678' },
+  })).status()).toBe(403);
+  expect((await request.put('http://127.0.0.1:3116/api/v2/ride-sessions/qa_session/passengers/me', {
+    headers, data: { boardingCode: 'ABCD2345', boardingStopId: 'origin', alightingStopId: 'end' },
+  })).status()).toBe(403);
+  expect((await request.post('http://127.0.0.1:3116/api/feedback', {
+    headers, data: { type: 'general', comment: 'Retired account must not write', requestId: 'retired_feedback_12345678' },
+  })).status()).toBe(403);
+  expect((await request.post('http://127.0.0.1:3116/api/users/bootstrap', { headers })).status()).toBe(401);
+  const retired = await (await request.get(`${control}/authorization-snapshot`)).json();
+  expect(retired.rateLimitCount).toBe(0);
+  expect(retired.documents.users.some((document: { id: string }) => document.id === 'qa_passenger')).toBe(false);
+  expect(retired.documents.feedbackCooldowns).toEqual([]);
+  const after = await evidence(request);
+  expect(after.passengers).toEqual(before.passengers); expect(after.passengerIds).toEqual(before.passengerIds);
+  expect(after.feedbacks).toEqual(before.feedbacks); expect(after.messages).toEqual(before.messages);
+});
+
+test('failed account deletion exposes the error and preserves sign-in for a corrected retry', async ({ page }) => {
+  await page.goto('/'); await login(page);
+  await page.getByRole('button', { name: 'Profile', exact: true }).click();
+  let malformed = false;
+  await page.route('http://127.0.0.1:3116/api/v2/privacy-deletion-requests', route => route.fulfill({
+    status: malformed ? 202 : 503, contentType: 'application/json',
+    body: malformed ? '{"accepted":false}' : '{"error":"Synthetic deletion service unavailable"}',
+  }));
+  for (const failure of ['service', 'acknowledgement']) {
+    malformed = failure === 'acknowledgement';
+    await page.getByRole('button', { name: 'Delete Account', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete Account', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText: malformed ? 'acknowledgement is missing' : 'Synthetic deletion service unavailable' })).toBeVisible();
+    await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_passenger');
+  }
+  await page.getByRole('button', { name: 'Delete Account', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete Account?', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 test('admin settings save persists and a passenger cannot enter the same panel', async ({ page, request }) => {
@@ -439,10 +578,22 @@ test('admin live service controls persist bounded delay and interrupt safely bef
   expect(freshFix.ok()).toBe(true); expect((await freshFix.json()).statuses).toEqual([202]);
   await select(page, 'Operator', 'Synthetic operator (qa_driver)');
   await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
+  // The API has a ten-second request budget. Observe its acknowledgement before
+  // checking the UI, rather than treating a valid pending request as a failure
+  // after Playwright's default five-second assertion window.
+  const startAcknowledgement = page.waitForResponse(response =>
+    response.url() === 'http://127.0.0.1:3116/api/v2/ride-sessions'
+      && response.request().method() === 'POST', { timeout: 15_000 });
   await page.getByRole('button', { name: 'Start service', exact: true }).click();
+  const startResponse = await startAcknowledgement;
+  expect(startResponse.ok()).toBe(true);
+  const startResult = await startResponse.json();
+  expect(startResult.sessionId).toEqual(expect.any(String));
+  expect(startResult.resumed).not.toBe(true);
   await expect(page.getByText(/^Service started /)).toBeVisible();
   const restarted = await evidence(request);
   const fresh = restarted.sessions.find((ride: { id: string }) => ride.id !== 'qa_session');
+  expect(fresh.id).toBe(startResult.sessionId);
   expect(fresh).toMatchObject({ busId: 'qa_bus', driverId: 'qa_driver', routeId: 'qa_route', passengers: {} });
   expect(restarted.sessions).toHaveLength(2); expect(restarted.lock.sessionId).toBe(fresh.id);
   expect(restarted.completions).toEqual([]);

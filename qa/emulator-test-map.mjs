@@ -31,3 +31,14 @@ export const emulatorTestMap = [...telemetryMappings, {
       name: 'bounded reconciliation against actual Firebase emulators > serializes CLI publication and fleet demotion with the real durable mutex', level: 'L2',
       semantics: 'Real Firestore mutex contention prevents concurrent fleet demotion/CLI publication; later CLI reads passenger state and publishes matching records in both emulators. Auth is synthetic.' }],
 }];
+emulatorTestMap.push({
+  caseId: 'AUTH14',
+  scope: 'Local Firestore sub-oracle: a preserved ride manifest loses passenger chat-read authority when the backend-owned profile is removed; admin and assigned-driver reads remain allowed. Actual OAuth revocation, disabled-account and deployed App Check behavior remain separate.',
+  sourcePaths: ['firestore.rules'],
+  tests: [{
+    path: 'backend/src/rulesIntegration.test.ts',
+    name: 'Firebase security rules integration > retained ride membership cannot authorize chat reads after the profile is deleted',
+    level: 'L2',
+    semantics: 'The same signed emulator principal reads a retained message with its profile present, then is denied after profile deletion while the manifest/message are retained; trusted operator/admin neighbors still succeed.',
+  }],
+});
