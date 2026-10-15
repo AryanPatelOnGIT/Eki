@@ -219,7 +219,7 @@ Fields: `busId`, `driverId`, `routeId`, `direction`, `originStopId`, `destinatio
 
 ### `feedbacks/{feedbackId}`
 
-Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction. Admin review uses `GET /api/v2/feedback` (latest 200 records, no-store) and a status PATCH; the browser does not attach a direct feedback listener. The admin status endpoint changes review state. Retention/server privacy can delete.
+Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction. Admin review uses `GET /api/v2/feedback` (latest 200 records, no-store) and a status PATCH; the browser does not attach a direct feedback listener. The admin status endpoint changes review state. Retention can delete feedback; passenger account deletion preserves it.
 
 ### `feedbackCooldowns/{uid}`
 
@@ -316,7 +316,7 @@ credential-cache entries. Browser rules deny all reads and writes.
 - A device assignment must match `buses.assignedRoutes` and an existing route.
 - Driver API authority requires agreement among Auth claims, `drivers`, `buses`, and the requested bus/route.
 - Terminal history deletion recursively removes the ride session/subcollections and all matching `completed_trips`; active states return 409.
-- Privacy deletion removes one user's profile, feedback/cooldown/request, session passenger entries/messages, and Auth account while leaving non-personal operational ride facts according to policy.
+- Passenger account deletion removes the user's profile, cooldowns, message rate limits, passenger request, and Auth account. Feedback, session passenger entries (including legacy manifests), messages, and shared operational ride facts are preserved unchanged; their independent retention policies still apply.
 - Retention defaults: terminal sessions 180 days after `endTime`, feedback 180, completed projections 180 days after `completedAt`, fleet operation logs 90. Session deletion recursively removes passenger/message subcollections. The daily sweep deletes records strictly older than the cutoff, so removal occurs on the next successful sweep after day 180. Production startup requires `RETENTION_SWEEPER_ENABLED=true`; development and tests remain non-destructive when omitted. Deployment overrides must agree with the approved schedule.
 
 ## Indexes

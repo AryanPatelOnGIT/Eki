@@ -10,3 +10,15 @@ export const emulatorTestMap = [
 ].map(([caseId, title, scope]) => ({ caseId, scope,
   sourcePaths: ['backend/src/routes/devices.ts', 'backend/src/services/deviceTelemetryService.ts', 'backend/src/services/liveBusProjection.ts'],
   tests: [{ path, name: `${suite} > ${title}`, level: 'L2', semantics: scope }] }));
+
+emulatorTestMap.push({
+  caseId: 'AUTH14',
+  scope: 'Local Firestore sub-oracle: a preserved ride manifest loses passenger chat-read authority when the backend-owned profile is removed; admin and assigned-driver reads remain allowed. Actual OAuth revocation, disabled-account and deployed App Check behavior remain separate.',
+  sourcePaths: ['firestore.rules'],
+  tests: [{
+    path: 'backend/src/rulesIntegration.test.ts',
+    name: 'Firebase security rules integration > retained ride membership cannot authorize chat reads after the profile is deleted',
+    level: 'L2',
+    semantics: 'The same signed emulator principal reads a retained message with its profile present, then is denied after profile deletion while the manifest/message are retained; trusted operator/admin neighbors still succeed.',
+  }],
+});

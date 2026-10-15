@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => ({
   session: {} as Record<string, unknown>,
   setKinds: [] as string[],
   user: {} as User,
+  profileExists: true,
 }));
 
 vi.mock("../middleware/requireAuth", () => ({
@@ -32,7 +33,7 @@ vi.mock("../middleware/requireAuth", () => ({
 
 vi.mock("../lib/firebaseAdmin", () => {
   type Ref = {
-    kind: "session" | "rate" | "message";
+    kind: "session" | "rate" | "message" | "profile";
     id: string;
     collection: (name: string) => { doc: (id: string) => Ref };
     get: () => Promise<ReturnType<typeof snapshot>>;
@@ -53,6 +54,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     get: async () => snapshot(kind === "session", kind === "session" ? harness.session : undefined),
   });
   const read = (ref: Ref) => {
+    if (ref.kind === "profile") return snapshot(harness.profileExists);
     if (ref.kind === "session") return snapshot(true, harness.session);
     if (ref.kind === "rate") return snapshot(Boolean(harness.rate), harness.rate);
     const message = harness.messages.get(ref.id);
@@ -62,15 +64,17 @@ vi.mock("../lib/firebaseAdmin", () => {
   return {
     db: {
       collection: (name: string) => ({
-        doc: (id: string) => makeRef(name === "ride_sessions" ? "session" : "message", id),
+        doc: (id: string) => makeRef(name === "ride_sessions" ? "session" : name === "users" ? "profile" : "message", id),
       }),
       runTransaction: async (
         callback: (transaction: {
           getAll: (...refs: Ref[]) => Promise<Array<ReturnType<typeof snapshot>>>;
+          get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
           set: (ref: Ref, value: Record<string, unknown>) => void;
         }) => Promise<unknown>,
       ) => callback({
         getAll: async (...refs: Ref[]) => refs.map(read),
+        get: async (ref: Ref) => read(ref),
         set: (ref: Ref, value: Record<string, unknown>) => {
           harness.setKinds.push(ref.kind);
           if (ref.kind === "rate") harness.rate = value;
@@ -110,7 +114,7 @@ afterAll(async () => {
 beforeEach(() => {
   harness.messages = new Map();
   harness.rate = undefined;
-  harness.setKinds = [];
+  harness.setKinds = []; harness.profileExists = true;
   harness.user = { uid: "passenger_1", role: "passenger", name: "Token Name" };
   harness.session = {
     status: "active",
@@ -130,6 +134,10 @@ async function send(text = "Hello", requestId = "request_12345678", extra = {}) 
   });
 }
 
+it("retained membership cannot send a cached-token message after profile retirement", async () => {
+  harness.profileExists = false; expect((await send()).status).toBe(403);
+  expect(harness.messages.size).toBe(0); expect(harness.rate).toBeUndefined();
+});
 it("preserves message replay identity across both aliases and rejects changed content without another write", async () => {
   for (const mode of [false, true]) {
     v2 = mode; harness.messages.clear(); harness.rate = undefined;

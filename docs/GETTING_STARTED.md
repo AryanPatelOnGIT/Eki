@@ -197,7 +197,12 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 5. Use in-session messaging only for operational communication. Messages are
    scoped to the session and rate-limited.
 6. Submit ride feedback after an eligible completed ride, or request deletion
-   from the account/privacy flow.
+   from **Profile → Delete Account**. Confirming sends a deletion request.
+   After server acceptance, dismiss the **Deletion requested** popup to sign
+   out. The account is deleted asynchronously; feedback, passenger ride entries
+   and messages remain unchanged. There is no multi-day waiting period or
+   routine admin approval, but worker availability and errors can delay deletion.
+   See [account deletion and recovery](operations/PRIVACY_DELETION.md).
 
 ### Driver/operator
 
