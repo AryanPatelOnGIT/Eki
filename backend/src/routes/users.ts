@@ -5,6 +5,8 @@ import { auth, db } from "../lib/firebaseAdmin";
 
 const router = Router();
 
+class ProfileDeletionPending extends Error {}
+
 type AuthenticatedRequest = Request & {
   user?: {
     uid: string;
@@ -68,6 +70,9 @@ router.post("/bootstrap", requireAuth, async (req: AuthenticatedRequest, res: Re
     }
 
     const userRef = db.collection("users").doc(uid);
+    // Fetch once outside the callback: Firestore can retry it on contention.
+    // Claim synchronization below still reads fresh Auth claims after commit.
+    const currentAccount = await auth.getUser(uid);
     const result = await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(userRef);
       if (snapshot.exists) {
@@ -77,6 +82,14 @@ router.post("/bootstrap", requireAuth, async (req: AuthenticatedRequest, res: Re
           : "passenger";
         return { role, created: false };
       }
+
+      // A revocation-cache hit is not authority to recreate a retired profile.
+      // Read the deletion fence in the same transaction. Auth existence was
+      // checked before the transaction; a concurrent deletion request still
+      // prevents profile creation through this atomic fence.
+      const deletion = await transaction.get(db.collection("_privacy_deletion_requests").doc(uid));
+      if (deletion.exists) throw new ProfileDeletionPending();
+      if (currentAccount.disabled) throw Object.assign(new Error("Account is disabled."), { code: "auth/user-disabled" });
 
       transaction.create(userRef, {
         uid,
@@ -102,6 +115,15 @@ router.post("/bootstrap", requireAuth, async (req: AuthenticatedRequest, res: Re
       ...(synchronized.claimsUpdated ? { claimsUpdated: true } : {}),
     });
   } catch (error) {
+    if (error instanceof ProfileDeletionPending) {
+      res.status(409).json({ error: "Account deletion is in progress." });
+      return;
+    }
+    const code = (error as { code?: string } | null)?.code;
+    if (code === "auth/user-not-found" || code === "auth/user-disabled") {
+      res.status(401).json({ error: "Invalid or expired token." });
+      return;
+    }
     console.error("[Users] Failed to bootstrap profile:", error);
     res.status(500).json({ error: "Unable to bootstrap profile." });
   }

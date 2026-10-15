@@ -6,11 +6,10 @@ import { beginAuthVerification, waitForAuth } from "@/lib/authState";
 type TestUser = { uid: string; getIdToken?: () => Promise<string>; getIdTokenResult: (forceRefresh?: boolean) => Promise<{ claims: { role: string; admin?: boolean } }> };
 const mocks = vi.hoisted(() => ({
   callback: null as null | ((user: TestUser | null) => Promise<void>),
-  auth: { currentUser: null as TestUser | null }, check: vi.fn(), observe: vi.fn(), signOut: vi.fn(),
+  auth: { currentUser: null as TestUser | null }, claims: vi.fn(), observe: vi.fn(), signOut: vi.fn(),
   profile: vi.fn(), bootstrap: vi.fn(),
 }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: mocks.auth, googleProvider: {} }));
-vi.mock("@/lib/firebaseAppCheck", () => ({ ensureAppCheck: mocks.check }));
 vi.mock("@/lib/apiClient", () => ({ apiRequest: mocks.bootstrap }));
 vi.mock("@/lib/firebaseCore", () => ({ firebaseApp: {} }));
 vi.mock("firebase/firestore", () => ({ getFirestore: () => ({}), doc: vi.fn(), getDoc: mocks.profile }));
@@ -22,10 +21,10 @@ vi.mock("firebase/auth", () => ({
   getRedirectResult: async () => null, signInWithPopup: vi.fn(), signInWithRedirect: vi.fn(), signOut: mocks.signOut,
 }));
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
-const user = (uid: string): TestUser => ({ uid, getIdTokenResult: async () => ({ claims: { role: "admin", admin: true } }) });
+const user = (uid: string): TestUser => ({ uid, getIdTokenResult: async () => { await mocks.claims(); return { claims: { role: "admin", admin: true } }; } });
 beforeEach(() => {
   beginAuthVerification(); vi.clearAllMocks(); mocks.callback = null; mocks.auth.currentUser = null;
-  mocks.check.mockResolvedValue(undefined); mocks.observe.mockImplementation((_auth, callback) => { mocks.callback = callback; return () => {}; });
+  mocks.claims.mockResolvedValue(undefined); mocks.observe.mockImplementation((_auth, callback) => { mocks.callback = callback; return () => {}; });
   mocks.profile.mockResolvedValue({ exists: () => false }); mocks.bootstrap.mockResolvedValue({ role: "passenger" });
   localStorage.clear(); vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -66,15 +65,15 @@ describe("verified auth publication", () => {
   it("coalesces simultaneous access retries, closes the old data gate and forces new security verification", async () => {
     const hook = await mount(); const account = user("admin"); mocks.auth.currentUser = account;
     await act(async () => { await mocks.callback!(account); });
-    const check = deferred(); mocks.check.mockReturnValue(check.promise);
+    const check = deferred(); mocks.claims.mockReturnValue(check.promise);
     let first!: Promise<void>, second!: Promise<void>;
     await act(async () => { first = hook.result.current.refreshAccess(); second = hook.result.current.refreshAccess(); await Promise.resolve(); });
     expect(first).toBe(second); expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loading).toBe(true);
-    expect(mocks.check).toHaveBeenLastCalledWith({ forceRefresh: true });
+    expect(mocks.claims).toHaveBeenCalledTimes(2);
     await act(async () => { check.resolve(); await first; }); expect(hook.result.current.user?.uid).toBe("admin");
   });
   it("keeps pending verification from republishing access during sign-out", async () => {
-    const check = deferred(), signOut = deferred(); mocks.check.mockReturnValue(check.promise); mocks.signOut.mockReturnValue(signOut.promise);
+    const check = deferred(), signOut = deferred(); mocks.claims.mockReturnValue(check.promise); mocks.signOut.mockReturnValue(signOut.promise);
     const hook = await mount(); const account = user("admin"); mocks.auth.currentUser = account;
     let pending!: Promise<void>, logout!: Promise<void>;
     await act(async () => { pending = mocks.callback!(account); await Promise.resolve(); });
@@ -92,8 +91,8 @@ describe("verified auth publication", () => {
     expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loading).toBe(false);
     expect(hook.result.current.roleError).toContain("Sign-out could not complete");
   });
-  it("does not publish cached/admin identity or open readiness before App Check", async () => {
-    const check = deferred(); mocks.check.mockReturnValue(check.promise); localStorage.setItem("eki:role:admin", "admin");
+  it("does not publish cached/admin identity or open readiness before trusted role verification", async () => {
+    const check = deferred(); mocks.claims.mockReturnValue(check.promise); localStorage.setItem("eki:role:admin", "admin");
     const hook = await mount(); const opened = vi.fn(); void waitForAuth().then(opened);
     const account = user("admin"); mocks.auth.currentUser = account;
     let callback!: Promise<void>; await act(async () => { callback = mocks.callback!(account); await Promise.resolve(); });
@@ -101,25 +100,25 @@ describe("verified auth publication", () => {
     await act(async () => { check.resolve(); await callback; });
     expect(hook.result.current.user?.role).toBe("admin"); expect(opened).toHaveBeenCalledOnce();
   });
-  it("keeps App Check failures visible and data readiness closed", async () => {
-    mocks.check.mockRejectedValue(Object.assign(new Error("security unavailable"), { name: "AppCheckVerificationError" }));
+  it("keeps role verification failures visible and data readiness closed", async () => {
+    mocks.claims.mockRejectedValue(new Error("role verification unavailable"));
     const hook = await mount(); const opened = vi.fn(); void waitForAuth().then(opened);
     const account = user("admin"); mocks.auth.currentUser = account;
     await act(async () => { await mocks.callback!(account); });
-    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.roleError).toContain("Security verification");
+    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.roleError).toContain("We could not verify your access");
     expect(hook.result.current.loading).toBe(false); expect(opened).not.toHaveBeenCalled();
-    mocks.check.mockResolvedValue(undefined); await act(async () => { await mocks.callback!(account); });
+    mocks.claims.mockResolvedValue(undefined); await act(async () => { await mocks.callback!(account); });
     expect(hook.result.current.roleError).toBeNull(); expect(hook.result.current.user?.uid).toBe("admin");
   });
   it("discards a token completion after sign-out", async () => {
-    const check = deferred(); mocks.check.mockReturnValue(check.promise); const hook = await mount();
+    const check = deferred(); mocks.claims.mockReturnValue(check.promise); const hook = await mount();
     const account = user("admin"); mocks.auth.currentUser = account;
     let pending!: Promise<void>; await act(async () => { pending = mocks.callback!(account); await Promise.resolve(); });
     mocks.auth.currentUser = null; await act(async () => { await mocks.callback!(null); check.resolve(); await pending; });
     expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loading).toBe(false);
   });
   it("discards old-account completion during a switch", async () => {
-    const old = deferred(); mocks.check.mockReturnValueOnce(old.promise).mockResolvedValue(undefined); const hook = await mount();
+    const old = deferred(); mocks.claims.mockReturnValueOnce(old.promise).mockResolvedValue(undefined); const hook = await mount();
     const first = user("first"); mocks.auth.currentUser = first;
     let pending!: Promise<void>; await act(async () => { pending = mocks.callback!(first); await Promise.resolve(); });
     const second = user("second"); mocks.auth.currentUser = second;

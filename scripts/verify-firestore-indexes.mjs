@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { accessTokenFromFirebaseToken, projectIdFromArgs } from "./verify-appcheck-enforcement.mjs";
+import { accessTokenFromFirebaseToken, projectIdFromArgs } from "./disable-appcheck-enforcement.mjs";
 
 const fieldFilter = (fieldPath, op, value) => ({ fieldFilter: { field: { fieldPath }, op, value } });
 // Match retention, privacy, reconciliation and operation-recovery query shapes.

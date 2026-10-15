@@ -233,9 +233,8 @@ async function joinSession(req: AuthenticatedRequest, res: Response) {
       throw new BoardingPolicyError(400, "Location access is required to board this bus.");
     }
 
-    const [route, profile, liveSnapshot] = await Promise.all([
+    const [route, liveSnapshot] = await Promise.all([
       db.collection("routes").doc(routeId).get(),
-      db.collection("users").doc(user.uid).get(),
       requiresProximity
         ? rtdb.ref(`activeBuses/${busId}_${routeId}`).once("value")
         : Promise.resolve(null),
@@ -267,16 +266,6 @@ async function joinSession(req: AuthenticatedRequest, res: Response) {
       }
     }
 
-    const profileName = profile.data()?.displayName;
-    const tokenName = user.name;
-    const userName = (
-      typeof profileName === "string" && profileName.trim()
-        ? profileName.trim()
-        : typeof tokenName === "string" && tokenName.trim()
-          ? tokenName.trim()
-          : "Passenger"
-    ).slice(0, 100);
-
     await db.runTransaction(async (transaction) => {
       const current = await transaction.get(sessionRef);
       const currentData = current.data();
@@ -291,6 +280,18 @@ async function joinSession(req: AuthenticatedRequest, res: Response) {
       ) {
         throw new BoardingPolicyError(409, "Boarding authorization expired; ask the driver for the current code.");
       }
+      const profile = await transaction.get(db.collection("users").doc(user.uid));
+      if (!profile.exists) throw new BoardingPolicyError(403, "An active passenger profile is required.");
+      const profileName = profile.data()?.displayName;
+      const tokenName = user.name;
+      const userName = (
+        typeof profileName === "string" && profileName.trim()
+          ? profileName.trim()
+          : typeof tokenName === "string" && tokenName.trim()
+            ? tokenName.trim()
+            : "Passenger"
+      ).slice(0, 100);
+
       const passengers = passengerManifest(currentData.passengers);
       const passengerStillExists = hasPassenger(passengers, user.uid);
       if (
@@ -385,6 +386,14 @@ async function sendMessage(req: AuthenticatedRequest, res: Response) {
         rateRef,
         messageRef,
       );
+
+      const sessionData = session.data();
+      const privilegedSender = req.user?.role === "admin" || req.user?.admin === true ||
+        (req.user?.role === "driver" && sessionData?.driverId === req.user?.driverId && sessionData?.busId === req.user?.assignedBusId);
+      if (!privilegedSender) {
+        const profile = await transaction.get(db.collection("users").doc(uid));
+        if (!profile.exists) throw new ChatPolicyError(403, "An active passenger profile is required.");
+      }
 
       if (existingMessage.exists) {
         const previous = existingMessage.data();
@@ -517,6 +526,10 @@ router.get("/:sessionId/status", requireAuth, async (req: AuthenticatedRequest, 
       ((user.role === undefined || user.role === "passenger") && hasPassenger(passengerManifest(data.passengers), user.uid) && entry && typeof entry === "object" && !Array.isArray(entry) && entry.userId === user.uid));
     // Identical response for an unknown session and another passenger's ride.
     if (!snapshot.exists || !allowed) { res.status(403).json({ error: "Ride status is unavailable for this account." }); return; }
+    if (user.admin !== true && (user.role === undefined || user.role === "passenger") &&
+        !(await db.collection("users").doc(user.uid).get()).exists) {
+      res.status(403).json({ error: "Ride status is unavailable for this account." }); return;
+    }
     if (typeof data.busId !== "string" || !SAFE_ID.test(data.busId) || typeof data.routeId !== "string" || !SAFE_ID.test(data.routeId) || typeof data.status !== "string" || !["pending", "armed", "active", "completed", "interrupted", "failed"].includes(data.status)) {
       res.status(503).json({ error: "Ride status is temporarily unavailable." }); return;
     }

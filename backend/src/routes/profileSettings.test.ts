@@ -13,6 +13,14 @@ const harness = vi.hoisted(() => ({
     picture: "https://images.example.test/avatar.png",
   } as Record<string, unknown>,
   authClaims: {} as Record<string, unknown>,
+  authErrorCode: "",
+  authDisabled: false,
+  inTransaction: false,
+  transactionAttempts: 1,
+  authLookupInTransaction: false,
+  authLookupCalls: 0,
+  beforeTransaction: undefined as (() => void) | undefined,
+  deletion: undefined as Record<string, unknown> | undefined,
   setCustomClaimsCalls: [] as Array<{ uid: string; claims: Record<string, unknown> }>,
   revokeCalls: [] as string[],
 }));
@@ -61,7 +69,12 @@ vi.mock("../lib/firebaseAdmin", () => {
 
   return {
     auth: {
-      getUser: async () => ({ customClaims: harness.authClaims }),
+      getUser: async () => {
+        harness.authLookupCalls += 1;
+        if (harness.inTransaction) harness.authLookupInTransaction = true;
+        if (harness.authErrorCode) throw Object.assign(new Error("Synthetic missing identity"), { code: harness.authErrorCode });
+        return { customClaims: harness.authClaims, disabled: harness.authDisabled };
+      },
       setCustomUserClaims: async (uid: string, claims: Record<string, unknown>) => {
         harness.authClaims = { ...claims };
         harness.setCustomClaimsCalls.push({ uid, claims: { ...claims } });
@@ -79,13 +92,27 @@ vi.mock("../lib/firebaseAdmin", () => {
           create: (ref: Ref, value: Record<string, unknown>) => void;
           get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
         }) => Promise<unknown>,
-      ) => callback({
-        create: (_ref, value) => {
-          if (harness.profile) throw new Error("already exists");
-          harness.profile = value;
-        },
-        get: async () => snapshot(),
-      }),
+      ) => {
+        harness.beforeTransaction?.();
+        let result: unknown;
+        for (let attempt = 0; attempt < harness.transactionAttempts; attempt += 1) {
+          harness.inTransaction = true;
+          try {
+            result = await callback({
+              create: (_ref, value) => {
+                if (harness.profile) throw new Error("already exists");
+                if (attempt === harness.transactionAttempts - 1) harness.profile = value;
+              },
+              get: async ref => ref.collection === "_privacy_deletion_requests"
+                ? { exists: Boolean(harness.deletion), data: () => harness.deletion }
+                : snapshot(),
+            });
+          } finally {
+            harness.inTransaction = false;
+          }
+        }
+        return result;
+      },
     },
   };
 });
@@ -120,6 +147,12 @@ beforeEach(() => {
   harness.profile = undefined;
   harness.settings = {};
   harness.authClaims = {};
+  harness.authErrorCode = ""; harness.authDisabled = false; harness.deletion = undefined;
+  harness.inTransaction = false;
+  harness.transactionAttempts = 1;
+  harness.authLookupInTransaction = false;
+  harness.authLookupCalls = 0;
+  harness.beforeTransaction = undefined;
   harness.setCustomClaimsCalls = [];
   harness.revokeCalls = [];
   harness.user = {
@@ -131,6 +164,37 @@ beforeEach(() => {
 });
 
 describe("profile bootstrap route", () => {
+  it("checks Auth outside retried Firestore transaction callbacks", async () => {
+    harness.transactionAttempts = 3;
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(response.status).toBe(201);
+    expect(harness.profile?.role).toBe("passenger");
+    expect(harness.authLookupInTransaction).toBe(false);
+    expect(harness.authLookupCalls).toBe(2); // one validation, one fresh claim synchronization
+  });
+
+  it("reads the deletion fence transactionally after the Auth lookup", async () => {
+    harness.beforeTransaction = () => { harness.deletion = { status: "processing" }; };
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(response.status).toBe(409);
+    expect(harness.profile).toBeUndefined();
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
+  it.each(["auth/user-not-found", "auth/user-disabled"])("a cached token cannot recreate a profile for %s", async code => {
+    if (code === "auth/user-disabled") harness.authDisabled = true;
+    else harness.authErrorCode = code;
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(401);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
+  it("does not recreate a missing profile while its deletion request is present", async () => {
+    harness.deletion = { status: "processing", phase: "auth_deletion_dispatched" };
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(409);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
   it("creates a passenger profile only from verified token claims", async () => {
     const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, {
       method: "POST",

@@ -68,7 +68,6 @@ if (process.env.EKI_STRICT_PRODUCTION_BUILD === "true") {
     "NEXT_PUBLIC_FIREBASE_APP_ID",
     "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY",
     "NEXT_PUBLIC_GOOGLE_MAP_ID",
-    "NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY",
     "NEXT_PUBLIC_BACKEND_URL",
   ];
   const missing = requiredPublicVariables.filter((name) => !process.env[name]?.trim());

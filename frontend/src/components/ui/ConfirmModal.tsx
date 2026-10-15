@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useId, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, ShieldAlert, Info, Loader2 } from "lucide-react";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 
@@ -10,6 +11,7 @@ interface ConfirmModalProps {
   description: string;
   confirmText?: string;
   cancelText?: string;
+  showCancel?: boolean;
   variant?: "danger" | "warning" | "info";
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
@@ -23,6 +25,7 @@ export default function ConfirmModal({
   description,
   confirmText = "Confirm",
   cancelText = "Cancel",
+  showCancel = true,
   variant = "danger",
   onConfirm,
   onCancel,
@@ -35,7 +38,7 @@ export default function ConfirmModal({
     if (!loading) onCancel();
   }, returnFocusRef);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === "undefined") return null;
 
   const getVariantStyles = () => {
     switch (variant) {
@@ -66,7 +69,8 @@ export default function ConfirmModal({
 
   const { iconBg, iconColor, buttonBg, Icon } = getVariantStyles();
 
-  return (
+  // Escape transformed and scrolling parents so the dialog covers the viewport.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -93,7 +97,7 @@ export default function ConfirmModal({
         </div>
 
         <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-white/5">
-          <button
+          {showCancel && <button
             type="button"
             data-autofocus
             disabled={loading}
@@ -101,9 +105,10 @@ export default function ConfirmModal({
             className="px-4 py-2.5 rounded-xl text-xs font-semibold text-white/70 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-50"
           >
             {cancelText}
-          </button>
+          </button>}
           <button
             type="button"
+            data-autofocus={!showCancel || undefined}
             disabled={loading}
             onClick={onConfirm}
             className={`px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg transition-all flex items-center gap-2 disabled:opacity-50 ${buttonBg}`}
@@ -113,6 +118,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

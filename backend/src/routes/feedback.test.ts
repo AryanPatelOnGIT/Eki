@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   cooldown: undefined as Record<string, unknown> | undefined,
   feedbacks: new Map<string, Record<string, unknown>>(),
   profile: { displayName: "Verified Profile" } as Record<string, unknown>,
+  profileExists: true,
   session: {} as Record<string, unknown>,
   user: { uid: "passenger_1", name: "Token Name" },
 }));
@@ -44,7 +45,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     if (ref.collection === "feedbackCooldowns") {
       return snapshot(Boolean(harness.cooldown), harness.cooldown);
     }
-    if (ref.collection === "users") return snapshot(true, harness.profile);
+    if (ref.collection === "users") return snapshot(harness.profileExists, harness.profile);
     if (ref.collection === "ride_sessions") return snapshot(true, harness.session);
     const feedback = harness.feedbacks.get(ref.id);
     return snapshot(Boolean(feedback), feedback);
@@ -106,7 +107,7 @@ afterAll(async () => {
 beforeEach(() => {
   harness.cooldown = undefined;
   harness.feedbacks = new Map();
-  harness.profile = { displayName: "Verified Profile" };
+  harness.profile = { displayName: "Verified Profile" }; harness.profileExists = true;
   harness.user = { uid: "passenger_1", name: "Token Name" };
   harness.session = {
     status: "completed",
@@ -136,6 +137,10 @@ async function submit(overrides: Record<string, unknown> = {}) {
 }
 
 describe("feedback routes", () => {
+  it("rejects cached-token feedback after profile retirement without recreating cooldowns", async () => {
+    harness.profileExists = false; expect((await submit()).status).toBe(403);
+    expect(harness.feedbacks.size).toBe(0); expect(harness.cooldown).toBeUndefined();
+  });
   it("enforces the literal 24-hour cooldown boundary without writing rejected feedback", async () => {
     const now = 2_000_000_000_000;
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);

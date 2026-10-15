@@ -73,7 +73,7 @@ test("fleet and route denial retries share fresh verification before resubscribi
   const events = () => page.evaluate(() => (window as typeof window & { qaAccessEvents: Array<{ name: string; detail: { forceRefresh?: boolean } }> }).qaAccessEvents);
   const pending = await events();
   expect(pending.filter(event => event.name === "qa-metadata-read")).toHaveLength(2);
-  expect(pending.filter(event => event.name === "qa-verification").map(event => event.detail.forceRefresh)).toEqual([false, true]);
+  expect(pending.filter(event => event.name === "qa-verification").map(event => event.detail.forceRefresh)).toEqual([true, true]);
   await page.getByRole("button", { name: "Approve verification" }).click();
   await expect(page.getByText("Verified buses", { exact: true })).toBeVisible();
   await expect(page.getByText("Verified routes", { exact: true })).toBeVisible();
@@ -101,21 +101,21 @@ test("protected data waits for verification and status updates after acknowledge
   await page.goto("/"); await expect(page.getByText("Signing you in…")).toBeVisible(); expect(requests).toEqual([]);
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
   await page.getByRole("button", { expanded: false }).click(); await page.getByRole("button", { name: "reviewed", exact: true }).click();
-  // Busy controls disable before asynchronous attestation dispatches HTTP.
+  // Busy controls disable before the HTTP request is dispatched.
   // Observe the actual request, then hold its response to check no optimistic status.
   await expect.poll(() => requests.length).toBe(2);
   await expect(page.getByRole("button", { expanded: true })).toContainText("new");
   await expect(page.getByRole("button", { name: "reviewed", exact: true })).toBeDisabled();
   expect(requests).toHaveLength(2);
-  expect(attestations).toEqual(["synthetic-attestation", "synthetic-attestation"]);
+  expect(attestations).toEqual([undefined, undefined]);
   acknowledgePatch();
   await expect(page.getByRole("button", { expanded: true })).toContainText("reviewed");
   await expect(page.getByRole("button", { name: "reviewed", exact: true })).toBeDisabled();
 });
-test("App Check errors show recovery controls without mounting feedback", async ({ page }) => {
+test("Role verification errors show recovery controls without mounting feedback", async ({ page }) => {
   await page.goto("/"); await expect(page.getByText("Signing you in…")).toBeVisible();
   await page.getByRole("button", { name: "Reject verification" }).click();
-  await expect(page.getByRole("alert")).toContainText("Security verification is unavailable");
+  await expect(page.getByRole("alert")).toContainText("We could not verify your access");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible(); await expect(page.getByText("Browser Passenger")).toHaveCount(0);
   await page.getByRole("button", { name: "Try again" }).click(); await expect(page.getByText("Signing you in…")).toBeVisible();
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
