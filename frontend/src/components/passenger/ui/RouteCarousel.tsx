@@ -8,7 +8,6 @@ import {
 interface RouteCarouselProps {
   routes: RouteData[];
   selectedRouteId: string;
-  onSwipe?: (id: string) => void;
   onClick: (id: string) => void;
   getActiveBusesCount: (routeId: string) => number;
   getAvailableBusesCount: (routeId: string) => number;
@@ -53,7 +52,7 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
             aria-label={`Track ${route.name}`}
           >
             <div
-              className="w-full text-left transition-all duration-300 rounded-[20px] p-5 border relative overflow-hidden flex flex-col min-h-[170px]"
+              className="w-full text-left transition-all duration-300 rounded-[20px] p-4 border relative overflow-hidden flex flex-col min-h-[140px]"
               style={{
                 background: "var(--surface-3)",
                 borderColor: route.id === selectedRouteId ? "var(--accent)" : "var(--border-subtle)",
@@ -79,7 +78,7 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
                   )}
                 </div>
 
-                <div className="flex items-baseline w-full mt-6 gap-3">
+                <div className="flex flex-wrap items-baseline w-full mt-4 gap-3">
                   <div className="flex items-center gap-2">
 
                     <div className="flex items-baseline gap-1.5 text-[11.5px] font-black whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>

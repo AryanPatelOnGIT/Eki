@@ -4,30 +4,50 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import AccountTab from "./AccountTab";
 const mocks = vi.hoisted(() => ({ logout: vi.fn(),
-  user: { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger", photoURL: "" },
+  user: { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger", photoURL: "" } as { uid: string; displayName: string; role: string; photoURL: string } | null,
   auth: { currentUser: { uid: "qa-passenger", getIdToken: vi.fn(async () => "test-token") } },
 }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: mocks.auth }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: mocks.user, logout: mocks.logout }) }));
-beforeEach(() => { vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev"); mocks.logout.mockClear(); mocks.user.photoURL = ""; mocks.user.uid = "qa-passenger"; });
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev"); mocks.logout.mockClear();
+  mocks.user = { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger", photoURL: "" };
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("account confirmations", () => {
   it("falls back after a photo failure and retries for a changed URL or account", () => {
-    mocks.user.photoURL = "https://example.test/photo.png";
+    const account = { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger", photoURL: "https://example.test/photo.png" };
+    mocks.user = account;
     const view = render(<AccountTab />);
     fireEvent.error(screen.getByRole("img", { name: "Profile" }));
     expect(screen.queryByRole("img", { name: "Profile" })).toBeNull();
     expect(screen.getByRole("img", { name: "Default profile" })).toBeTruthy();
-    mocks.user.photoURL = "https://example.test/new-photo.png";
+    account.photoURL = "https://example.test/new-photo.png";
     view.rerender(<AccountTab />);
-    expect(screen.getByRole("img", { name: "Profile" }).getAttribute("src")).toBe(mocks.user.photoURL);
+    expect(screen.getByRole("img", { name: "Profile" }).getAttribute("src")).toBe(account.photoURL);
     fireEvent.error(screen.getByRole("img", { name: "Profile" }));
-    mocks.user.uid = "another-passenger";
+    account.uid = "another-passenger";
     view.rerender(<AccountTab />);
     expect(screen.getByRole("img", { name: "Profile" })).toBeTruthy();
-    mocks.user.photoURL = "";
+    account.photoURL = "";
     view.rerender(<AccountTab />);
     expect(screen.getByRole("img", { name: "Default profile" })).toBeTruthy();
+  });
+  it("offers sign-in to guests without opening an unusable feedback form", () => {
+    mocks.user = null;
+    render(<AccountTab />);
+    expect(screen.queryByRole("button", { name: "Send Feedback" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeTruthy();
+  });
+  it("clears the previous deletion failure when opening a new confirmation", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{}')));
+    render(<AccountTab />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete Account" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete Account" }));
+    await screen.findByRole("status");
+    await user.click(screen.getByRole("button", { name: "Delete Account" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("group", { name: "Profile photo" })).toBeTruthy();
   });
   it("opens deletion confirmation outside the scrolling, animated profile container", async () => {
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
