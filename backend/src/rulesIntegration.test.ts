@@ -119,12 +119,19 @@ rulesDescribe("Firebase security rules integration", () => {
 
   it("retained ride membership cannot authorize chat reads after the profile is deleted", async () => {
     const passenger = environment.authenticatedContext("retired_passenger", { role: "passenger" });
-    const admin = environment.authenticatedContext("retirement_admin", { role: "admin" });
+    const admin = environment.authenticatedContext("retirement_admin", { role: "admin", authorizationVersion: "current" });
     const session = "retained_session";
     await environment.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), "users", "retired_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "users", "retirement_admin"), { role: "admin" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "retirement_admin"), { role: "admin", version: "current" });
+      await setDoc(doc(context.firestore(), "users", "retained_operator"), { role: "driver" });
+      await setDoc(doc(context.firestore(), "drivers", "retained_driver"), { authUid: "retained_operator", assignedBusId: "retained_bus" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "retained_operator"), {
+        role: "driver", version: "current", driverId: "retained_driver", assignedBusId: "retained_bus",
+      });
       await setDoc(doc(context.firestore(), "ride_sessions", session), {
-        driverId: "retained_driver", passengers: { retired_passenger: { userId: "retired_passenger" } },
+        driverId: "retained_driver", busId: "retained_bus", passengers: { retired_passenger: { userId: "retired_passenger" } },
       });
       await setDoc(doc(context.firestore(), "ride_sessions", session, "messages", "retained"), { text: "Retained history" });
     });
@@ -134,7 +141,7 @@ rulesDescribe("Firebase security rules integration", () => {
     // The same signed token and preserved manifest must now lose authority.
     await assertFails(getDoc(message));
     await assertSucceeds(getDoc(doc(admin.firestore(), "ride_sessions", session, "messages", "retained")));
-    await assertSucceeds(getDoc(doc(environment.authenticatedContext("retained_operator", { role: "driver", driverId: "retained_driver" }).firestore(), "ride_sessions", session, "messages", "retained")));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext("retained_operator", { role: "driver", driverId: "retained_driver", assignedBusId: "retained_bus", authorizationVersion: "current" }).firestore(), "ride_sessions", session, "messages", "retained")));
   });
 
   it("allows authenticated RTDB reads but denies every client write", async () => {
@@ -379,6 +386,7 @@ rulesDescribe("Firebase security rules integration", () => {
     const message = (context: ReturnType<typeof environment.authenticatedContext>) => doc(context.firestore(), "ride_sessions", "security_session", "messages", "message");
     await environment.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), "users", uid), { role: "driver" });
+      await setDoc(doc(context.firestore(), "users", "security_passenger"), { role: "passenger" });
       await setDoc(doc(context.firestore(), "_userAuthorization", uid), { version: "v1", role: "driver", driverId: "security_driver", assignedBusId: "security_bus" });
       await setDoc(doc(context.firestore(), "drivers", "security_driver"), { authUid: uid, assignedBusId: "security_bus" });
       await setDoc(session(context), { driverId: "security_driver", busId: "security_bus", boardingCode: "SYNTHETIC", passengers: { security_passenger: { userId: "security_passenger" } } });

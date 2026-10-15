@@ -92,6 +92,8 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
       await expect(syncRoleClaimsChunk(["auth_uid"])).rejects.toThrow("Fleet authorization");
     } finally { release(); await publication; state.authGate = null; }
     expect((await fetch(`${base}/api/fleet/drivers/driver`, { method: "DELETE" })).status).toBe(200);
+    // HTTP responses may precede the fleet wrapper's lock/audit cleanup.
+    await drainFleetMutations(false);
     expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([true]);
     expect(state.claims.get("auth_uid")?.role).toBe("passenger");
     expect(state.claims.get("auth_uid")?.admin).toBeUndefined();
