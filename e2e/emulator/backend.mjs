@@ -168,7 +168,7 @@ const control = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/authorization-snapshot') {
       const collections = ['ride_sessions', 'routes', 'buses', 'users', 'feedbacks', 'feedbackCooldowns',
         'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency',
-        '_privacy_deletion_requests', '_route_save_operations', '_route_geometry_previews', '_fleet_reconciliation_jobs', '_device_diagnostics'];
+        '_privacy_deletion_requests', '_route_save_operations', '_route_geometry_previews', '_fleet_reconciliation_jobs', '_device_diagnostics', '_userAuthorization'];
       const documents = {};
       for (const name of collections) {
         const snapshot = await db.collection(name).get();
@@ -178,8 +178,9 @@ const control = createServer(async (req, res) => {
       const principals = accounts.users.map(user => ({ uid: user.uid, email: user.email, displayName: user.displayName,
         disabled: user.disabled, customClaims: user.customClaims ?? {} })).sort((a, b) => a.uid.localeCompare(b.uid));
       const telemetry = (await realtime.ref('activeBuses').get()).val();
+      const userAuthorization = (await realtime.ref('_userAuthorization').get()).val();
       const rateLimitCount = (await db.collectionGroup('messageRateLimits').get()).size;
-      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ documents, principals, telemetry, rateLimitCount })); return;
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ documents, principals, telemetry, userAuthorization, rateLimitCount })); return;
     }
     res.statusCode = 404; res.end('{}');
   } catch { res.statusCode = 500; res.end('{"error":"Synthetic fixture operation failed"}'); }

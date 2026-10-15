@@ -9,6 +9,15 @@ are fresh random UUIDs, so a demotion followed by promotion cannot revive an old
 token, including changes within the same second. Ordinary authenticated public
 projections and passenger chat membership retain their existing policy.
 
+Admin HTTP middleware also requires the current version in both databases,
+`role: "admin"` and the boolean `admin: true` claim. It performs fresh metadata
+reads without a positive cache. This closes Firebase Auth's same-second
+revocation boundary, where a saved token can still pass the provider's
+`auth_time < validSince` check. Unavailable metadata returns a retryable 503;
+stale or incomplete privilege returns 403. Finish the claims backfill before
+directing admin traffic to this backend; unversioned legacy admin tokens fail
+closed at HTTP admission as well as at the database rules.
+
 Firestore additionally checks the current `users/{uid}.role`. Driver session
 and message access requires the current driver registry's `authUid`, the
 assigned bus, and matching token/authorization assignment fields. Removing or

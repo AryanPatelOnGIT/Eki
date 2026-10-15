@@ -10,9 +10,10 @@ vi.mock("../services/authTokenVerifier", () => ({
   verifyRevocationAwareIdToken: async (token: string) => {
     verification.calls.push(token);
     if (!["alice", "bob"].includes(token)) throw new Error("Unverified token");
-    return { uid: token, admin: token === "alice" };
+    return { uid: token, admin: token === "alice", role: token === "alice" ? "admin" : "passenger", authorizationVersion: "current" };
   },
 }));
+vi.mock("../services/userAuthorization", () => ({ authorizationIsCurrent: async () => true }));
 import { createBrowserAdmission, createBrowserIngressLimiter } from "./browserAdmission";
 import { requireAdmin } from "../middleware/requireAdmin";
 
