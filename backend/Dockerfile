@@ -12,7 +12,10 @@ RUN npm ci --workspace=backend --include-workspace-root=false
 
 COPY backend ./backend
 RUN npm run build --workspace=backend
-RUN npm prune --omit=dev --omit=optional
+# Pruning uses the dependencies fetched above; it must not require another
+# registry round trip or install other workspaces while removing build tools.
+RUN --network=none npm prune --workspace=backend --include-workspace-root=false \
+    --omit=dev --omit=optional --offline --ignore-scripts --no-audit --no-fund
 
 
 FROM node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2 AS runtime
