@@ -158,7 +158,7 @@ describe("production security configuration", () => {
     // Firestore caches repeated access calls for the same document within a
     // rule evaluation. The helper deliberately repeats the same sessionDoc
     // path only behind authenticated branches, keeping one billed get().
-    expect(helper.split("sessionDoc(").length - 1).toBe(4);
+    expect(helper.split("sessionDoc(").length - 1).toBe(5);
     expect(rules).not.toContain("function isSessionPassenger");
   });
 
@@ -179,7 +179,7 @@ describe("production security configuration", () => {
     expect(helper).toContain("isAuthenticated() &&");
   });
 
-  it("keeps rules get() cost bounded: one session fetch, no write-path gets (issue #40)", () => {
+  it("bounds session reads to four distinct documents and keeps writes backend-only", () => {
     const rules = workspaceFile("firestore.rules");
     const feedback = ruleBlock(rules, "match /feedbacks/{feedbackId}");
     const messages = ruleBlock(rules, "match /messages/{messageId}");
@@ -188,21 +188,19 @@ describe("production security configuration", () => {
     const operator = ruleBlock(rules, "function isSessionOperator");
     const sessionHelper = ruleBlock(rules, "function canReadSession");
 
-    // Chat create used to cost 2 session get()s + 2 rate-limit get()/getAfter();
-    // feedback create cost 3 session get()s (issue #40). Those writes are now
-    // backend-authoritative, so the ONLY get() left in the whole rules file is
-    // the single session fetch shared by read checks. This guard fails if a
-    // future rule reintroduces a second fetch or a write-path get().
-    // (Comments are stripped so "single get()" prose doesn't count.)
+    // Privileged reads consult current authorization, profile and registry in
+    // addition to the session. Repeated identical paths are cached by rules.
+    // Writes stay backend-only; reads remain under the ten-document limit.
     const code = rules.replace(/\/\/.*$/gm, "");
-    expect(code.match(/get\(/g) ?? []).toHaveLength(1);
+    const paths = [...code.matchAll(/get\(([^\n]+)\)\.data/g)].map(match => match[1]);
+    expect(new Set(paths).size).toBe(3);
+    expect(code.match(/get\(/g) ?? []).toHaveLength(8);
     expect(code).not.toContain("getAfter(");
 
-    // The one allowed get() lives in the sessionDoc helper and is shared by
-    // exactly the two read helpers; client write rules must never call it.
+    // Session lookups share one cached document; writes never call them.
     expect(sessionHelper).toContain("sessionDoc(sessionId)");
-    expect(rules.match(/sessionDoc\(/g) ?? []).toHaveLength(7);
-    expect(operator.split("sessionDoc(").length - 1).toBe(1);
+    expect(rules.match(/sessionDoc\(/g) ?? []).toHaveLength(9);
+    expect(operator.split("sessionDoc(").length - 1).toBe(2);
     expect(feedback).not.toContain("sessionDoc(");
     expect(messages).not.toContain("sessionDoc(");
     expect(rateLimits).not.toContain("sessionDoc(");
@@ -313,7 +311,8 @@ describe("production security configuration", () => {
     const database = JSON.parse(workspaceFile("database.rules.json"));
     expect(database.rules.activeBuses[".read"]).toBe(false);
     expect(database.rules.publicRouteBuses.$routeId.buses[".read"]).toBe("auth != null");
-    expect(database.rules.publicRouteBuses[".read"]).toBe("auth != null && auth.token.admin == true");
+    expect(database.rules.publicRouteBuses[".read"]).toContain("auth.token.authorizationVersion");
+    expect(database.rules.publicRouteBuses[".read"]).toContain("root.child('_userAuthorization')");
     expect(database.rules.clientProjectionStatus[".read"]).toBe(false);
     expect(database.rules.clientProjectionStatus.public[".read"]).toBe("auth != null");
     expect(database.rules.activeRouteGeometry[".read"]).toBe("auth != null");

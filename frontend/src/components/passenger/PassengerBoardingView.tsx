@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { RouteData } from "@/hooks/useRoutes";
 import InAppSelect from "@/components/ui/InAppSelect";
 import { errorMessage } from "@/lib/errors";
@@ -81,6 +81,7 @@ export default function PassengerBoardingView({
   onDestinationStopChange,
   onJoined,
 }: Props) {
+  const codeHintId = useId();
   const [boardingStopId, setBoardingStopId] = useState("");
   const [alightingStopId, setAlightingStopId] = useState("");
   const [boardingCode, setBoardingCode] = useState("");
@@ -265,10 +266,10 @@ export default function PassengerBoardingView({
           className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm font-bold uppercase tracking-[0.18em] outline-none"
           style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
           aria-label="Boarding code"
-          placeholder="DRIVER CODE"
+          aria-describedby={codeHintId}
+          placeholder="8-CHAR CODE"
           autoComplete="one-time-code"
           inputMode="text"
-          maxLength={8}
         />
         <button
           type="button"
@@ -281,6 +282,9 @@ export default function PassengerBoardingView({
           {joinState === "joining" ? "Checking…" : joinState === "joined" ? "On board" : "Board"}
         </button>
       </div>
+      <p id={codeHintId} className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+        Enter the driver’s 8-character code. Spaces and hyphens are removed automatically.
+      </p>
       {joinState === "joining" && (
         <p className="text-[11px] font-semibold" style={{ color: "var(--status-warning)" }} role="status">
           Verifying the session code and live bus position…
