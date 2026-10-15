@@ -65,6 +65,12 @@ async function reset() {
     'completed_trips', 'drivers', 'devices', 'active_rides', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations'])
     await db.recursiveDelete(db.collection(collection));
   for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
+    // Deletion acceptance retires an actual emulator identity. Recreate only
+    // these owned fixture accounts before the next isolated browser case.
+    try { await auth.getUser(uid); } catch (error) {
+      if (error.code !== 'auth/user-not-found') throw error;
+      await auth.createUser({ uid, email: `${uid}@example.invalid`, password: 'SyntheticOnly123!', displayName: uid });
+    }
     await auth.setCustomUserClaims(uid, uid === 'qa_admin' ? { role: 'admin', admin: true } : { role: 'passenger' });
     await db.collection('users').doc(uid).set({ displayName: uid, role: uid === 'qa_admin' ? 'admin' : 'passenger' });
   }
@@ -95,6 +101,13 @@ await reset();
 const control = createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && req.url === '/reset') { await reset(); res.end('{}'); return; }
+    if (req.method === 'POST' && req.url === '/privacy/drain') {
+      // Only this guarded loopback fixture exposes a deterministic scan. Use
+      // the real worker and its leadership/claim fences, not direct deletions.
+      const { runPrivacyDeletionQueue, drainPrivacyDeletions } = require(resolve(root, 'backend/dist/services/privacyDeletionWorker.js'));
+      await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false);
+      res.end('{}'); return;
+    }
     if (req.method === 'POST' && /^\/providers\/(routes|places)\/(valid|rate-limit|malformed|timeout)$/.test(req.url)) {
       const segments = req.url.split('/'); providers.setMode(segments[2], segments[3]); res.end('{}'); return;
     }
@@ -161,7 +174,8 @@ const control = createServer(async (req, res) => {
       const principals = accounts.users.map(user => ({ uid: user.uid, email: user.email, displayName: user.displayName,
         disabled: user.disabled, customClaims: user.customClaims ?? {} })).sort((a, b) => a.uid.localeCompare(b.uid));
       const telemetry = (await realtime.ref('activeBuses').get()).val();
-      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ documents, principals, telemetry })); return;
+      const rateLimitCount = (await db.collectionGroup('messageRateLimits').get()).size;
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ documents, principals, telemetry, rateLimitCount })); return;
     }
     res.statusCode = 404; res.end('{}');
   } catch { res.statusCode = 500; res.end('{"error":"Synthetic fixture operation failed"}'); }
@@ -176,3 +190,8 @@ Server.prototype.listen = function (...args) {
 };
 try { require(resolve(root, 'backend/dist/server.js')); }
 finally { Server.prototype.listen = listen; }
+if (process.connected) process.once('message', message => {
+  if (message?.type !== 'eki-qa-shutdown' || message.pid !== process.pid) return;
+  process.disconnect();
+  process.emit('SIGTERM');
+});

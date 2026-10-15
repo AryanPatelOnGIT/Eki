@@ -101,14 +101,40 @@ describe("privacy queue recovery", () => {
     release(); await drainPrivacyDeletions(false);
     expect(state.docs.get("_privacy_deletion_requests/normal")).toEqual({ status: "pending", generation: 88, executorId: "new" });
   });
-  it("continues a large passenger history in bounded chunks without starving another passenger", async () => {
+  it("preserves feedback, indexed and legacy ride entries, and messages when deleting an account", async () => {
+    state.docs.clear();
+    const uid = "passenger";
+    const retained = new Map<string, Record<string, any>>([
+      ["feedbacks/own", { userId: uid, comment: "Keep my feedback", userName: "Passenger" }],
+      ["feedbacks/other", { userId: "other", comment: "Other feedback" }],
+      ["ride_sessions/indexed", { passengerIds: [uid, "other"], passengers: { [uid]: { userId: uid, name: "Passenger" }, other: { userId: "other" } } }],
+      ["ride_sessions/legacy", { passengers: { [uid]: { userId: uid } } }],
+      ["messages/own", { senderId: uid, text: "Keep my message" }],
+      ["messages/other", { senderId: "other", text: "Other message" }],
+    ]);
+    retained.forEach((data, path) => state.docs.set(path, structuredClone(data)));
+    for (const name of ["users", "feedbackCooldowns", "passenger_requests"]) state.docs.set(`${name}/${uid}`, { role: "passenger" });
+    state.docs.set(`messageRateLimits/${uid}`, { userId: uid });
+    state.docs.set("messageRateLimits/other", { userId: "other" });
+    await requestPrivacyDeletion(uid);
+    await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false);
+    retained.forEach((data, path) => expect(state.docs.get(path)).toEqual(data));
+    expect(state.deleted).toEqual([uid]);
+    for (const name of ["users", "feedbackCooldowns", "passenger_requests", "_privacy_deletion_requests", "messageRateLimits"]) expect(state.docs.has(`${name}/${uid}`)).toBe(false);
+    expect(state.docs.get("messageRateLimits/other")).toEqual({ userId: "other" });
+  });
+  it("drains account rate limits in bounded chunks without deleting retained history or starving another passenger", async () => {
     state.docs.clear(); state.docs.set("_privacy_deletion_requests/big", { status: "pending" }); state.docs.set("_privacy_deletion_requests/later", { status: "pending" });
     for (let index = 0; index < 1001; index++) state.docs.set(`feedbacks/${index}`, { userId: "big" });
+    for (let index = 0; index < 1001; index++) state.docs.set(`messageRateLimits/${index}`, { userId: "big" });
     await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false);
-    expect([...state.docs].filter(([path]) => path.startsWith("feedbacks/"))).toHaveLength(801);
+    expect([...state.docs].filter(([path]) => path.startsWith("feedbacks/"))).toHaveLength(1001);
+    expect([...state.docs].filter(([path]) => path.startsWith("messageRateLimits/"))).toHaveLength(801);
     expect(state.deleted).toEqual(["later"]);
     for (let index = 0; index < 5; index++) { await runPrivacyDeletionQueue(); await drainPrivacyDeletions(false); }
     expect(state.deleted).toContain("big"); expect(state.docs.has("_privacy_deletion_requests/big")).toBe(false);
+    expect([...state.docs].filter(([path]) => path.startsWith("feedbacks/"))).toHaveLength(1001);
+    expect([...state.docs].filter(([path]) => path.startsWith("messageRateLimits/"))).toHaveLength(0);
   });
   it("refuses current operators and changed Auth identities before cleanup", async () => {
     state.docs.clear(); state.claims = { role: "driver" };

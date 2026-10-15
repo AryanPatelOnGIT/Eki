@@ -248,7 +248,16 @@ function StopItem({ stop, index, onRemove, onNameChange, onMoveUp, onMoveDown, c
           value={val}
           onChange={e => setVal(e.target.value)}
           onBlur={commitName}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitName(); } }}
+          onKeyDown={e => {
+            if (e.key === "Enter") { e.preventDefault(); commitName(); }
+            else if (e.key === "Escape") {
+              e.preventDefault();
+              // Fence a blur from the removed input so it cannot save the draft.
+              committedRef.current = true;
+              setVal(stop.name);
+              setEditing(false);
+            }
+          }}
           autoFocus
           aria-label={`Rename stop ${stop.name}`}
           className="flex-1 h-11 bg-white/5 border border-white/20 rounded-lg px-2 text-sm text-white focus:outline-none focus:border-white/40"

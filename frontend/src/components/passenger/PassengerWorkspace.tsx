@@ -645,32 +645,31 @@ export default function PassengerWorkspace() {
                     </div>
                   )}
                 </div>
+                {/* Keep chat in header flow, below the variable-height boarding card. */}
+                {activeSessionId && isLiveChatDeviceOnline(activeBusOnRoute) && !isMessagingOpen && (
+                  <div className="mt-2 flex justify-end max-w-lg mx-auto animate-scale-in pointer-events-auto">
+                    <button
+                      onClick={handleOpenMessaging}
+                      className="w-12 h-12 rounded-xl flex items-center justify-center transition-all active:scale-95 relative"
+                      style={{
+                        background: "var(--surface-2)",
+                        border: "1px solid var(--border-default)",
+                        boxShadow: "0 4px 16px rgba(0,0,0,0.3)"
+                      }}
+                      aria-label={activeSessionId ? "Open live chat" : "Open live chat status"}
+                      title={activeSessionId ? "Open live chat" : "Device online; chat will unlock when the ride is armed"}
+                    >
+                      <MessageCircle className="w-5 h-5" style={{ color: "var(--status-live)" }} />
+                      {unreadCount > 0 && (
+                        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-semibold text-white px-1"
+                          style={{ background: "var(--status-danger)", boxShadow: "0 0 0 2px var(--surface-0)" }}>
+                          {unreadCount > 9 ? "9+" : unreadCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
-
-              {/* Messaging FAB */}
-              {activeSessionId && isLiveChatDeviceOnline(activeBusOnRoute) && !isMessagingOpen && (
-                <div className="absolute top-[160px] right-4 z-50 animate-scale-in pointer-events-auto">
-                  <button
-                    onClick={handleOpenMessaging}
-                    className="w-12 h-12 rounded-xl flex items-center justify-center transition-all active:scale-95 relative"
-                    style={{
-                      background: "var(--surface-2)",
-                      border: "1px solid var(--border-default)",
-                      boxShadow: "0 4px 16px rgba(0,0,0,0.3)"
-                    }}
-                    aria-label={activeSessionId ? "Open live chat" : "Open live chat status"}
-                    title={activeSessionId ? "Open live chat" : "Device online; chat will unlock when the ride is armed"}
-                  >
-                    <MessageCircle className="w-5 h-5" style={{ color: "var(--status-live)" }} />
-                    {unreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-semibold text-white px-1"
-                        style={{ background: "var(--status-danger)", boxShadow: "0 0 0 2px var(--surface-0)" }}>
-                        {unreadCount > 9 ? "9+" : unreadCount}
-                      </span>
-                    )}
-                  </button>
-                </div>
-              )}
 
               {/* Passenger Boarding View was moved to the header above */}
 

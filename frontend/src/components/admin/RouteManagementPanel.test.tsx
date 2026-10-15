@@ -18,6 +18,23 @@ beforeEach(() => { mocks.save.mockReset(); mocks.newId.mockReset().mockReturnVal
 afterEach(cleanup);
 async function edit() { render(<RouteManagementPanel />); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Edit route QA route" })); return user; }
 describe("route editing and operation recovery", () => {
+  it("cancels a stop rename with Escape, then allows a fresh rename to commit once", async () => {
+    mocks.save.mockResolvedValue({ saved: true });
+    const user = await edit();
+    await user.click(screen.getByRole("button", { name: /^Alpha/ }));
+    await user.clear(screen.getByRole("textbox", { name: "Rename stop Alpha" }));
+    await user.type(screen.getByRole("textbox", { name: "Rename stop Alpha" }), "Discard this name");
+    await user.keyboard("{Escape}{Tab}");
+    expect(screen.queryByRole("textbox", { name: "Rename stop Alpha" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^Alpha/ }));
+    const input = screen.getByRole("textbox", { name: "Rename stop Alpha" });
+    expect((input as HTMLInputElement).value).toBe("Alpha");
+    await user.clear(input); await user.type(input, "Saved name{Enter}{Tab}");
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    expect(mocks.save).toHaveBeenCalledOnce();
+    expect(mocks.save.mock.calls[0][2].stops[0].name).toBe("Saved name");
+    expect(mocks.route.stops[0].name).toBe("Alpha");
+  });
   it("provides labels and selection state for route fields and colour controls", async () => {
     const user = await edit();
     expect((screen.getByLabelText("Route ID") as HTMLInputElement).disabled).toBe(true);
