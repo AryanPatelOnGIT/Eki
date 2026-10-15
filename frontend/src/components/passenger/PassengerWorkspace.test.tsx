@@ -27,6 +27,22 @@ vi.mock("@/components/shared/FeedbackModal", () => ({ default: () => <div>QA fee
 beforeEach(() => setScenario("pending"));
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("passenger workspace navigation", () => {
+  it("keeps Routes on the list when tapped repeatedly", async () => {
+    render(<PassengerWorkspace />); const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Track QA route" });
+    await user.click(screen.getByRole("button", { name: "Routes" }));
+    expect(screen.getByRole("button", { name: "Track QA route" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Back to home" })).toBeNull();
+  });
+  it("dismisses chat before leaving tracking with Back", async () => {
+    setScenario("forward"); render(<PassengerWorkspace />); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    await user.click(await screen.findByRole("button", { name: "Open live chat" }));
+    await screen.findByText("QA chat");
+    await user.click(screen.getByRole("button", { name: "Close live chat" }));
+    expect(screen.queryByText("QA chat")).toBeNull();
+    expect(screen.getByRole("button", { name: "Back to home" })).toBeTruthy();
+  });
   it("unmounts the chat dialog when leaving tracking so hidden dialog focus handlers cannot remain active", async () => {
     setScenario("forward"); render(<PassengerWorkspace />); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));

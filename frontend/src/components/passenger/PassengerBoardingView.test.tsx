@@ -29,6 +29,16 @@ async function prepare() {
   return { user, joined };
 }
 describe("passenger boarding workflow", () => {
+  it("accepts the full pasted driver code with separators and explains normalization", async () => {
+    render(<PassengerBoardingView sessionId="qa-session" route={route} tripState="in_service" />);
+    const user = userEvent.setup();
+    const input = screen.getByRole("textbox", { name: "Boarding code" });
+    await user.click(input);
+    await user.paste("ABCD-EFGH");
+    expect(input).toHaveProperty("value", "ABCDEFGH");
+    expect(input.getAttribute("placeholder")).toBe("8-CHAR CODE");
+    expect(document.getElementById(input.getAttribute("aria-describedby")!)?.textContent).toContain("Spaces and hyphens are removed automatically");
+  });
   it("keeps boarding and destination stops distinct", async () => {
     const user = userEvent.setup();
     render(<PassengerBoardingView sessionId="qa-session" route={route} tripState="in_service" />);

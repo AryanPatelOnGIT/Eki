@@ -43,6 +43,14 @@ async function join() {
   await act(async () => { await Promise.resolve(); });
 }
 describe("passenger route recovery", () => {
+  it("keeps tracking through a missing live snapshot and restores boarding on recovery", async () => {
+    await join();
+    act(() => fixture.listeners.get("A")!.next({ type: "reset", snapshot: null, source: "invalidation" }));
+    expect(screen.getByRole("button", { name: "Back to home" })).toBeTruthy();
+    expect(screen.getByText("Waiting for live bus data…")).toBeTruthy();
+    act(() => deliver("A"));
+    expect(await screen.findByRole("button", { name: "Join joined" })).toBeTruthy();
+  });
   it("waits for authoritative snapshots from both selected and joined routes and fences detached callbacks", async () => {
     await join();
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
@@ -74,5 +82,7 @@ describe("passenger route recovery", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(10_001); });
     expect(screen.getByText("Feedback joined")).toBeTruthy();
     expect(screen.queryByText("Feedback return")).toBeNull();
+    expect(screen.getByRole("button", { name: "Track A" })).toBeTruthy();
+    expect(screen.queryByText("Route ended")).toBeNull();
   });
 });

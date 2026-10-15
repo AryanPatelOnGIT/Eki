@@ -149,7 +149,8 @@ export default function PassengerWorkspace() {
     return availability && (availability.active > 0 || availability.available > 0) &&
       ((route.stops?.length ?? 0) > 0 || (route.waypoints?.length ?? 0) > 0);
   });
-  const effectiveRouteId = displayRoutes.some(route => route.id === selectedRouteId)
+  // Keep observing the chosen route through temporary catalog/data gaps.
+  const effectiveRouteId = ((currentView === "tracking" && Boolean(selectedRouteId)) || displayRoutes.some(route => route.id === selectedRouteId))
     ? selectedRouteId : displayRoutes[0]?.id ?? "";
 
   // Listen to Firebase Realtime Database for active buses using the existing
@@ -287,7 +288,7 @@ export default function PassengerWorkspace() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const activeRoute = displayRoutes.find(route => route.id === effectiveRouteId);
+  const activeRoute = routes.find(route => route.id === effectiveRouteId);
   const busesOnRoute: VisibleBusData[] = [...activeBuses, ...availableBuses].filter(
     (bus) => bus.routeId === effectiveRouteId,
   );
@@ -296,7 +297,6 @@ export default function PassengerWorkspace() {
     busesOnRoute.find((bus) => passengerLiveBusSelectionKey(bus) === selectedLiveBusKey) ??
     busesOnRoute.find((bus) => bus.busId === selectedBusId) ??
     busesOnRoute[0];
-  const activeBusOnRouteId = activeBusOnRoute?.busId;
   const activeSessionId = activeBusOnRoute?.sessionId;
   const rideDirectionState = activeBusOnRoute?.directionState === "pending"
     ? "pending" : normalizeRideDirection(activeBusOnRoute?.direction);
@@ -322,8 +322,7 @@ export default function PassengerWorkspace() {
       } : null));
   const endedMessage = completedRide !== null;
 
-  const visibleView: ViewState =
-    currentView === "tracking" && !activeBusOnRouteId && !endedMessage ? "home" : currentView;
+  const visibleView: ViewState = currentView;
 
   useEffect(() => {
     if (completedRide) return;
@@ -385,6 +384,8 @@ export default function PassengerWorkspace() {
       latestTripStatesRef.current.delete(completedRide.sessionId);
       pendingCompletionSessionIdRef.current = null;
       setCompletedRide(null);
+      setCurrentView(view => view === "tracking" ? "home" : view);
+      setIsMessagingOpen(false);
     }, POST_RIDE_FEEDBACK_DELAY_MS);
 
     return () => clearTimeout(feedbackTimer);
@@ -409,7 +410,7 @@ export default function PassengerWorkspace() {
     <div className="relative overflow-hidden text-white" style={{ height: "100dvh" }}>
       {isResuming && (
         <div
-          className="absolute left-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-amber-400/20 bg-zinc-950 px-4 py-3 text-sm font-semibold text-amber-300 shadow-lg"
+          className="absolute left-4 right-4 z-[9999] flex items-center gap-2 rounded-xl border border-amber-400/20 bg-zinc-950 px-4 py-3 text-sm font-semibold text-amber-300 shadow-lg"
           style={{ top: "calc(env(safe-area-inset-top) + 1rem)" }}
           role="status"
           aria-live="polite"
@@ -488,7 +489,7 @@ export default function PassengerWorkspace() {
                       className="rounded-2xl p-4 mb-3 mx-1 flex items-center justify-center border text-center"
                       style={{ background: "#4c0519", borderColor: "#881337" }}
                     >
-                      <p className="text-[13px] font-black tracking-wider uppercase leading-tight text-[#fecdd3]">
+                      <p className="line-clamp-3 break-words min-w-0 text-[13px] font-black tracking-wider uppercase leading-tight text-[#fecdd3]">
                         {settings.announcementText}
                       </p>
                     </div>
@@ -512,7 +513,7 @@ export default function PassengerWorkspace() {
                   {settings.announcementActive && settings.announcementText && (
                     <div className="inline-flex items-center px-4 py-1.5 rounded-full border mb-1"
                       style={{ background: "#4c0519", borderColor: "#881337" }}>
-                      <span className="text-[12px] font-black tracking-wider uppercase text-[#fecdd3]">
+                      <span className="line-clamp-3 break-words min-w-0 text-[12px] font-black tracking-wider uppercase text-[#fecdd3]">
                         {settings.announcementText}
                       </span>
                     </div>
@@ -538,12 +539,19 @@ export default function PassengerWorkspace() {
               {/* Top bar: back + route info */}
               <div className="absolute top-0 w-full z-40 pt-safe px-4 pb-6 pointer-events-auto"
                 style={{ background: "linear-gradient(to bottom, rgba(9,9,11,0.92) 0%, transparent 100%)" }}>
-                <div className="flex items-center gap-4 max-w-lg mx-auto pt-12">
+                <div className="flex items-center gap-4 max-w-lg mx-auto pt-4">
                   <button
-                    onClick={() => setCurrentView("home")}
+                    type="button"
+                    onClick={() => {
+                      if (isMessagingOpen) {
+                        setIsMessagingOpen(false);
+                        return;
+                      }
+                      setCurrentView("home");
+                    }}
                     className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 hover:opacity-90 shadow-sm cursor-pointer"
                     style={{ backgroundColor: "var(--surface-3)", border: "1px solid var(--border-subtle)" }}
-                    aria-label="Back to home"
+                    aria-label={isMessagingOpen ? "Close live chat" : "Back to home"}
                     onPointerDown={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-4)")}
                     onPointerUp={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-3)")}
                     onPointerLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-3)")}
@@ -637,7 +645,7 @@ export default function PassengerWorkspace() {
                   ) : (
                     <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
                       <p className="text-[11px] font-semibold uppercase tracking-widest leading-none" style={{ color: "var(--accent)" }}>
-                        Live
+                        Waiting for live bus data…
                       </p>
                       <p className="text-[17px] font-semibold truncate leading-tight" style={{ color: "var(--text-primary)" }}>
                         {mapRoute.name} · {directionLabelState(rideDirectionState, activeRoute?.stops ?? [])}
@@ -747,11 +755,8 @@ export default function PassengerWorkspace() {
           }}>
           <button
             onClick={() => {
-              if (visibleView === "tracking" || visibleView === "home") {
-                setCurrentView(visibleView === "tracking" ? "home" : activeRoute ? "tracking" : "home");
-              } else {
-                setCurrentView("home");
-              }
+              setIsMessagingOpen(false);
+              setCurrentView("home");
             }}
             className="flex flex-col items-center justify-center h-[60px] w-[140px] rounded-[20px] transition-all duration-300 relative group active:scale-95 gap-1.5"
             style={{
