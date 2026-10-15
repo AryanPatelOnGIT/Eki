@@ -14,7 +14,7 @@ function ProfilePhoto({ photoURL }: { photoURL?: string | null }) {
     return <CircleUserRound role="img" aria-label="Default profile" className="w-9 h-9" style={{ color: "var(--text-ghost)" }} />;
   }
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={photoURL} alt="Profile" onError={() => setFailed(true)} className="w-full h-full object-cover" />;
+  return <img src={photoURL} alt="Profile" referrerPolicy="no-referrer" onError={() => setFailed(true)} className="w-full h-full object-cover" />;
 }
 
 export default function AccountTab() {
@@ -75,6 +75,7 @@ export default function AccountTab() {
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
           <div className="flex flex-col items-center gap-5 relative z-10">
             <div className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden"
+              role="group" aria-label="Profile photo"
               style={{ background: "var(--surface-3)", border: "1px solid var(--border-default)" }}>
                <ProfilePhoto key={JSON.stringify([user?.uid, user?.photoURL])} photoURL={user?.photoURL} />
             </div>
@@ -87,8 +88,8 @@ export default function AccountTab() {
                   </h2>
                   <span className="text-[10px] font-semibold px-2 py-1 rounded-md"
                     style={{ 
-                      background: "rgba(59, 130, 246, 0.10)", 
-                      color: "#60A5FA",
+                      background: "var(--accent-subtle)",
+                      color: "var(--accent)",
                       letterSpacing: "0.05em" 
                     }}>
                     {user.role?.toUpperCase() || "PASSENGER"}
@@ -111,7 +112,8 @@ export default function AccountTab() {
         {/* Actions List */}
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
-          <button
+          {user && <button
+            type="button"
             onClick={() => setShowFeedback(true)}
             className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group active:bg-[var(--surface-4)]"
             style={{ borderBottom: "1px solid var(--border-subtle)" }}
@@ -127,11 +129,12 @@ export default function AccountTab() {
             </div>
             <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" 
               style={{ color: "var(--text-ghost)" }} />
-          </button>
+          </button>}
 
           {user ? (
             <>
               <button
+                type="button"
                 onClick={() => setShowLogoutConfirm(true)}
                 className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
               >
@@ -144,10 +147,15 @@ export default function AccountTab() {
                     Sign Out
                   </span>
                 </div>
+                <ChevronRight className="w-4 h-4" aria-hidden="true" style={{ color: "var(--text-ghost)" }} />
               </button>
               {user.role === "passenger" && (
                 <button
-                  onClick={() => setShowDeleteConfirm(true)}
+                  type="button"
+                  onClick={() => {
+                    setDeletionStatus("");
+                    setShowDeleteConfirm(true);
+                  }}
                   className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
                   style={{ borderTop: "1px solid var(--border-subtle)" }}
                 >
@@ -160,11 +168,13 @@ export default function AccountTab() {
                       Delete Account
                     </span>
                   </div>
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" style={{ color: "var(--text-ghost)" }} />
                 </button>
               )}
             </>
           ) : (
             <button
+              type="button"
               onClick={loginWithGoogle}
               disabled={!loginReady || loginLoading}
               className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
@@ -206,9 +216,9 @@ export default function AccountTab() {
           </p>
         )}
         
-        {showFeedback && (
+        {showFeedback && user && (
           <FeedbackModal
-            userId={user?.uid || "anonymous"}
+            userId={user.uid}
             onClose={() => setShowFeedback(false)}
           />
         )}

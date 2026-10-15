@@ -90,8 +90,10 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!comment.trim() && rating === 0 && busId) return; // For ride, need at least rating or comment
-    if (!comment.trim() && !busId) return; // For general, need comment
+    if (!comment.trim() && (rating === 0 || !busId)) {
+      setError(busId ? "Please add a rating or comment before submitting." : "Please add a comment before submitting.");
+      return;
+    }
     if (wordCount > FEEDBACK_WORD_LIMIT) {
       setError(`Please keep feedback under ${FEEDBACK_WORD_LIMIT} words.`);
       return;
@@ -308,7 +310,7 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
                   ? `Wait ${formatCooldown(cooldownRemaining)}`
                   : "Ready")}
               </span>
-              <span style={{ color: wordCount >= FEEDBACK_WORD_LIMIT ? "#FBBF24" : "var(--text-ghost)" }} className="transition-colors">
+              <span style={{ color: wordCount >= FEEDBACK_WORD_LIMIT ? "var(--status-warning)" : "var(--text-ghost)" }} className="transition-[color]">
                 {wordCount} / {FEEDBACK_WORD_LIMIT} words
               </span>
             </div>
@@ -317,14 +319,14 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
           {/* Submit */}
           <button
             type="submit"
-            disabled={submitting || cooldownRemaining > 0 || (!!busId && !comment.trim() && rating === 0) || (!busId && !comment.trim())}
+            disabled={submitting || cooldownRemaining > 0 || (!busId && !comment.trim())}
             className="w-full h-12 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2 transition-all relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ 
-              background: (submitting || cooldownRemaining > 0 || (!!busId && !comment.trim() && rating === 0) || (!busId && !comment.trim()))
+              background: (submitting || cooldownRemaining > 0 || (!busId && !comment.trim()))
                 ? "var(--surface-3)" 
                 : "linear-gradient(135deg, #6366f1 0%, #ec4899 100%)",
               color: "white",
-              boxShadow: (submitting || cooldownRemaining > 0 || (!!busId && !comment.trim() && rating === 0) || (!busId && !comment.trim()))
+              boxShadow: (submitting || cooldownRemaining > 0 || (!busId && !comment.trim()))
                 ? "none"
                 : "0 10px 25px -5px rgba(99, 102, 241, 0.4)",
             }}
