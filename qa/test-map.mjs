@@ -10,7 +10,7 @@ import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 export const testMap = mergeTestMaps([{
   caseId: 'SEC04',
   scope: 'App Check removal retains browser identity/admin checks and device OTA reservations; Firebase verification, credential storage and physical OTA acceptance remain separate.',
-  sourcePaths: ['backend/src/lib/browserAdmission.ts', 'backend/src/routes/devices.ts'],
+  sourcePaths: ['backend/src/middleware/browserAppCheck.ts', 'backend/src/lib/browserAdmission.ts', 'backend/src/routes/devices.ts'],
   tests: [{ path: 'backend/src/lib/browserAdmission.test.ts',
     name: 'production browser admission > admits browser requests without attestation while retaining identity and admin authorization',
     level: 'L1', semantics: 'Mounted admission and role middleware admit verified admin GET/HEAD and mutation requests without attestation, but reject forged/missing identity and non-admin access.' },
