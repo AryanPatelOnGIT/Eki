@@ -1,7 +1,6 @@
 import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
-import rateLimit from "express-rate-limit";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
@@ -16,7 +15,12 @@ const harness = vi.hoisted(() => ({
   disabled: new Map<string, Record<string, unknown>>(),
   invalidated: [] as string[],
   credentialChecks: 0,
+  verifyIdentity: vi.fn(),
+  verifyApp: vi.fn(),
 }));
+
+vi.mock("../middleware/verifiedRequest", () => ({ verifyRequestToken: harness.verifyIdentity }));
+vi.mock("firebase-admin/app-check", () => ({ getAppCheck: () => ({ verifyToken: harness.verifyApp }) }));
 
 vi.mock("../middleware/requireAdmin", () => ({
   requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -30,8 +34,9 @@ vi.mock("../lib/firebaseAdmin", () => ({
         get: async () => ({
           exists: name === "active_rides"
             ? harness.activeRide
-            : name === "devices" || harness.activeBusLock || !!harness.maintenance,
-          data: () => name === "devices" ? { busId: "bus_1", routeId: "route_1", enabled: harness.deviceEnabled } : harness.maintenance,
+            : name === "devices" || (name === "_active_bus_locks" && (harness.activeBusLock || !!harness.maintenance)),
+          data: () => name === "devices" ? { busId: "bus_1", routeId: "route_1", enabled: harness.deviceEnabled }
+            : name === "_active_bus_locks" ? harness.maintenance : undefined,
         }),
         create: (value: Record<string, unknown>) => { harness.maintenance = value; },
         delete: () => { harness.maintenance = null; },
@@ -61,9 +66,10 @@ vi.mock("../services/deviceTelemetryService", () => ({
   authenticateDeviceCredentials: async () => harness.authenticated
     ? { busId: "bus_1", routeId: "route_1" }
     : null,
-  checkDeviceCredentials: async (_deviceId: string, secret: string) => {
+  checkDeviceCredentials: async (deviceId: string, secret: string) => {
     harness.credentialChecks += 1;
-    return !harness.authenticated || !harness.deviceEnabled || secret !== harness.validSecret ? { status: "invalid" }
+    const expectedSecret = deviceId === "device_1" ? harness.validSecret : deviceId === "device_2" ? "c".repeat(20) : null;
+    return !harness.authenticated || !harness.deviceEnabled || secret !== expectedSecret ? { status: "invalid" }
     : harness.unassigned ? { status: "unassigned" }
       : { status: "assigned", assignment: { busId: "bus_1", routeId: "route_1" } };
   },
@@ -135,6 +141,12 @@ beforeEach(() => {
   harness.disabled = new Map();
   harness.invalidated = [];
   harness.credentialChecks = 0;
+  harness.verifyIdentity.mockReset();
+  harness.verifyIdentity.mockResolvedValue({ uid: "rider", admin: false });
+  harness.verifyApp.mockReset();
+  harness.verifyApp.mockImplementation(async () => {
+    throw Object.assign(new Error("Invalid App Check token"), { code: "app-check/invalid-token" });
+  });
   process.env.FIRMWARE_RELEASE_VERSION = "s2-gnss-v2";
   process.env.FIRMWARE_RELEASE_SEQUENCE = "2";
   process.env.FIRMWARE_RELEASE_URL = "https://releases.example.edu/firmware.bin";
@@ -243,7 +255,7 @@ async function bootDeviceIngress(mode: "off" | "enforce") {
   const app = express();
   app.use(createBrowserIngressLimiter(1, 1000));
   app.use(express.json());
-  app.use("/api", rateLimit({ windowMs: 60_000, limit: 1000 }), createBrowserAdmission(1, { read: 100, mutation: 100 }));
+  app.use("/api", createBrowserAdmission(1, { read: 100, mutation: 100 }));
   app.use("/api", createBrowserAppCheck(mode));
   app.use("/api/devices", devicesRouter);
   const listener = await new Promise<Server>(resolve => {
@@ -275,6 +287,8 @@ describe("device OTA through browser admission, App Check and the production rou
     expect(harness.maintenance).toBeNull();
     expect((await installation(base, "release", valid)).status).toBe(200);
     expect(harness.credentialChecks).toBe(3);
+    expect(harness.verifyIdentity).not.toHaveBeenCalled();
+    expect(harness.verifyApp).not.toHaveBeenCalled();
   });
 
   it("releases a reservation acquired before enforcement was enabled", async () => {
@@ -312,12 +326,42 @@ describe("device OTA through browser admission, App Check and the production rou
     expect((await installation(base, "acquire", valid)).status).toBe(409);
     expect((await installation(base, "release", valid)).status).toBe(200);
     expect(harness.maintenance).toMatchObject({ deviceId: "other" });
+    // A ride lock can carry the same device ID; only firmware locks may be released.
+    harness.maintenance = { kind: "ride", deviceId: "device_1" };
+    expect((await installation(base, "acquire", valid)).status).toBe(409);
+    expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toEqual({ kind: "ride", deviceId: "device_1" });
     harness.maintenance = null;
     const concurrent = await Promise.all([installation(base, "acquire", valid), installation(base, "acquire", valid)]);
     expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
-    expect((await installation(base, "release", valid, "device_2")).status).toBe(200);
+    expect((await installation(base, "release", valid, "device_2")).status).toBe(401);
+    expect(harness.maintenance).toMatchObject({ deviceId: "device_1" });
+    expect((await installation(base, "release", `Device ${"c".repeat(20)}`, "device_2")).status).toBe(200);
     expect(harness.maintenance).toMatchObject({ deviceId: "device_1" });
     expect((await installation(base, "release", valid)).status).toBe(200);
+    expect(harness.maintenance).toBeNull();
+  });
+
+  it("keeps an existing reservation intact when release credentials are denied", async () => {
+    const base = await bootDeviceIngress("enforce");
+    expect((await installation(base, "acquire", valid)).status).toBe(200);
+    const reservation = { ...harness.maintenance };
+    for (const authorization of [undefined, "Bearer browser", "Device short", `Device ${"b".repeat(20)}`]) {
+      expect((await installation(base, "release", authorization)).status).toBe(401);
+      expect(harness.maintenance).toEqual(reservation);
+    }
+    harness.validSecret = "b".repeat(20);
+    expect((await installation(base, "release", valid)).status).toBe(401);
+    expect(harness.maintenance).toEqual(reservation);
+    harness.deviceEnabled = false;
+    expect((await installation(base, "release", `Device ${harness.validSecret}`)).status).toBe(401);
+    expect(harness.maintenance).toEqual(reservation);
+    harness.deviceEnabled = true;
+    harness.unassigned = true;
+    expect((await installation(base, "release", `Device ${harness.validSecret}`)).status).toBe(403);
+    expect(harness.maintenance).toEqual(reservation);
+    harness.unassigned = false;
+    expect((await installation(base, "release", `Device ${harness.validSecret}`)).status).toBe(200);
     expect(harness.maintenance).toBeNull();
   });
 
@@ -343,5 +387,31 @@ describe("device OTA through browser admission, App Check and the production rou
       expect((await fetch(base + path, { method, headers: { Authorization: valid } })).status).toBe(401);
     }
     expect(harness.credentialChecks).toBe(checks);
+  });
+
+  it("requires App Check for authenticated browser mutations outside exact device exemptions", async () => {
+    const base = await bootDeviceIngress("enforce");
+    const paths = [
+      ["POST", "/api/devices/device_1/firmware/installation/extra"],
+      ["PUT", "/api/devices/device_1/firmware/installation"],
+      ["POST", "/api/devices/device_1/firmware"],
+      ["POST", "/api/devices/device_1/firmware/installation/"],
+    ];
+    for (const [method, path] of paths) {
+      for (const token of [undefined, "invalid-app-token"]) {
+        const response = await fetch(base + path, { method, headers: {
+          Authorization: "Bearer rider",
+          ...(token ? { "X-Firebase-AppCheck": token } : {}),
+        } });
+        expect(response.status, `${method} ${path}`).toBe(403);
+        await expect(response.json()).resolves.toMatchObject({
+          code: token ? "APP_CHECK_REJECTED" : "APP_CHECK_REQUIRED",
+        });
+      }
+    }
+    expect(harness.verifyIdentity).toHaveBeenCalledTimes(paths.length * 2);
+    expect(harness.verifyApp).toHaveBeenCalledTimes(paths.length);
+    expect(harness.credentialChecks).toBe(0);
+    expect(harness.maintenance).toBeNull();
   });
 });
