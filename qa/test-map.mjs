@@ -8,6 +8,19 @@ import { reviewedUnitTestMap } from './reviewed-unit-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 // Exact limited assertion links; no complete feature acceptance is claimed.
 export const testMap = mergeTestMaps([{
+  caseId: 'OPS14',
+  scope: 'A single exact closed-Firestore-transaction error restarts a fresh creation/recovery transaction once, retaining one session identity and rerunning firmware ownership checks. Other errors and repeat failure propagate.',
+  sourcePaths: ['backend/src/routes/shifts.ts'],
+  tests: [
+    ['recovers a closed lock transaction without duplicating a ride', 'A rolled-back lock creation is retried once with the same proposed session ID, one durable ride and the same idempotent acknowledgement.'],
+    ['recovers a closed projection transaction without duplicating a ride', 'A rolled-back projection is repaired using the already-created ride and its original reservation, without creating another session.'],
+    ['rechecks a firmware lock acquired during closed transaction recovery', 'A firmware reservation acquired between attempts remains intact; the fresh transaction rejects ride creation with 409.'],
+    ['bounds closed transaction recovery and propagates other invalid arguments', 'Two closed responses stop after two attempts; another INVALID_ARGUMENT detail is not retried and no ride is created.'],
+    ['updates an existing ride from a cold RTDB transaction cache', 'An initial SDK null does not abort a delay update before the real active ride is evaluated.'],
+    ['still rejects a replacement when a cold RTDB transaction refreshes', 'The server value is rechecked after an initial null; a replacement session rejects the delay without mutating its value.'],
+  ].map(([name, semantics]) => ({ path: 'backend/src/routes/rideSessions.test.ts',
+    name: `versioned session identity and lifecycle > ${name}`, level: 'L1', semantics })),
+}, {
   caseId: 'SEC04',
   scope: 'App Check removal retains browser identity/admin checks and device OTA reservations; Firebase verification, credential storage and physical OTA acceptance remain separate.',
   sourcePaths: ['backend/src/middleware/browserAppCheck.ts', 'backend/src/middleware/requireAdmin.ts', 'backend/src/lib/browserAdmission.ts', 'backend/src/routes/devices.ts'],

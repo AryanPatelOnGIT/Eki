@@ -14,6 +14,11 @@ const state = vi.hoisted(() => ({
   beforeTransactionRead: null as (() => void) | null,
   afterLiveWrite: null as (() => void) | null,
   failProjectionOnce: false,
+  transactionAttempts: 0,
+  transactionFailureAt: 1,
+  transactionFailures: [] as Array<{ code: number; details: string }>,
+  onTransactionFailure: null as (() => void) | null,
+  coldLiveTransaction: false,
   batchSizes: [] as number[],
 }));
 
@@ -82,8 +87,14 @@ vi.mock("../lib/firebaseAdmin", () => {
     },
     runTransaction: (callback: (transaction: ReturnType<typeof writer>) => Promise<unknown>) => {
       const execution = state.transactionTail.then(async () => {
+        state.transactionAttempts++;
         const transaction = writer();
         const result = await callback(transaction);
+        if (state.transactionAttempts >= state.transactionFailureAt && state.transactionFailures.length) {
+          const failure = state.transactionFailures.shift()!;
+          state.onTransactionFailure?.(); state.onTransactionFailure = null;
+          throw Object.assign(new Error(failure.details), failure);
+        }
         if (state.failProjectionOnce && state.live.status === "active" &&
             state.docs.get(`ride_sessions/${state.live.sessionId}`)?.status === "pending") {
           state.failProjectionOnce = false;
@@ -94,7 +105,11 @@ vi.mock("../lib/firebaseAdmin", () => {
       state.transactionTail = execution.catch(() => {}); return execution;
     } },
     rtdb: { ref: () => ({ once: async () => ({ val: () => ({ ...state.live }) }),
-      transaction: async (callback: (value: Record<string, unknown>) => unknown) => {
+      transaction: async (callback: (value: Record<string, unknown> | null) => unknown) => {
+        if (state.coldLiveTransaction) {
+          state.coldLiveTransaction = false;
+          if (callback(null) === undefined) return { committed: false, snapshot: { val: () => state.live } };
+        }
         state.beforeLiveWrite?.(); state.beforeLiveWrite = null;
         const result = callback(state.live);
         if (result === undefined) return { committed: false, snapshot: { val: () => state.live } };
@@ -124,6 +139,9 @@ beforeEach(() => {
   state.docs.clear(); state.sequence = 0; state.transactionTail = Promise.resolve();
   state.beforeLiveWrite = null; state.beforeTransactionRead = null; state.afterLiveWrite = null;
   state.failProjectionOnce = false; state.batchSizes = [];
+  state.transactionAttempts = 0; state.transactionFailureAt = 1; state.transactionFailures = [];
+  state.onTransactionFailure = null;
+  state.coldLiveTransaction = false;
   state.user = { uid: "driver_uid", role: "driver", driverId: "driver_1", assignedBusId: "bus_1" };
   state.docs.set("drivers/driver_1", { authUid: "driver_uid", assignedBusId: "bus_1" });
   state.docs.set("buses/bus_1", { assignedRoutes: ["route_1", "route_2"] });
@@ -146,6 +164,36 @@ function end(status = "completed") {
 }
 
 describe("versioned session identity and lifecycle", () => {
+  async function closedRecovery(phase: number) {
+    state.transactionFailureAt = phase;
+    state.transactionFailures = [{ code: 3, details: "Transaction is invalid or closed." }];
+    const response = await start();
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect([...state.docs.keys()].filter(key => /^ride_sessions\/[^/]+$/.test(key))).toEqual([`ride_sessions/${body.sessionId}`]);
+    expect(state.docs.get("_active_bus_locks/bus_1")?.sessionId).toBe(body.sessionId);
+    expect(state.live.sessionId).toBe(body.sessionId);
+    expect((await (await start()).json()).sessionId).toBe(body.sessionId);
+  }
+  it("recovers a closed lock transaction without duplicating a ride", async () => { await closedRecovery(1); });
+  it("recovers a closed projection transaction without duplicating a ride", async () => { await closedRecovery(2); });
+  it("rechecks a firmware lock acquired during closed transaction recovery", async () => {
+    state.transactionFailures = [{ code: 3, details: "Transaction is invalid or closed." }];
+    state.onTransactionFailure = () => { state.docs.set("_active_bus_locks/bus_1", { kind: "firmware", deviceId: "owner" }); };
+    expect((await start()).status).toBe(409);
+    expect(state.docs.get("_active_bus_locks/bus_1")).toEqual({ kind: "firmware", deviceId: "owner" });
+    expect([...state.docs.keys()].filter(key => /^ride_sessions\/[^/]+$/.test(key))).toHaveLength(0);
+  });
+  it("bounds closed transaction recovery and propagates other invalid arguments", async () => {
+    state.transactionFailures = [{ code: 3, details: "Transaction is invalid or closed." }, { code: 3, details: "Transaction is invalid or closed." }];
+    expect((await start()).status).toBe(500);
+    expect(state.transactionAttempts).toBe(2);
+    expect([...state.docs.keys()].filter(key => /^ride_sessions\/[^/]+$/.test(key))).toHaveLength(0);
+    state.transactionFailures = [{ code: 3, details: "Invalid document path." }];
+    const before = state.transactionAttempts;
+    expect((await start()).status).toBe(500);
+    expect(state.transactionAttempts - before).toBe(1);
+  });
   it("cannot start a ride while firmware maintenance holds the bus lock", async () => {
     state.docs.set("_active_bus_locks/bus_1", { kind: "firmware", deviceId: "device_1", routeId: "route_1" });
     expect((await start()).status).toBe(409);
@@ -244,6 +292,19 @@ describe("versioned session identity and lifecycle", () => {
     const body = await response.json(); expect(body).not.toHaveProperty("boardingCode"); expect(body).not.toHaveProperty("passengers");
     state.user = { uid: "stranger", role: "passenger" }; expect((await request(`/${sessionId}`, "GET")).status).toBe(403);
     state.user = { uid: "p", role: "passenger" }; expect((await request(`/${sessionId}`, "GET")).status).toBe(200);
+  });
+  it("updates an existing ride from a cold RTDB transaction cache", async () => {
+    const { sessionId } = await (await start()).json();
+    state.coldLiveTransaction = true;
+    expect((await request(`/${sessionId}`, "PATCH", { delayMinutes: 5 })).status).toBe(200);
+    expect(state.live.delayMinutes).toBe(5);
+  });
+  it("still rejects a replacement when a cold RTDB transaction refreshes", async () => {
+    const { sessionId } = await (await start()).json();
+    state.coldLiveTransaction = true;
+    state.beforeLiveWrite = () => { state.live.sessionId = "replacement_session"; };
+    expect((await request(`/${sessionId}`, "PATCH", { delayMinutes: 5 })).status).toBe(409);
+    expect(state.live.delayMinutes).not.toBe(5);
   });
   it("binds delay to path session and rejects a replacement during RTDB transaction", async () => {
     const { sessionId } = await (await start()).json();

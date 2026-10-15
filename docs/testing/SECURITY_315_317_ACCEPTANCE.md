@@ -26,6 +26,56 @@ The claims backfill must be complete before directing admin traffic to this
 backend; unversioned legacy admin tokens are intentionally denied, matching the
 existing database policy.
 
+## Repeated service-restart CI failure
+
+The PR-event run passed on `a4a28fb`, but its separate push-event run
+`38813381130` failed the desktop service restart with Firestore gRPC code 3 and
+the exact detail `Transaction is invalid or closed.` This is the same error
+captured in the earlier testing-branch investigation; the new retained log
+confirms the intermittent failure remains relevant. The SDK retries an expired
+transaction response, but its retry classifier does not include this closed-ID
+detail.
+
+Ride creation and its projection/cleanup callbacks now restart one fresh
+transaction for that exact code/detail pair. They preserve proposed session IDs
+and idempotency keys and rerun the transaction's ownership/lifecycle checks. Other invalid
+arguments and a second closed response still fail normally. Regression tests
+inject rollback before commit at both lock and projection phases, check one
+durable session and stable acknowledgements, bound attempts and verify that a
+firmware lock acquired between attempts prevents a ride. No browser retries or
+authentication/firmware safety conditions are relaxed.
+
+The ten-run stress investigation also exposed a separate delay-control oracle
+failure: RTDB already held the requested delay while the UI correctly kept the
+request pending, but the five-second toast assertion expired before the HTTP
+acknowledgement. The test now observes the actual PATCH response (using the same
+15-second observation window as service creation), requires HTTP 200 and the
+correct `saved`/delay fields, then applies the original UI and persistence
+assertions. It does not accept a failed or timed-out application request.
+
+Fresh backend stress batches then reproduced a cold RTDB cache defect: delay
+transactions returned 409 before evaluating an existing server-side ride. The
+callback returned `undefined` for the SDK's initial uncached `null`, which aborts
+locally. It now returns `null` in that case so compare-and-set can obtain the
+server value and rerun the existing session/ownership guards. An absent or
+replacement ride still cannot produce a successful delay acknowledgement.
+This initial-null behavior is documented by
+[Firebase](https://firebase.google.com/docs/database/web/read-and-write#save_data_as_transactions).
+Unit regressions cover a cold valid ride and rejection of a replacement during
+refresh. The stress harness uses fresh disposable emulators and backend
+processes for each viewport batch. Reusing only selected fixture documents
+across fresh processes left conflicting durable synthetic lifecycle state; a
+diagnostic correctly reported an active `qa_session` after interruption with no
+owning lock, and the production guard refused the restart. No guard is bypassed
+to make that inconsistent fixture pass. An earlier combined batch also correctly
+hit the unchanged 30-write/minute quota and failed with 429.
+
+Final isolated recovery stress: five mobile and five desktop journeys passed,
+with zero failures/skips/flaky retries. Real closed-transaction responses were
+observed and recovered during these runs. The complete backend unit suite passed
+1,144 tests, including all 25 session-lifecycle tests. Earlier diagnostic failures
+remain retained separately; they are not relabeled as passing evidence.
+
 The owner explicitly selected the merged App Check removal policy on 2026-10-16:
 preserve the removal, verify authentication and authorization, and document #316
 as superseded. This review does not restore browser/API App Check or change any
