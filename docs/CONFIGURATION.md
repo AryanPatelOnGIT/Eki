@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-11 18:00 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -26,7 +26,6 @@ runtime secret/configuration system.
 | `PORT` | No | HTTP listener port; defaults to `4000` in local use | Expose through the managed HTTPS runtime in production |
 | `NODE_ENV` | Recommended | Set `production` to enable production guards | Production refuses to start without `CORS_ORIGIN` |
 | `CORS_ORIGIN` | Production | Comma-separated exact frontend origins | Never use `*` for this credential-free API; do not include paths |
-| `API_APPCHECK_MODE` | No | `off` (compatibility default) or `enforce`: additional attestation for browser mutations and high-cost reads | Stage after consumer/provider verification; does not replace ID-token/RBAC or device authentication. See [browser API security](operations/BROWSER_API_SECURITY.md) |
 | `FIREBASE_SERVICE_ACCOUNT` | Conditional | Server-side Firebase Admin JSON | Prefer Workload Identity/ADC or Secret Manager; never commit or log it |
 | `FIREBASE_DATABASE_URL` | Yes for RTDB | Firebase RTDB URL | Use the environment’s URL; no code fallback exists |
 | `GOOGLE_MAPS_API_KEY` | Route/places features | Server-side Routes/Places key | Restrict by runtime identity/IP and enabled APIs; keep it different from the browser key |
@@ -85,9 +84,6 @@ into the browser and should be treated as public identifiers.
 | `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | Optional | Analytics measurement identifier | Enable only if analytics/privacy approval exists |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Maps UI | Browser Maps JavaScript key | Restrict by approved hostnames and Maps APIs |
 | `NEXT_PUBLIC_GOOGLE_MAP_ID` | Maps UI | Cloud map style identifier | Use the matching environment |
-| `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY` | Production/App Check | Firebase App Check browser site key | Use the matching environment; enforcement is configured in Firebase |
-| `NEXT_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN` | Local development only | Registered Firebase App Check debug token; `true` requests a generated debug token that still requires registration | Ignored by production runtime; never include it in a production build or commit it |
-| `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED` | Unenforced development only | Explicit `true` opt-out when no provider key/debug token is configured and `NODE_ENV=development` | Does not disable Firebase Console enforcement; ignored in test/staging/production modes |
 | `NEXT_PUBLIC_BACKEND_URL` | Yes | HTTPS backend origin used by REST mutations | Use an origin only—no `/api` suffix, path or query string |
 | `NEXT_PUBLIC_SERVICE_TIME_ZONE` | Optional | Display timezone; default template is `Asia/Kolkata` | Use an IANA timezone name |
 | `NEXT_PUBLIC_PASSENGER_BUS_START_TIME` | Optional | Passenger display default for service start | This is presentation configuration, not a dispatch rule |
@@ -107,49 +103,30 @@ prints only the verified region and fails if the two instance hosts differ;
 it never prints configuration URLs or credentials. See the
 [RTDB region decision](design/RTDB_REGION_LATENCY_DECISION.md).
 
-## Local App Check and Auth setup
+<a id="local-app-check-and-auth-setup"></a>
 
-Choose one App Check path for the development build:
+## Local Auth setup
 
-| Firebase project | Frontend configuration |
-|---|---|
-| Enforced, provider works on your hostname | Configure `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY`; register the hostname for the provider |
-| Enforced, local debug workflow | Register a debug token in Firebase Console; set it only in ignored `.env.local`. The debug provider also works without a site key |
-| Unenforced development project | With no site key/debug token, set `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED=true`; this works only when `NODE_ENV=development` |
-| Staging/production | Valid provider key and enforced Firebase services; no local opt-out or debug token |
+App Check has been removed. The browser does not initialize an attestation
+provider or send an App Check header; the API requires Firebase ID tokens
+and trusted role claims. No reCAPTCHA site key or App Check debug token is needed.
 
-Do not leave a placeholder site key active while expecting the missing-key
-opt-out: a configured key selects the provider path. Restart the frontend after
-editing these values.
+Before deploying the new browser, disable App Check enforcement for Firestore
+and Realtime Database in the selected Firebase project. Staging and production
+deployment workflows run `scripts/disable-appcheck-enforcement.mjs --project
+<project-id> --disable` before publishing the app. For a manual rollout, use the
+same command with an authorized `FIREBASE_TOKEN`, or disable enforcement in
+Firebase Console. Code changes alone do not change an already deployed project.
 
-`ensureAppCheck()` waits up to 10 seconds for a valid token. One pending SDK
-token acquisition remains shared until it settles, even after the caller's
-deadline; repeatedly clicking retry cannot start unbounded acquisitions.
-Authentication refreshes the ID token and verifies trusted role claims before
-publishing the user and enabling protected
-Firestore/RTDB listeners. Provider, token, role and timeout failures keep access
-closed. Account changes and sign-out invalidate earlier pending verification.
+Authentication refreshes ID tokens and verifies trusted role claims before
+publishing the user or opening protected listeners. Administrators require both
+`role: "admin"` and `admin: true`; a profile or remembered role cannot grant access.
+Account changes and sign-out invalidate pending verification. Permission retries
+share a fresh Auth verification and hide protected data until it succeeds.
 
-For an administrator, Auth custom claims must contain both `role: "admin"`
-and `admin: true`. A Firestore profile or remembered role alone cannot authorize
-the admin workspace. Synchronize claims through the existing trusted admin
-procedure after changing a profile; do not grant privileges in browser code.
-
-If fleet/routes/drivers report `permission-denied`, use the panel's **Retry**.
-Permission retries and **Try again** on the verification screen share one
-fresh App Check/Auth verification, hide protected data while it runs, and
-subscribe again only after successful verification. Other transient listener
-errors reconnect without an extra security-token refresh. A permanently
-rejected SDK token requires repairing local enrollment and restarting the
-frontend; the retry does not disable Console enforcement or register tokens.
-
-For localhost diagnosis, first confirm the frontend and backend use the same
-Firebase project and an enrolled provider/debug token for that project's web
-app. Restart after changing ignored `.env.local`, then sign in and open Fleet
-and Routes. An Auth admin claim does not bypass enforced App Check. Record
-only redacted success/error codes; never paste debug or bearer tokens into an
-issue. Actual account/provider acceptance remains #204/#245 until observed
-in the affected browser.
+For local diagnosis, confirm that frontend/backend use the same Firebase project,
+the signed-in account has the intended trusted role claims, and database rules
+authorize the operation. Never paste bearer tokens into an issue.
 
 For Firebase Auth, the resolver uses the browser hostname automatically only
 on the project's primary `<project>.web.app`/`<project>.firebaseapp.com` sites.
@@ -197,9 +174,8 @@ The application expects these separately managed resources:
 - A managed HTTPS runtime for the Express backend, with monitoring, backups,
   WAF/global rate limits, and a single effective worker lease owner.
 - Google Maps Routes/Places APIs with separate server and browser keys.
-- App Check configured and enforced for Firestore and RTDB in Firebase Console.
-  Security Rules handle identity, role and data authorization; they cannot read
-  an App Check token.
+- App Check enforcement disabled for Firestore and RTDB. Security Rules retain
+  identity, role and data authorization.
 
 The checked-in rules are default-deny for sensitive data. The Admin SDK bypasses
 Firebase client rules, so backend identity, deployment credentials and runtime
@@ -212,7 +188,7 @@ network controls remain critical.
 | Firebase project | Dedicated developer/test project | Isolated non-production project | Separate university-owned production project |
 | Backend credentials | Local ADC or ignored `.env` | Secret manager/GitHub environment | Workload Identity or Secret Manager |
 | CORS | Local frontend origin plus configured test origins | Exact staging frontend origin(s) | Exact approved university frontend origin(s) |
-| App Check | Debug token only when needed | Enforced after validation | Enforced and monitored |
+| App Check | Not used | Enforcement disabled | Enforcement disabled |
 | Retention sweeper | Disabled | Explicitly approved test schedule | Explicitly enabled and privacy-approved; startup requires enforcement |
 | Device firmware | `esp32dev` for bench work | Signed fleet build after acceptance | Signed, protected device-specific artifact only |
 | Deployment | `npm run dev` | CI verified build and controlled deploy | Approval-gated deployment plus backend/runtime rollout |
@@ -243,7 +219,7 @@ After changing configuration:
    pasted into a public file.
 2. Run `npm run lint` and the relevant workspace tests.
 3. Run `npm run build:production` for frontend environment changes.
-4. Check backend `/health` and the browser’s App Check/Auth state.
+4. Check backend `/health` and the browser’s Auth state.
 5. For device changes, build the intended PlatformIO environment, verify the
    device-specific artifact in the controlled process, and perform the physical
    acceptance checks in [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md).

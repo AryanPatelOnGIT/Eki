@@ -1,7 +1,7 @@
 /**
  * authState.ts
  *
- * Await actual auth/role and App Check readiness before opening listeners.
+ * Await actual auth/role readiness before opening listeners.
  * Each auth change closes the gate again; a timeout never opens it.
  */
 
@@ -34,7 +34,7 @@ export function beginAuthVerification(): void {
 export function getAuthVerificationGeneration(): number { return generation; }
 
 /**
- * Called after role and App Check verification, or confirmed sign-out.
+ * Called after role verification, or confirmed sign-out.
  * Data hooks separately require a verified principal before subscribing.
  */
 export function notifyAuthReady(): void {

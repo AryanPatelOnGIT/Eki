@@ -14,7 +14,6 @@
 import { getRouteMatchingWork } from "./services/routeMatching";
 import "dotenv/config";
 import { createRouteComputeLimiter } from "./lib/routeComputeLimiter";
-import { createBrowserAppCheck } from "./middleware/browserAppCheck";
 
 import express from "express";
 import http from "http";
@@ -163,7 +162,6 @@ app.use(
 );
 app.use(express.json({ limit: "16kb", strict: true })); // Prevent request body size attacks
 app.use("/api", createBrowserAdmission(RATE_LIMIT_SHARD_FACTOR));
-app.use("/api", createBrowserAppCheck());
 
 // ── REST Routes ───────────────────────────────────────────────────────────────
 app.use("/api/buses", busRoutes);

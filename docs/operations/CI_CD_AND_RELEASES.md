@@ -1,6 +1,6 @@
 # CI, deployment, and release guide
 
-Last updated: 2026-10-11 (Asia/Kolkata).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 This document explains what the repository automation verifies, what it deploys,
 and which production actions still belong to the university operations team.
@@ -20,7 +20,7 @@ The workflow performs:
 3. Root script tests plus backend and frontend Vitest suites.
 4. Firebase Firestore/RTDB rules integration through the emulator. The test
    helper writes isolated temporary copies; committed rules are never modified.
-   App Check is enforced separately in Firebase Console for deployed projects.
+   App Check is not used; deployment disables Firestore/RTDB product enforcement.
 5. Strict frontend production build with CI-only placeholder public values,
    service-worker generation, deterministic CSP regeneration, and
    web/backend CSP contract assertions (origin and Firebase Auth `frame-src 'self'`).
@@ -64,11 +64,10 @@ operation.
 | Staging | Successful verification from a push to `main`, or manual staging dispatch from `main` | Firebase Hosting, Firestore rules and RTDB rules for the approved staging project | Exact verified commit SHA for `workflow_run` (manual dispatch deploys the selected `main` ref directly); staging environment secrets |
 | Production | Manual dispatch from `main` with `production` selected | Firebase Hosting, Firestore rules and RTDB rules for the separately approved production project | Protected GitHub environment/reviewer approval, current `main` ref at dispatch time, and production secrets |
 
-Staging deployment enforces App Check on Firestore and RTDB through
-`scripts/verify-appcheck-enforcement.mjs --enforce` before deployment.
-Production checks enforcement without changing it. Both require the correct
-project-scoped runtime credentials. Local emulator/synthetic browser tests do
-not prove provider setup or enforcement in a deployed project.
+Staging and production deployments disable App Check enforcement on Firestore and RTDB through
+`scripts/disable-appcheck-enforcement.mjs --project <project-id> --disable` before publishing the app.
+Both workflows require project-scoped credentials and verify the returned
+UNENFORCED mode. Local tests do not change any deployed Firebase configuration.
 
 Both deployment paths run the RTDB instance preflight, deploy the declared
 Firestore indexes, and wait for the required deployed query shapes to become
@@ -109,7 +108,6 @@ The deployment workflow passes these `NEXT_PUBLIC_*` values to the strict build:
 - `NEXT_PUBLIC_FIREBASE_APP_ID`
 - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`
 - `NEXT_PUBLIC_GOOGLE_MAP_ID`
-- `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY`
 - `NEXT_PUBLIC_BACKEND_URL`
 
 Browser values are public identifiers after bundling, but Firebase/Maps keys
@@ -135,7 +133,7 @@ approved retention values. Signed device releases additionally require all six
 4. Review the generated service worker and CSP changes when frontend behavior or
    allowed origins change.
 5. Let the verified `main` commit deploy to staging. Check Hosting headers,
-   Auth/App Check, rules, `/health`, backend logs, telemetry, and a test route.
+   Auth, rules, `/health`, backend logs, telemetry, and a test route.
 6. Run the staged browser slow-network/offline and physical hardware acceptance
    matrix. Do not call CI success a field pass.
 7. Dispatch production only after the protected environment approval, privacy/

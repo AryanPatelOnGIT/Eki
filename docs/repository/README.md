@@ -1,6 +1,6 @@
 # Eki campus bus tracking
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 Eki lets passengers find a campus bus, choose a destination, join a ride and follow its progress. Administrators manage routes, fleet assignments, ride operations, feedback and history.
 
@@ -11,7 +11,7 @@ An ESP32 with a NEO-M8N GNSS receiver sends authenticated HTTPS telemetry to the
 | Your task | Read |
 |---|---|
 | First-time setup and role workflows | [Getting started](../GETTING_STARTED.md) |
-| Environment variables and App Check | [Configuration](../CONFIGURATION.md) |
+| Environment variables and authentication | [Configuration](../CONFIGURATION.md) |
 | Find a technical or operational document | [Documentation index](../index/README.md) |
 | Frontend work | [Frontend guide](../frontend/README.md) |
 | Backend work | [Backend guide](../backend/README.md) and [API reference](../backend/API.md) |
@@ -35,7 +35,7 @@ Edit both ignored files before starting:
 
 - Backend: set `NODE_ENV=development`, `PORT=4000`, `CORS_ORIGIN=http://localhost:3000`, the development RTDB URL and Firebase Admin credentials. Keep scheduled retention disabled locally. The tracked backend template uses production mode and port `8080`; copying it unchanged will not start a usable local environment.
 - Frontend: set the matching Firebase values, Maps values and `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`.
-- App Check: use a valid provider key or a registered local debug token. Only an unenforced development project may use `NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED=true` with no provider key. See [configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+- App Check is not used. Disable existing Firebase product enforcement before publishing this browser; see [Auth configuration](../CONFIGURATION.md#local-auth-setup).
 
 ```powershell
 npm run dev
@@ -93,7 +93,7 @@ CI runs on `testing` PRs. Automatic staging deployment is tied to verified pushe
 
 ## Deployment readiness
 
-The repository supplies application code and repeatable verification. A production release also needs owned infrastructure, approved retention, monitoring/backups, Firebase App Check enforcement, protected firmware provisioning and field acceptance. Use the [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md) and [current acceptance index](../testing/README.md).
+The repository supplies application code and repeatable verification. A production release also needs owned infrastructure, approved retention, monitoring/backups, protected firmware provisioning and field acceptance. Use the [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md) and [current acceptance index](../testing/README.md).
 
 Keep credentials and personal/location evidence in approved private storage. See [security policy](SECURITY.md).
 

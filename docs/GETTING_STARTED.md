@@ -1,6 +1,6 @@
 # Eki getting started and operating guide
 
-Last updated: 2026-10-05 17:45 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 This is the plain-language entry point for the Eki campus bus-tracking system.
 It explains what the system does, who uses it, how to run it locally, and
@@ -85,9 +85,8 @@ Fill the two ignored environment files using [CONFIGURATION.md](CONFIGURATION.md
    refuse startup with its safe disabled-retention default.
 2. In `frontend/.env.local`, set matching Firebase/Maps values and
    `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`.
-3. Configure a valid App Check provider or registered local debug token before
-   signing in. An unenforced development project may opt out explicitly; see
-   [local App Check setup](CONFIGURATION.md#local-app-check-and-auth-setup).
+3. Configure Firebase Auth and trusted role claims before signing in; see
+   [local Auth setup](CONFIGURATION.md#local-auth-setup). App Check is not used.
 4. Restart services after environment changes. For phones/hardware use
    [local testing](operations/LOCAL_TESTING.md), which explains reachable HTTPS
    origins, CORS and reflash requirements.
@@ -117,7 +116,7 @@ npm run dev --workspace=backend
 
 The usual order is:
 
-1. Configure Firebase Authentication, Firestore, RTDB, App Check and Maps for
+1. Configure Firebase Authentication, Firestore, RTDB and Maps for
    the development project.
 2. Seed the predefined routes when route geometry is needed:
 
@@ -197,7 +196,12 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 5. Use in-session messaging only for operational communication. Messages are
    scoped to the session and rate-limited.
 6. Submit ride feedback after an eligible completed ride, or request deletion
-   from the account/privacy flow.
+   from **Profile → Delete Account**. Confirming sends a deletion request.
+   After server acceptance, dismiss the **Deletion requested** popup to sign
+   out. The account is deleted asynchronously; feedback, passenger ride entries
+   and messages remain unchanged. There is no multi-day waiting period or
+   routine admin approval, but worker availability and errors can delay deletion.
+   See [account deletion and recovery](operations/PRIVACY_DELETION.md).
 
 ### Driver/operator
 
@@ -248,7 +252,7 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 | `platformio run --project-dir hardware -e esp32dev-secure` | Build a signed fleet artifact in the controlled signing environment |
 
 Deploy through the approval-gated [Deploy workflow](../.github/workflows/deploy.yml)
-from `main`. It selects the Firebase project explicitly and runs the App Check
+from `main`. It selects the Firebase project explicitly and runs the App Check removal
 and Firestore index gates before publishing Hosting and rules. The backend
 container/runtime, DNS, TLS, WAF, secrets, monitoring and replication are
 separate deployment responsibilities; use the university deployment checklist
@@ -260,8 +264,8 @@ for the full rollout.
 |---|---|---|
 | Backend will not start in production | `CORS_ORIGIN`, `FIREBASE_DATABASE_URL`, credentials, Maps configuration, and replica shard factor | [Backend README](backend/README.md), [configuration](CONFIGURATION.md) |
 | `/health` returns 503 | Firebase Admin credentials, Firestore/RTDB reachability, and the cached probe timestamp | [API health](../backend/API.md#health) |
-| Browser shows no live bus | Auth/App Check, RTDB URL, rules, device health, and whether the fix is fresh | [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md) |
-| Security verification fails or fleet permissions fail after sign-in | Check App Check provider/debug token and enforcement first; protected listeners wait for refreshed Auth claims and App Check. Permission retries refresh access together; timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-app-check-and-auth-setup) |
+| Browser shows no live bus | Auth, RTDB URL, rules, device health, and whether the fix is fresh | [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md) |
+| Security verification fails or fleet permissions fail after sign-in | Check Firebase Auth role claims and database rules; protected listeners wait for refreshed trusted claims. Disable old Firebase App Check enforcement before deploying this browser. Permission retries refresh access together; timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-auth-setup) |
 | Feedback cannot load | Check backend reachability and verified admin claims for `GET /api/v2/feedback`; retry from the panel. Do not relax Firestore rules | [Feedback API](../backend/API.md#feedback-profile-and-settings-endpoints) |
 | Sign-out fails | Protected content stays hidden; reload and retry sign-out. Previous verification/results must not reopen access | [Frontend guide](../frontend/README.md) |
 | Device receives 400 | Validate the deployed schema (nine-field current; eight-field sequenced and six-field legacy compatibility), JSON size, ranges, sequence, and capture/send timestamps | [API device endpoints](../backend/API.md#device-endpoints) |

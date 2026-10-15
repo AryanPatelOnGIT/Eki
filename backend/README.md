@@ -120,7 +120,7 @@ The emulator suite kills a disposable child after a real claim/effect commit.
 
 Reconciliation and per-bus guards/repairs visit all document-ID pages of 100 with bounded pipelines and targeted RTDB reads. Workers persist fenced page checkpoints; all fleet Auth-changing paths share a durable recovery mutex. See [continuation and recovery](../docs/operations/RECONCILIATION.md); actual Auth/replica/latency acceptance remains staged.
 
-Passenger deletion now preserves resubmission history, uses bounded fair chunks and backoff, and exposes admin recovery for failed/interrupted claims. See [privacy deletion](../docs/operations/PRIVACY_DELETION.md); live Auth, staging indexes and concurrent-client quiescence remain acceptance gates.
+Passenger account deletion preserves feedback, passenger ride entries and messages unchanged while removing the profile and Auth account. The worker scans every minute, drains account-owned message rate limits in bounded chunks, preserves resubmission history and exposes admin recovery for failed/interrupted claims. Acceptance is not completion; there is no routine admin approval or multi-day waiting period. See [account deletion](../docs/operations/PRIVACY_DELETION.md); live Auth, staging indexes and concurrent-client quiescence remain acceptance gates.
 
 Live matching and pending directions share a watcher-populated, versioned read-only route catalog, with bounded LRU entries and coalesced monotonic freshness reads. Telemetry never repairs missing configured geometry through Google. See [route catalog](../docs/operations/ROUTE_CATALOG.md) for edit/deletion fences, uncertain direction commits and staging limits.
 

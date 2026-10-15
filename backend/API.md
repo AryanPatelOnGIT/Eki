@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-08 08:22 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -22,12 +22,9 @@ curl -i https://api.example.edu/live
 Browser endpoints use a Firebase ID token. The frontend obtains that token
 after sign-in and sends it as a bearer token:
 
-Configured browsers also send `X-Firebase-AppCheck`. Backend
-`API_APPCHECK_MODE=off|enforce` stages additional attestation for mutations and
-high-cost lookup/geometry reads, with independent ID-token/RBAC authorization.
-The compatibility default is `off`; device-authenticated intake is separate.
-See [browser API security and diagnostic interpretation](../docs/operations/BROWSER_API_SECURITY.md)
-before enabling enforcement or interpreting the extended health fields.
+Browser requests use Firebase ID-token authorization without App Check.
+Device-authenticated intake retains separate credentials and rate limits.
+See [browser API security](../docs/operations/BROWSER_API_SECURITY.md).
 
 ```bash
 TOKEN="<firebase-id-token>"
@@ -324,17 +321,17 @@ An admin may request the code for any active session; a legacy assigned-operator
 
 Body: `{ "boardingCode":"ABCD2345", "lat":23.0, "lng":72.5, "accuracy":25, "boardingStopId":"stop_1", "alightingStopId":"stop_3" }`. Both stop IDs are required. Coordinates are required on first boarding and may be omitted only when the same authenticated UID updates an existing manifest entry.
 
-Requires a valid Firebase bearer token, the driver-issued session code, route-owned stops in forward order, browser accuracy no worse than 100 m, and—on first boarding—a passenger coordinate within 150 m of a fresh nonfuture hardware GNSS projection bound to the exact session/bus/route. Browser location is defense in depth rather than trusted proof; possession of the non-public session code is the server-verifiable authorization. An existing passenger may correct stops without a second location prompt. A Firestore transaction rechecks session state, code, and existing membership when proximity is omitted before adding or updating only the authenticated UID's manifest entry. Display name and timestamps are server-derived. Returns `{joined:true,sessionId}` or 400/403/404/409/422/500.
+Requires a valid Firebase bearer token and an existing passenger profile, the driver-issued session code, route-owned stops in forward order, browser accuracy no worse than 100 m, and—on first boarding—a passenger coordinate within 150 m of a fresh nonfuture hardware GNSS projection bound to the exact session/bus/route. Browser location is defense in depth rather than trusted proof; possession of the non-public session code is the server-verifiable authorization. An existing passenger may correct stops without a second location prompt. A Firestore transaction rechecks the profile, session state, code, and existing membership when proximity is omitted before adding or updating only the authenticated UID's manifest entry. Display name and timestamps are server-derived. Returns `{joined:true,sessionId}` or 400/403/404/409/422/500.
 
 ### `POST /api/sessions/:sessionId/messages` — session member/operator
 
-Body: `{ "text":"Bus arriving", "requestId":"browser-generated-uuid" }`. The authenticated UID must be a manifest passenger, the assigned driver on the assigned bus, or an admin, and the session must still be `armed|active`. Sender role/name are server-derived. One transaction rechecks membership/state; applies the three-second, 10-per-minute, and 60-per-hour limits; normalizes unsafe Unicode formatting; censors common English, Hindi/Hinglish, leetspeak, separator, and repeated-letter profanity evasions; and writes both message and rate state. The uncensored text is not stored. `requestId` makes retries idempotent: first success is 201, an identical retry is 200, and reuse with changed content is 409. Throttling is 429 with `Retry-After` and `retryAfterMs`.
+Body: `{ "text":"Bus arriving", "requestId":"browser-generated-uuid" }`. The authenticated UID must be a manifest passenger, the assigned driver on the assigned bus, or an admin, and the session must still be `armed|active`. Sender role/name are server-derived. The passenger branch also requires an existing profile, including on replay. One transaction rechecks membership/state and passenger profile existence; applies the three-second, 10-per-minute, and 60-per-hour limits; normalizes unsafe Unicode formatting; censors common English, Hindi/Hinglish, leetspeak, separator, and repeated-letter profanity evasions; and writes both message and rate state. The uncensored text is not stored. `requestId` makes retries idempotent: first success is 201, an identical retry is 200, and reuse with changed content is 409. Throttling is 429 with `Retry-After` and `retryAfterMs`.
 
 ## Feedback, profile, and settings endpoints
 
 ### `POST /api/feedback` — authenticated
 
-Body: `{ "type":"general|ride", "requestId":"browser-generated-uuid", "comment":"...", "rating":5, "sessionId":"...", "busId":"...", "driverId":"..." }`. Ride identifiers are required only for ride feedback. The backend derives the author name, validates comment/rating limits and completed-ride membership, and reads the per-user 24-hour cooldown in the same transaction that writes feedback/cooldown state. Identical retries are idempotent; request-ID payload conflicts are 409; cooldown is 429.
+Body: `{ "type":"general|ride", "requestId":"browser-generated-uuid", "comment":"...", "rating":5, "sessionId":"...", "busId":"...", "driverId":"..." }`. Ride identifiers are required only for ride feedback. The backend derives the author name, validates comment/rating limits and completed-ride membership, and reads the per-user 24-hour cooldown in the same transaction that writes feedback/cooldown state. An existing profile is required in that same transaction, including on replay; a retired profile returns 403 without recreating feedback or cooldowns. Identical retries are idempotent; request-ID payload conflicts are 409; cooldown is 429.
 
 ### `GET /api/v2/feedback` — admin
 
@@ -361,7 +358,7 @@ Body: `{ "status":"new|reviewed|resolved" }`. Updates only review state plus ser
 
 ### `POST /api/users/bootstrap` — authenticated
 
-Creates a missing `users/{uid}` passenger profile transactionally from verified ID-token claims; request-body identity fields are ignored and existing profiles/roles are never overwritten. Passenger claim repair checks fresh Auth claims and preserves an existing administrator/driver role if the profile lags, returning that current role without demotion or token revocation. Dedicated authorization workflows own role removal. Returns 201 when created or 200 when already present, with `Cache-Control: no-store`.
+Creates a missing `users/{uid}` passenger profile transactionally from verified ID-token claims; request-body identity fields are ignored and existing profiles/roles are never overwritten. Passenger claim repair checks fresh Auth claims and preserves an existing administrator/driver role if the profile lags, returning that current role without demotion or token revocation. Dedicated authorization workflows own role removal. Before creating a missing profile, the transaction checks for an account deletion request and verifies current Auth existence. A missing/disabled Auth account returns 401; a pending deletion fence returns 409 without writing a profile. Existing-profile reads incur no extra deletion/Auth lookup on that branch. Returns 201 when created or 200 when already present, with `Cache-Control: no-store`.
 
 ### `PUT /api/settings` — admin
 
@@ -443,6 +440,15 @@ Passenger requests are backend-authoritative: clients have no Firestore write
 surface (issues #72 + #73); the admin route above is the only lifecycle path.
 
 ### `POST /api/privacy/deletion-request` — passenger
+
+The canonical resource is `POST /api/v2/privacy-deletion-requests`. A successful
+`202 {accepted:true}` queues account deletion; it does not confirm completion.
+The worker scans every minute without routine admin approval or a multi-day
+waiting period. It removes the profile, Auth account and account-owned controls,
+preserving feedback, passenger ride entries and messages unchanged. Separate
+retention policies still apply. After acceptance, the passenger app shows a
+confirmation popup and signs out when it is dismissed. Failed or invalid
+acknowledgements do not trigger this sign-out flow.
 
 Registers `_privacy_deletion_requests/{uid}` and returns 202 `{accepted:true}` without resetting existing retry/error/status history. Current Auth/profile/driver membership permits claim-less passengers while excluding operators (409, IT offboarding). Admission has a three-second caller budget and returns 503/Retry-After on an uncertain or unavailable acknowledgement. Admin `GET /api/v2/privacy-deletion-requests` monitors twenty-record cursor pages; `POST /api/v2/privacy-deletion-requests/{uid}/recovery` compares executor/generation and audits a deliberate retry. Expired processing additionally requires independently verified executor termination and `executorStopped:true`. See [privacy deletion recovery](../docs/operations/PRIVACY_DELETION.md) for bounds, backoff, linked fleet lock recovery and staging limits.
 
