@@ -559,7 +559,7 @@ export default function PassengerWorkspace() {
                     <ArrowLeft className="w-5 h-5" style={{ color: "var(--text-secondary)" }} />
                   </button>
                   {activeBusOnRoute ? (
-                    <div className="flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3"
+                    <div className="relative z-10 flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3"
                       style={{ background: "var(--surface-1)", border: "1px solid var(--border-default)" }}>
                       {busesOnRoute.length > 1 &&
                         !busesOnRoute.some(
@@ -655,10 +655,10 @@ export default function PassengerWorkspace() {
                 </div>
                 {/* Keep chat in header flow, below the variable-height boarding card. */}
                 {activeSessionId && isLiveChatDeviceOnline(activeBusOnRoute) && !isMessagingOpen && (
-                  <div className="mt-2 flex justify-end max-w-lg mx-auto animate-scale-in pointer-events-auto">
+                  <div className="mt-2 flex justify-end max-w-lg mx-auto animate-scale-in pointer-events-none">
                     <button
                       onClick={handleOpenMessaging}
-                      className="w-12 h-12 rounded-xl flex items-center justify-center transition-all active:scale-95 relative"
+                      className="w-12 h-12 rounded-xl flex items-center justify-center transition-all active:scale-95 relative pointer-events-auto"
                       style={{
                         background: "var(--surface-2)",
                         border: "1px solid var(--border-default)",
