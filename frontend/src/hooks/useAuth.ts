@@ -122,7 +122,7 @@ function useAuthState(): AuthContextValue {
         // other tabs, and an unavailable local store must retain its fallback.
         if (disposed) return;
 
-        const verifyUser = async (firebaseUser: import("firebase/auth").User | null, forceRefresh = false) => {
+        const verifyUser = async (firebaseUser: import("firebase/auth").User | null) => {
           clearTimeout(authTimeout);
           const currentGen = ++generation;
           beginAuthVerification();
@@ -135,10 +135,6 @@ function useAuthState(): AuthContextValue {
             setLoginError(null);
             setLoginFallbackAvailable(false);
 
-            // Signed-out visitors never need App Check. For signed-in users,
-            // wait for the first App Check token before publishing the user;
-            // Firestore listeners use that state to avoid permission-denied
-            // requests made before App Check is ready.
             const isCurrentAuth = () =>
               !disposed &&
               currentGen === generation &&
@@ -147,9 +143,6 @@ function useAuthState(): AuthContextValue {
             setRoleError(null);
 
             try {
-              const { ensureAppCheck } = await import("@/lib/firebaseAppCheck");
-              await ensureAppCheck({ forceRefresh });
-              if (!isCurrentAuth()) return;
               // Refresh persisted tokens so newly synchronized admin claims and
               // revoked/downgraded access are observed before publishing a workspace.
               // Only trusted Auth claims authorize a privileged workspace.
@@ -256,15 +249,6 @@ function useAuthState(): AuthContextValue {
               });
               notifyAuthReady();
             } catch (err) {
-              if (err instanceof Error && err.name === "AppCheckVerificationError") {
-                // Do not publish an authenticated user when App Check failed;
-                // otherwise every protected Firestore listener immediately
-                // retries and surfaces a misleading permission-denied error.
-                if (!isCurrentAuth()) return;
-                setUser(null);
-                setRoleError("Security verification is unavailable. Check App Check configuration and try again.");
-                return;
-              }
               if (err instanceof Error && err.name === "RoleClaimsMissingError") {
                 if (!isCurrentAuth()) return;
                 setUser(null); setRoleError(err.message); return;
@@ -293,7 +277,7 @@ function useAuthState(): AuthContextValue {
             notifyAuthReady();
           }
         };
-        refreshVerification.current = () => verifyUser(auth.currentUser, true);
+        refreshVerification.current = () => verifyUser(auth.currentUser);
         unsubscribe = authModule.onAuthStateChanged(auth, firebaseUser => verifyUser(firebaseUser));
         setLoginReady(true);
 

@@ -8,7 +8,9 @@ export default defineConfig({
     permissions: ['geolocation'], geolocation: { latitude: 23, longitude: 72, accuracy: 5 } },
   webServer: [
     { command: 'node --import ./scripts/qa/network-guard.mjs e2e/emulator/backend.mjs', url: 'http://127.0.0.1:3117/evidence', reuseExistingServer: false, timeout: 30000,
-      env: { PORT: '3116', CORS_ORIGIN: 'http://127.0.0.1:3115', NODE_ENV: 'development', API_APPCHECK_MODE: 'off' } },
+      // Exercise the maximum supported passenger revocation-cache window so
+      // retirement checks prove storage fencing rather than cache expiry.
+      env: { PORT: '3116', CORS_ORIGIN: 'http://127.0.0.1:3115', NODE_ENV: 'development', API_APPCHECK_MODE: 'off', AUTH_REVOCATION_CACHE_MS: '60000' } },
     { command: 'node node_modules/vite/bin/vite.js --config e2e/emulator/vite.config.mts', url: 'http://127.0.0.1:3115', reuseExistingServer: false, timeout: 30000 },
   ],
   projects: [

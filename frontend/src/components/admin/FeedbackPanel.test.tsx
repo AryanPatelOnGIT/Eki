@@ -110,7 +110,7 @@ describe("admin feedback API workflow", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response('{"feedbacks":[{"id":"broken"}]}')));
     render(<FeedbackPanel />); await screen.findByText(/backend did not confirm/); expect(screen.queryByText("QA Passenger")).toBeNull();
   });
-  it("does not fetch before role/App Check verification", async () => {
+  it("does not fetch before role verification", async () => {
     fixtures.loading = true; const view = render(<FeedbackPanel />); await Promise.resolve(); expect(globalThis.fetch).not.toHaveBeenCalled();
     fixtures.loading = false; view.rerender(<FeedbackPanel />); await screen.findByText("QA Passenger");
   });

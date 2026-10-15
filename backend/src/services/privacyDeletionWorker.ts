@@ -1,6 +1,6 @@
 import { FieldPath, FieldValue, type Query, type Transaction, type WriteBatch } from "firebase-admin/firestore";
 import { auth, db } from "../lib/firebaseAdmin";
-import { assertWorkerLeadership, workerTransaction, workerWrite } from "../lib/workerFence";
+import { assertWorkerLeadership, workerTransaction } from "../lib/workerFence";
 import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
 import { withFleetLock, FleetReconciliationBusy } from "./fleetMutationLock";
 import { OPERATION_EXECUTOR_ID } from "./httpOperations";
@@ -14,20 +14,6 @@ type Writer = Pick<WriteBatch, "update" | "delete" | "set">;
 type Write = (work: (writer: Writer) => void) => Promise<void>;
 class PrivacyDeadline extends Error {}
 
-/** One bounded page on each migration path; a later queue turn continues cleanup. */
-export async function removePassengerManifest(uid: string, write: Write = work => workerWrite(db, work), check: () => void = assertWorkerLeadership): Promise<{ removed: number; more: boolean }> {
-  let removed = 0, more = false;
-  for (const query of [db.collection("ride_sessions").where("passengerIds", "array-contains", uid),
-    db.collection("ride_sessions").where(new FieldPath("passengers", uid, "userId"), "==", uid)]) {
-    check(); const page = await query.limit(BATCH_SIZE).get(); check();
-    if (!page.empty) await write(writer => page.docs.forEach(session => {
-      writer.update(session.ref, { passengerIds: FieldValue.arrayRemove(uid) });
-      writer.update(session.ref, new FieldPath("passengers", uid), FieldValue.delete());
-    }));
-    removed += page.size || 0; more ||= page.size === BATCH_SIZE;
-  }
-  return { removed, more };
-}
 async function processRequest(uid: string): Promise<void> {
   const ref = db.collection(PRIVACY_REQUESTS).doc(uid);
   const started = performance.now();
@@ -58,14 +44,14 @@ async function processRequest(uid: string): Promise<void> {
         if (data.targetCreatedAt && identity && data.targetCreatedAt !== identity) throw new PrivacyConflict("Account identity changed.");
         if (!data.targetCreatedAt && identity) transaction.set(ref, { targetCreatedAt: identity }, { merge: true });
       });
-      let more = (await removePassengerManifest(uid, write, check)).more;
+      // Account deletion preserves feedback, ride manifests and messages unchanged.
+      // Only account-owned rate limits are drained in bounded pages.
+      let more = false;
       const deletePage = async (query: Query) => {
         check(); const page = await query.limit(BATCH_SIZE).get(); check();
         if (!page.empty) await write(writer => page.docs.forEach(document => writer.delete(document.ref)));
         more ||= page.size === BATCH_SIZE;
       };
-      await deletePage(db.collection("feedbacks").where("userId", "==", uid));
-      await deletePage(db.collectionGroup("messages").where("senderId", "==", uid));
       await deletePage(db.collectionGroup("messageRateLimits").where("userId", "==", uid));
       if (more) {
         await write(writer => writer.set(ref, { status: "pending", failures: 0, nextAttemptAt: Date.now(), updatedAt: FieldValue.serverTimestamp() }, { merge: true }));

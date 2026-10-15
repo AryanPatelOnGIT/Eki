@@ -148,6 +148,8 @@ router.post("/", requireAuth, async (req: AuthenticatedRequest, res: Response) =
         : await transaction.getAll(cooldownRef, profileRef, feedbackRef);
       const [cooldownSnap, profileSnap, existingFeedback, sessionSnap] = snapshots;
 
+      if (!profileSnap.exists) throw new FeedbackPolicyError(403, "An active profile is required.");
+
       if (existingFeedback.exists) {
         const existing = existingFeedback.data();
         if (existing?.userId !== uid || existing?.requestHash !== requestHash) {

@@ -5814,7 +5814,7 @@
           "Users"
         ],
         "summary": "Ensure token-derived passenger profile and claims",
-        "description": "Ignores request-body identity fields. Creates missing profile from verified token; preserves existing profile/role. Can repair stale passenger claims and revoke privileged tokens; claimsUpdated appears only when claims change.",
+        "description": "Ignores request-body identity fields. Creates a missing profile from verified claims only after checking current Auth existence and the deletion request fence. Absent/disabled Auth returns 401; a queued deletion returns 409 without a profile write. Preserves existing profiles and fresh privileged claims; claimsUpdated appears only when passenger claims change.",
         "security": [
           {
             "FirebaseBearer": []
@@ -5912,6 +5912,16 @@
           },
           "503": {
             "description": "Dependency unavailable, busy authentication verifier, or missing safe server configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A missing profile cannot be recreated while its account deletion request is present.",
             "content": {
               "application/json": {
                 "schema": {

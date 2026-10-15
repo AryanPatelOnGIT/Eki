@@ -12,5 +12,5 @@ export default defineConfig({
     ...['next/navigation', 'next/link'].map(find => ({ find, replacement: local('../admin-access/adapters.tsx') })),
     { find: '@', replacement: local('../../frontend/src') },
   ] }, css: { postcss: { plugins: [tailwindcss()] } }, oxc: { jsx: { runtime: 'automatic' } },
-  define: { 'process.env': JSON.stringify({ NODE_ENV: 'development', NEXT_PUBLIC_FIREBASE_APPCHECK_DISABLED: 'true', NEXT_PUBLIC_BACKEND_URL: 'http://127.0.0.1:3116' }) },
+  define: { 'process.env': JSON.stringify({ NODE_ENV: 'development', NEXT_PUBLIC_BACKEND_URL: 'http://127.0.0.1:3116' }) },
 });

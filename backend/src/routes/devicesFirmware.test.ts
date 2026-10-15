@@ -16,11 +16,9 @@ const harness = vi.hoisted(() => ({
   invalidated: [] as string[],
   credentialChecks: 0,
   verifyIdentity: vi.fn(),
-  verifyApp: vi.fn(),
 }));
 
 vi.mock("../middleware/verifiedRequest", () => ({ verifyRequestToken: harness.verifyIdentity }));
-vi.mock("firebase-admin/app-check", () => ({ getAppCheck: () => ({ verifyToken: harness.verifyApp }) }));
 
 vi.mock("../middleware/requireAdmin", () => ({
   requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -90,7 +88,6 @@ vi.mock("../services/deviceDiagnostics", () => ({
 
 import devicesRouter, { devicesV2Router } from "./devices";
 import { createBrowserAdmission, createBrowserIngressLimiter } from "../lib/browserAdmission";
-import { createBrowserAppCheck } from "../middleware/browserAppCheck";
 import { isDeviceIngressPath } from "../lib/deviceIngressPolicy";
 
 let server: Server;
@@ -143,10 +140,6 @@ beforeEach(() => {
   harness.credentialChecks = 0;
   harness.verifyIdentity.mockReset();
   harness.verifyIdentity.mockResolvedValue({ uid: "rider", admin: false });
-  harness.verifyApp.mockReset();
-  harness.verifyApp.mockImplementation(async () => {
-    throw Object.assign(new Error("Invalid App Check token"), { code: "app-check/invalid-token" });
-  });
   process.env.FIRMWARE_RELEASE_VERSION = "s2-gnss-v2";
   process.env.FIRMWARE_RELEASE_SEQUENCE = "2";
   process.env.FIRMWARE_RELEASE_URL = "https://releases.example.edu/firmware.bin";
@@ -251,12 +244,11 @@ describe("device firmware release endpoint", () => {
   });
 });
 
-async function bootDeviceIngress(mode: "off" | "enforce") {
+async function bootDeviceIngress() {
   const app = express();
   app.use(createBrowserIngressLimiter(1, 1000));
   app.use(express.json());
   app.use("/api", createBrowserAdmission(1, { read: 100, mutation: 100 }));
-  app.use("/api", createBrowserAppCheck(mode));
   app.use("/api/devices", devicesRouter);
   const listener = await new Promise<Server>(resolve => {
     const running = app.listen(0, "127.0.0.1", () => resolve(running));
@@ -277,10 +269,10 @@ function installation(base: string, action: string, authorization?: string, devi
   });
 }
 
-describe("device OTA through browser admission, App Check and the production router", () => {
+describe("device OTA through browser admission and the production router", () => {
   const valid = `Device ${"a".repeat(20)}`;
-  it("acquires and releases in enforce mode without browser identity or App Check", async () => {
-    const base = await bootDeviceIngress("enforce");
+  it("acquires and releases without browser identity or attestation", async () => {
+    const base = await bootDeviceIngress();
     expect((await installation(base, "acquire", valid)).status).toBe(200);
     expect(harness.maintenance).toMatchObject({ kind: "firmware", deviceId: "device_1" });
     expect((await installation(base, "release", valid)).status).toBe(200);
@@ -288,20 +280,19 @@ describe("device OTA through browser admission, App Check and the production rou
     expect((await installation(base, "release", valid)).status).toBe(200);
     expect(harness.credentialChecks).toBe(3);
     expect(harness.verifyIdentity).not.toHaveBeenCalled();
-    expect(harness.verifyApp).not.toHaveBeenCalled();
   });
 
-  it("releases a reservation acquired before enforcement was enabled", async () => {
-    const off = await bootDeviceIngress("off");
-    const enforce = await bootDeviceIngress("enforce");
-    expect((await installation(off, "acquire", valid)).status).toBe(200);
+  it("releases a reservation acquired through another server instance", async () => {
+    const first = await bootDeviceIngress();
+    const second = await bootDeviceIngress();
+    expect((await installation(first, "acquire", valid)).status).toBe(200);
     expect(harness.maintenance).toMatchObject({ deviceId: "device_1" });
-    expect((await installation(enforce, "release", valid)).status).toBe(200);
+    expect((await installation(second, "release", valid)).status).toBe(200);
     expect(harness.maintenance).toBeNull();
   });
 
   it("keeps missing, malformed, invalid, rotated, disabled and unassigned credentials denied", async () => {
-    const base = await bootDeviceIngress("enforce");
+    const base = await bootDeviceIngress();
     for (const authorization of [undefined, "Bearer browser", "Device short", `Device ${"b".repeat(20)}`]) {
       expect((await installation(base, "acquire", authorization)).status).toBe(401);
     }
@@ -318,7 +309,7 @@ describe("device OTA through browser admission, App Check and the production rou
   });
 
   it("preserves ride, conflicting lock, owner and retry safeguards", async () => {
-    const base = await bootDeviceIngress("enforce");
+    const base = await bootDeviceIngress();
     harness.activeRide = true;
     expect((await installation(base, "acquire", valid)).status).toBe(409);
     harness.activeRide = false;
@@ -343,7 +334,7 @@ describe("device OTA through browser admission, App Check and the production rou
   });
 
   it("keeps an existing reservation intact when release credentials are denied", async () => {
-    const base = await bootDeviceIngress("enforce");
+    const base = await bootDeviceIngress();
     expect((await installation(base, "acquire", valid)).status).toBe(200);
     const reservation = { ...harness.maintenance };
     for (const authorization of [undefined, "Bearer browser", "Device short", `Device ${"b".repeat(20)}`]) {
@@ -366,7 +357,7 @@ describe("device OTA through browser admission, App Check and the production rou
   });
 
   it("applies one exact device path policy to all ingress endpoints", async () => {
-    const base = await bootDeviceIngress("enforce");
+    const base = await bootDeviceIngress();
     for (const [method, path] of [
       ["POST", "/api/devices/device_1/telemetry"],
       ["POST", "/api/devices/device_1/diagnostics"],
@@ -389,28 +380,18 @@ describe("device OTA through browser admission, App Check and the production rou
     expect(harness.credentialChecks).toBe(checks);
   });
 
-  it("requires App Check for authenticated browser mutations outside exact device exemptions", async () => {
-    const base = await bootDeviceIngress("enforce");
-    const paths = [
-      ["POST", "/api/devices/device_1/firmware/installation/extra"],
-      ["PUT", "/api/devices/device_1/firmware/installation"],
-      ["POST", "/api/devices/device_1/firmware"],
-      ["POST", "/api/devices/device_1/firmware/installation/"],
-    ];
-    for (const [method, path] of paths) {
-      for (const token of [undefined, "invalid-app-token"]) {
-        const response = await fetch(base + path, { method, headers: {
-          Authorization: "Bearer rider",
-          ...(token ? { "X-Firebase-AppCheck": token } : {}),
-        } });
-        expect(response.status, `${method} ${path}`).toBe(403);
-        await expect(response.json()).resolves.toMatchObject({
-          code: token ? "APP_CHECK_REJECTED" : "APP_CHECK_REQUIRED",
-        });
-      }
-    }
-    expect(harness.verifyIdentity).toHaveBeenCalledTimes(paths.length * 2);
-    expect(harness.verifyApp).toHaveBeenCalledTimes(paths.length);
+  it("admits browser identity without attestation while retaining device credentials", async () => {
+    const base = await bootDeviceIngress();
+    const path = "/api/devices/device_1/firmware/installation";
+    // The non-exempt trailing slash reaches browser authentication first, then
+    // the real device handler must still reject a browser bearer credential.
+    const response = await fetch(`${base}${path}/`, {
+      method: "POST", headers: { Authorization: "Bearer rider", "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "acquire" }),
+    });
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid firmware maintenance request." });
+    expect(harness.verifyIdentity).toHaveBeenCalledTimes(1);
     expect(harness.credentialChecks).toBe(0);
     expect(harness.maintenance).toBeNull();
   });

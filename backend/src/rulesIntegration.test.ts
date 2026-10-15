@@ -112,6 +112,26 @@ rulesDescribe("Firebase security rules integration", () => {
     await environment?.cleanup();
   });
 
+  it("retained ride membership cannot authorize chat reads after the profile is deleted", async () => {
+    const passenger = environment.authenticatedContext("retired_passenger", { role: "passenger" });
+    const admin = environment.authenticatedContext("retirement_admin", { role: "admin" });
+    const session = "retained_session";
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "users", "retired_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "ride_sessions", session), {
+        driverId: "retained_driver", passengers: { retired_passenger: { userId: "retired_passenger" } },
+      });
+      await setDoc(doc(context.firestore(), "ride_sessions", session, "messages", "retained"), { text: "Retained history" });
+    });
+    const message = doc(passenger.firestore(), "ride_sessions", session, "messages", "retained");
+    await assertSucceeds(getDoc(message));
+    await environment.withSecurityRulesDisabled(context => deleteDoc(doc(context.firestore(), "users", "retired_passenger")));
+    // The same signed token and preserved manifest must now lose authority.
+    await assertFails(getDoc(message));
+    await assertSucceeds(getDoc(doc(admin.firestore(), "ride_sessions", session, "messages", "retained")));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext("retained_operator", { role: "driver", driverId: "retained_driver" }).firestore(), "ride_sessions", session, "messages", "retained")));
+  });
+
   it("allows authenticated RTDB reads but denies every client write", async () => {
     const passenger = environment.authenticatedContext("passenger_1", { role: "passenger" });
     const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true });

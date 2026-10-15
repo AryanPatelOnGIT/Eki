@@ -1,6 +1,6 @@
 # Security Policy
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-16 00:23 IST (UTC+05:30).
 
 This document outlines the security models, vulnerability reporting procedures,
 and database rules governing the Eki ecosystem. For the public-safe
@@ -26,16 +26,12 @@ Eki enforces strict RBAC across presentation, API, and database perimeters:
 3. **Backend API Authorization**:
    Express endpoints validate Bearer tokens. Admin endpoints enforce `requireAdmin` middleware checking `auth.token.admin === true`.
 
-Protected browser reads wait for a valid App Check token and role verification.
-Timeouts and provider/role failures do not grant readiness. Account changes and
-sign-out invalidate pending verification and old-session requests; failed
-sign-out leaves protected content hidden. See [local App Check setup](../CONFIGURATION.md#local-app-check-and-auth-setup).
-
-App Check enforcement belongs to the deployed Firebase services. The local
-opt-out requires explicit development mode and an unenforced project; it does
-not override Firebase enforcement and is ignored in other modes. Admin feedback
-review uses a no-store authenticated backend list/status API, with trusted
-admin-claim checks and client session guards.
+Protected browser reads wait for refreshed Auth tokens and trusted role
+verification. Account changes and sign-out invalidate pending verification and
+old-session requests; failed sign-out leaves protected content hidden.
+App Check is not used by the browser or API. Deployment disables its separate
+Firebase product enforcement while preserving database identity/role rules.
+See [Auth setup](../CONFIGURATION.md#local-auth-setup).
 
 ### Hardware Authentication & Isolation
 
@@ -114,7 +110,7 @@ stale authenticated responses crossing accounts on shared browsers.
 ## Browser and Device Secret Handling
 
 - Browser Firebase/Maps keys are public configuration, not secrets; restrict
-  them by hostname/API and enforce App Check after staged validation.
+  them by hostname/API.
 - Device secrets, service-account JSON, App Check debug tokens and ignored
   environment files must never be committed or logged. Provisioning displays a
   device secret once and stores only its salted scrypt verifier server-side.

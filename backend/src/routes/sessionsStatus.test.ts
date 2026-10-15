@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   session: null as Record<string, unknown> | null,
   error: false,
   reads: 0,
+  profileExists: true,
 }));
 vi.mock("../middleware/requireAuth", () => ({ requireAuth: (req: any, res: any, next: () => void) => {
   if (!state.principal) { res.status(401).json({ error: "Authentication required." }); return; }
@@ -15,6 +16,7 @@ vi.mock("../middleware/requireAuth", () => ({ requireAuth: (req: any, res: any, 
 } }));
 vi.mock("../lib/firebaseAdmin", () => ({
   db: { collection: (name: string) => ({ doc: (id: string) => ({ get: async () => {
+    if (name === "users") { expect(id).toBe("passenger_1"); return { exists: state.profileExists, data: () => ({}) }; }
     expect(name).toBe("ride_sessions"); expect(id).toBe("session_1"); state.reads++;
     if (state.error) throw Error("provider document includes private boarding secret");
     return { exists: state.session !== null, data: () => state.session };
@@ -33,11 +35,14 @@ afterAll(async () => { if (server) await new Promise<void>((resolve, reject) => 
 beforeEach(() => {
   state.principal = { uid: "passenger_1", role: "passenger" };
   state.session = { busId: "bus_1", routeId: "route_1", driverId: "driver_1", status: "completed", boardingCode: "PRIVATE", passengers: { passenger_1: { userId: "passenger_1", userName: "Private passenger", originStopId: "private-stop" } }, internal: "PRIVATE" };
-  state.error = false; state.reads = 0;
+  state.error = false; state.reads = 0; state.profileExists = true;
 });
 const request = () => contractFetch(`${origin}/api/sessions/session_1/status`);
 
 describe("joined ride status authorization and closed HTTP response", () => {
+  it("retained membership cannot authorize a retired profile", async () => {
+    state.profileExists = false; expect((await request()).status).toBe(403);
+  });
   it("restores only the requesting passenger's verified stop choices", async () => {
     state.session!.passengers = {
       passenger_1: { userId: "passenger_1", userName: "Private", boardingStopId: "origin", alightingStopId: "destination" },

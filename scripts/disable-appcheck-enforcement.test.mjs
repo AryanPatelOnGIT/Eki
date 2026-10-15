@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   accessTokenFromFirebaseToken,
-  assertEnforced,
-  enforceAppCheckEnforcement,
+  assertUnenforced,
+  disableAppCheckEnforcement,
   projectIdFromArgs,
   projectNumberFromMetadata,
-  shouldEnforceFromArgs,
-  verifyAppCheckEnforcement,
-} from "./verify-appcheck-enforcement.mjs";
+  shouldDisableFromArgs,
+  verifyAppCheckDisabled,
+} from "./disable-appcheck-enforcement.mjs";
 
-describe("verify-appcheck-enforcement", () => {
+describe("disable-appcheck-enforcement", () => {
   it("requires an explicit project ID", () => {
     assert.equal(projectIdFromArgs(["--project", "eki-staging"]), "eki-staging");
     assert.throws(() => projectIdFromArgs([]), /Missing --project/);
@@ -22,13 +22,13 @@ describe("verify-appcheck-enforcement", () => {
     assert.throws(() => projectNumberFromMetadata({ projectNumber: "not-a-number" }), /valid project number/);
   });
 
-  it("fails closed when a required service is not enforced", () => {
-    assert.throws(() => assertEnforced({ enforcementMode: "UNENFORCED" }, "firestore.googleapis.com"), /not enforced/);
+  it("fails closed when a required service is still enforced", () => {
+    assert.throws(() => assertUnenforced({ enforcementMode: "ENFORCED" }, "firestore.googleapis.com"), /still enforced/);
   });
 
   it("recognizes the explicit enforcement mode", () => {
-    assert.equal(shouldEnforceFromArgs(["--project", "eki-staging", "--enforce"]), true);
-    assert.equal(shouldEnforceFromArgs(["--project", "eki-staging"]), false);
+    assert.equal(shouldDisableFromArgs(["--project", "eki-staging", "--disable"]), true);
+    assert.equal(shouldDisableFromArgs(["--project", "eki-staging"]), false);
   });
 
   it("exchanges a Firebase CLI refresh token for a short-lived access token", async () => {
@@ -61,10 +61,10 @@ describe("verify-appcheck-enforcement", () => {
       if (url.includes("firebase.googleapis.com/v1beta1")) {
         return { ok: true, json: async () => ({ projectNumber: "12345" }) };
       }
-      return { ok: true, json: async () => ({ enforcementMode: "ENFORCED" }) };
+      return { ok: true, json: async () => ({ enforcementMode: "UNENFORCED" }) };
     };
 
-    const result = await verifyAppCheckEnforcement({
+    const result = await verifyAppCheckDisabled({
       projectId: "eki-staging",
       token: "test-token",
       fetchImpl,
@@ -76,7 +76,7 @@ describe("verify-appcheck-enforcement", () => {
     assert.ok(requestedUrls.some((url) => url.endsWith("projects/12345/services/firebasedatabase.googleapis.com")));
   });
 
-  it("enforces both required services", async () => {
+  it("disables enforcement for both required services", async () => {
     const requests = [];
     const fetchImpl = async (url, init = {}) => {
       requests.push({ url, init });
@@ -86,10 +86,10 @@ describe("verify-appcheck-enforcement", () => {
       if (url.includes("firebase.googleapis.com/v1beta1")) {
         return { ok: true, json: async () => ({ projectNumber: "12345" }) };
       }
-      return { ok: true, json: async () => ({ enforcementMode: "ENFORCED" }) };
+      return { ok: true, json: async () => ({ enforcementMode: "UNENFORCED" }) };
     };
 
-    await enforceAppCheckEnforcement({
+    await disableAppCheckEnforcement({
       projectId: "eki-staging",
       token: "refresh-token",
       fetchImpl,
@@ -101,7 +101,7 @@ describe("verify-appcheck-enforcement", () => {
       assert.match(url, /updateMask=enforcementMode$/);
       assert.deepEqual(JSON.parse(init.body), {
         name: url.slice(url.indexOf("projects/"), url.indexOf("?")),
-        enforcementMode: "ENFORCED",
+        enforcementMode: "UNENFORCED",
       });
     }
   });

@@ -6,7 +6,7 @@ Use this runbook after [local setup](../GETTING_STARTED.md#local-development). R
 
 ## 1. Start and check the services
 
-Set backend `NODE_ENV=development`, `PORT=4000` and `CORS_ORIGIN=http://localhost:3000`. Set frontend `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`. Configure App Check as described in [configuration](../CONFIGURATION.md#local-app-check-and-auth-setup).
+Set backend `NODE_ENV=development`, `PORT=4000` and `CORS_ORIGIN=http://localhost:3000`. Set frontend `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`. Configure Auth as described in [configuration](../CONFIGURATION.md#local-auth-setup).
 
 ```powershell
 npm run dev
@@ -38,7 +38,7 @@ Verify the public `/health` from another network. Keep the backend, tunnel and l
 | ESP32 | `BACKEND_URL` and verified `BACKEND_ROOT_CA` in ignored `hardware/include/secrets.h` | Rebuild/reflash |
 | Backend | `CORS_ORIGIN` lists frontend origins | Restart backend |
 
-Prefer an existing approved Firebase Hosting frontend for phones. A frontend tunnel needs its own eligible domain, Firebase Auth authorized-domain/redirect configuration, provider configuration and backend CORS entry. Debug App Check tokens apply to a local development build only. Normal tunnel restarts on the same origin do not require reflashing; a hostname, root CA, credential or firmware change does.
+Prefer an existing approved Firebase Hosting frontend for phones. A frontend tunnel needs its own eligible domain, Firebase Auth authorized-domain/redirect configuration, provider configuration and backend CORS entry. Normal tunnel restarts on the same origin do not require reflashing; a hostname, root CA, credential or firmware change does.
 
 ## 3. Prepare a device
 

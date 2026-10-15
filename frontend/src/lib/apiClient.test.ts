@@ -1,27 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, apiRequest, acknowledgedField } from "./apiClient";
-const appCheck = vi.hoisted(() => ({ token: vi.fn(async () => "test-app-token") }));
-vi.mock("./firebaseAppCheck", () => ({ browserAppCheckToken: appCheck.token }));
 
 describe("apiRequest", () => {
-  it("attaches browser attestation without replacing identity authorization", async () => {
+  it("sends identity authorization without browser attestation", async () => {
     vi.stubGlobal("window", {}); vi.stubEnv("NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY", "test-site-key");
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal("fetch", fetchMock);
     await apiRequest("/api/test", { headers: { Authorization: "Bearer test-only" } });
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
-    expect(headers.get("X-Firebase-AppCheck")).toBe("test-app-token");
+    expect(headers.get("X-Firebase-AppCheck")).toBeNull();
     expect(headers.get("Authorization")).toBe("Bearer test-only");
   });
-  it("bounds a stalled attestation within the API deadline without dispatching a write", async () => {
-    vi.useFakeTimers(); vi.stubGlobal("window", {});
-    vi.stubEnv("NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY", "test-site-key");
+  it("bounds a stalled HTTP write with the API deadline", async () => {
+    vi.useFakeTimers();
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
-    appCheck.token.mockImplementationOnce(() => new Promise<string>(() => {}));
-    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = vi.fn((_url, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     const result = expect(apiRequest("/api/test", { method: "POST", timeoutMs: 1000 })).rejects.toMatchObject({ code: "NETWORK_TIMEOUT" });
     await vi.advanceTimersByTimeAsync(1001); await result;
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
   it.each(["http://api.example.test", "http://localhost.example.test", "http://192.168.1.2"])("rejects non-local cleartext transport before sending credentials: %s", async url => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", url);
