@@ -92,6 +92,7 @@ describe("production browser admission", () => {
       for (let index = 0; index < 4; index++) expect((await request("not-a-browser", "POST", `/api/devices/device_1/${path}`)).status).toBe(200);
     }
     expect((await request("not-a-browser", "GET", "/api/devices/device_1/firmware?sequence=1")).status).toBe(200);
+    expect((await request("not-a-browser", "POST", "/API/DEVICES/CaseSensitiveId/FIRMWARE/INSTALLATION")).status).toBe(200);
     expect(verification.calls).toHaveLength(0);
     expect((await request("not-a-browser", "PUT", "/api/devices/device_1/firmware")).status).toBe(401);
   });
