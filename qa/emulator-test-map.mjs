@@ -23,8 +23,11 @@ export const emulatorTestMap = [...telemetryMappings, {
 }, {
   caseId: 'AUTH13',
   scope: 'Production fleet routes publish real emulator authorization records; a saved token loses access after reassignment/deletion/unassignment and cannot regain it when the same identity and assignment are restored. Auth SDK is mocked; live revocation and browser convergence are separate.',
-  sourcePaths: ['backend/src/services/userAuthorization.ts', 'backend/src/routes/fleet.ts'],
+  sourcePaths: ['backend/src/services/userAuthorization.ts', 'backend/src/routes/fleet.ts', 'backend/src/syncRoleClaims.ts'],
   tests: [{ path: 'backend/src/reconciliation.integration.test.ts',
     name: 'bounded reconciliation against actual Firebase emulators > denies a saved token through actual rules after production fleet reassignment and deletion', level: 'L2',
-    semantics: 'Real fleet HTTP routes and Admin Firestore/RTDB SDK writes followed by saved-token rules reads; also verifies that null fields do not trigger recurring unassigned-driver revocation.' }],
+    semantics: 'Real fleet HTTP routes and Admin Firestore/RTDB SDK writes followed by saved-token rules reads; also verifies that null fields do not trigger recurring unassigned-driver revocation.' },
+    { path: 'backend/src/reconciliation.integration.test.ts',
+      name: 'bounded reconciliation against actual Firebase emulators > serializes CLI publication and fleet demotion with the real durable mutex', level: 'L2',
+      semantics: 'Real Firestore mutex contention prevents concurrent fleet demotion/CLI publication; later CLI reads passenger state and publishes matching records in both emulators. Auth is synthetic.' }],
 }];

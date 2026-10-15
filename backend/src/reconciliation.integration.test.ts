@@ -9,17 +9,18 @@ import { resolve } from "node:path";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { doc, getDoc } from "firebase/firestore";
 const state = vi.hoisted(() => ({ firestore: null as Firestore | null, realtime: null as Database | null,
-  claims: new Map<string, Record<string, unknown>>(), active: 0, maximum: 0 }));
+  claims: new Map<string, Record<string, unknown>>(), authGate: null as Promise<void> | null, active: 0, maximum: 0 }));
 vi.mock("./lib/firebaseAdmin", () => ({
   db: { collection: (name: string) => state.firestore!.collection(name), runTransaction: (work: any) => state.firestore!.runTransaction(work) },
   rtdb: { ref: (path: string) => state.realtime!.ref(path) },
   // Never make live Auth calls. Firestore and RTDB below are actual loopback SDKs.
   auth: { getUser: async (uid: string) => {
     state.active++; state.maximum = Math.max(state.maximum, state.active);
-    try { await new Promise(done => setTimeout(done, 1)); return { customClaims: state.claims.get(uid) ?? {} }; }
+    try { if (state.authGate) await state.authGate; await new Promise(done => setTimeout(done, 1)); return { customClaims: state.claims.get(uid) ?? {} }; }
     finally { state.active--; }
   }, setCustomUserClaims: async (uid: string, value: Record<string, unknown>) => { state.claims.set(uid, value); }, revokeRefreshTokens: async () => {} },
 }));
+import { syncRoleClaimsChunk } from "./syncRoleClaims";
 import { runAbandonedRideReconciliation } from "./services/abandonedRideReconciler";
 vi.mock("./middleware/requireAdmin", () => ({ requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next() }));
 import fleetRouter, { reconcileFleetAuthorization, drainFleetMutations } from "./routes/fleet";
@@ -48,7 +49,7 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
         const batch = state.firestore!.batch(); docs.docs.slice(index, index + 400).forEach(doc => batch.delete(doc.ref)); await batch.commit();
       }
     }
-    await state.realtime!.ref().set(null); state.claims.clear(); state.maximum = 0;
+    await state.realtime!.ref().set(null); state.claims.clear(); state.maximum = 0; state.authGate = null;
   });
   afterAll(async () => { await drainFleetMutations(false); await new Promise<void>(done => server.close(() => done())); await state.firestore?.terminate(); if (app) await deleteApp(app); });
   it("interrupts 201 stale sessions through mutating cursors and preserves newer/unknown lifecycles", async () => {
@@ -78,6 +79,29 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
     // The checkpoint remains valid after earlier candidates disappear from the query.
     expect((await runAbandonedRideReconciliation({ firestore: state.firestore!, realtimeDatabase: state.realtime!, now, cursor: "session_0199" })).scanned).toBe(2);
   }, 60000);
+  it("serializes CLI publication and fleet demotion with the real durable mutex", async () => {
+    const userRef = state.firestore!.collection("users").doc("auth_uid");
+    await userRef.set({ role: "admin" });
+    await state.firestore!.collection("drivers").doc("driver").set({ authUid: "auth_uid", assignedBusId: null });
+    let release!: () => void;
+    state.authGate = new Promise<void>(done => { release = done; });
+    const publication = syncRoleClaimsChunk(["auth_uid"]);
+    try {
+      await vi.waitFor(() => expect(state.active).toBe(1));
+      expect((await fetch(`${base}/api/fleet/drivers/driver`, { method: "DELETE" })).status).toBe(409);
+      await expect(syncRoleClaimsChunk(["auth_uid"])).rejects.toThrow("Fleet authorization");
+    } finally { release(); await publication; state.authGate = null; }
+    expect((await fetch(`${base}/api/fleet/drivers/driver`, { method: "DELETE" })).status).toBe(200);
+    expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([true]);
+    expect(state.claims.get("auth_uid")?.role).toBe("passenger");
+    expect(state.claims.get("auth_uid")?.admin).toBeUndefined();
+    const authorization = (await state.firestore!.collection("_userAuthorization").doc("auth_uid").get()).data();
+    expect(authorization?.role).toBe("passenger");
+    expect((await state.realtime!.ref("_userAuthorization/auth_uid").get()).val()).toMatchObject({
+      role: "passenger", version: authorization?.version,
+    });
+    expect((await state.firestore!.collection("_fleet_reconciliation_locks").doc("singleton").get()).exists).toBe(false);
+  });
   it("visits 1001 drivers with bounded real queries and targeted RTDB repair; Auth is synthetic", async () => {
     await state.firestore!.collection("buses").doc("bus").set({ assignedRoutes: ["route"] });
     for (let start = 0; start < 1001; start += 400) {

@@ -1,5 +1,7 @@
 # Privileged database authorization (issue #315)
 
+Last updated: 2026-10-16 00:53 IST (UTC+05:30).
+
 Privileged ID tokens carry `authorizationVersion`. Firestore and Realtime
 Database compare it with backend-only `_userAuthorization/{uid}` records.
 Missing records, blocked roles and old versions deny privileged reads. Versions
@@ -21,6 +23,17 @@ Fleet assignment, unassignment, demotion and reconciliation use
 publisher for administrators and passengers. Profile bootstrap never grants
 privileged authorization. Client writes to roles and authorization records are
 denied.
+
+All role/assignment publishers must hold the durable fleet mutex from their
+canonical state reads until publication and assignment-mirror cleanup settle.
+The CLI locks each bounded chunk, re-reads profiles after acquiring the lock,
+and waits for every user even when a sibling read fails. Page snapshots supply
+identities only; a role captured before a completed demotion must never be
+published afterward. A busy lock fails the CLI; retry after the current writer
+finishes. A stopped CLI leaves its lock for the existing stopped-executor
+recovery procedure; never take it over while the process may still run.
+Unassigned drivers receive a current driver authorization without assignment
+claims; stale mirrors for their current and previous driver IDs are removed.
 
 The publisher first writes a fresh blocked version to both databases, then
 revokes refresh sessions before exposing the new version in Auth claims, then activates matching

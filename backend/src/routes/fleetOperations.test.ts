@@ -21,6 +21,12 @@ const state = vi.hoisted(() => ({
   revokeGate: null as Promise<void> | null,
   registryReadGate: null as Promise<void> | null,
   registryReadStarted: false,
+  authorizationWriteGate: null as Promise<void> | null,
+  authorizationWriteStarted: false,
+  failProfileRead: "",
+  mirrorRemovalGate: null as Promise<void> | null,
+  mirrorRemovalStarted: false,
+  failMirrorRemoval: "",
 }));
 vi.mock("../middleware/requireAdmin", () => ({
   requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -35,6 +41,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   function document(path: string) {
     return { path, id: path.split("/").at(-1)!,
       get: async () => {
+        if (path === `users/${state.failProfileRead}`) throw new Error("profile unavailable");
         if (path.startsWith("drivers/") && state.registryReadGate) {
           state.registryReadStarted = true; await state.registryReadGate;
         }
@@ -44,6 +51,9 @@ vi.mock("../lib/firebaseAdmin", () => {
       set: async (data: Record<string, unknown>, options?: { merge: boolean }) => {
         if (state.failFinalWrite && path.startsWith("_fleet_reconciliation_jobs/") && (data.status === "failed" || data.status === "succeeded")) {
           state.failFinalWrite = false; throw new Error("ambiguous outcome write");
+        }
+        if (path.startsWith("_userAuthorization/") && state.authorizationWriteGate) {
+          state.authorizationWriteStarted = true; await state.authorizationWriteGate;
         }
         const next = options?.merge ? { ...state.docs.get(path), ...data } : { ...data };
         for (const [field, value] of Object.entries(next)) {
@@ -104,7 +114,14 @@ vi.mock("../lib/firebaseAdmin", () => {
           return { val: () => path === "driverRouteAssignments" ? state.mirrors : path === "activeBuses" ? state.liveNodes : state.mirrors[path.split("/").at(-1)!] ?? null };
         },
         set: async (value: unknown) => { (path.startsWith("_userAuthorization/") ? state.authorizations : state.mirrors)[path.split("/").at(-1)!] = value; },
-        remove: async () => { delete state.mirrors[path.split("/").at(-1)!]; },
+        remove: async () => {
+          const id = path.split("/").at(-1)!;
+          if (id === state.failMirrorRemoval) throw new Error("mirror removal unavailable");
+          if (id === "previous_driver" && state.mirrorRemovalGate) {
+            state.mirrorRemovalStarted = true; await state.mirrorRemovalGate;
+          }
+          delete state.mirrors[id];
+        },
         transaction: async (work: any) => {
           if (path.startsWith("_userAuthorization/")) {
             const uid = path.split("/").at(-1)!; const value = work(state.authorizations[uid] ?? null);
@@ -124,6 +141,7 @@ vi.mock("../lib/firebaseAdmin", () => {
 });
 
 import fleetRouter, { fleetReconciliationJobsRouter, reconcileFleetAuthorization, FleetReconciliationBusy, drainFleetMutations } from "./fleet";
+import { syncRoleClaimsChunk } from "../syncRoleClaims";
 import { drainHttpOperations } from "../services/httpOperations";
 
 let server: Server;
@@ -140,6 +158,8 @@ afterAll(async () => { await drainFleetMutations(false); await drainHttpOperatio
 beforeEach(async () => {
   await drainFleetMutations(false);
   state.authorizations = {};
+  state.mirrorRemovalGate = null; state.mirrorRemovalStarted = false; state.failMirrorRemoval = "";
+  state.authorizationWriteGate = null; state.authorizationWriteStarted = false; state.failProfileRead = "";
   state.docs.clear(); state.mirrors = {}; state.claims = {}; state.userClaims.clear(); state.liveNodes = {}; state.activeAuth = 0; state.maxAuth = 0; state.mirrorRoots = 0; state.admin = true;
   state.writes = 0; state.revocations = 0; state.gate = null; state.tail = Promise.resolve(); state.failFinalWrite = false;
   state.admissionGate = null; state.admissionStarted = false;
@@ -426,6 +446,68 @@ describe("fleet operation resources", () => {
     state.docs.set("devices/new_install", { busId: "bus_1", routeId: "route_1" });
     release(); expect((await request).status).toBe(500);
     expect(state.docs.has("buses/bus_1")).toBe(true);
+  });
+  it("serializes delayed CLI invalidation with fleet demotion and rereads discovered roles", async () => {
+    state.docs.set("users/auth_uid", { role: "admin" });
+    state.userClaims.set("auth_uid", { role: "admin", admin: true, authorizationVersion: "old" });
+    // These identities may have been discovered from an administrator page
+    // before an offboarding operation completed.
+    const discoveredUids = ["auth_uid"];
+    let release!: () => void;
+    state.authorizationWriteGate = new Promise<void>(done => { release = done; });
+    const publication = syncRoleClaimsChunk(discoveredUids);
+    try {
+      await vi.waitFor(() => expect(state.authorizationWriteStarted).toBe(true));
+      expect((await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" })).status).toBe(409);
+      await expect(syncRoleClaimsChunk(discoveredUids)).rejects.toBeInstanceOf(FleetReconciliationBusy);
+    } finally { release(); await publication; state.authorizationWriteGate = null; }
+    expect((await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" })).status).toBe(200);
+    // A later chunk must not reuse the administrator role from discovery.
+    expect(await syncRoleClaimsChunk(discoveredUids)).toEqual([true]);
+    expect(state.userClaims.get("auth_uid")).toMatchObject({ role: "passenger" });
+    expect(state.userClaims.get("auth_uid")?.admin).toBeUndefined();
+    expect(state.docs.get("_userAuthorization/auth_uid")).toMatchObject({ role: "passenger" });
+    expect(state.authorizations.auth_uid).toEqual(state.docs.get("_userAuthorization/auth_uid"));
+    expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
+  });
+  it("retains the CLI lock until sibling publications settle after a profile read failure", async () => {
+    state.failProfileRead = "unavailable";
+    state.docs.set("users/auth_uid", { role: "admin" });
+    let release!: () => void;
+    state.gate = new Promise<void>(done => { release = done; });
+    const publication = syncRoleClaimsChunk(["unavailable", "auth_uid"]);
+    try {
+      await vi.waitFor(() => expect(state.activeAuth).toBe(1));
+      expect((await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" })).status).toBe(409);
+    } finally { release(); }
+    expect(await publication).toEqual([false, true]);
+    expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
+  });
+  it("backfills an unassigned driver and removes mirrors under both current and previous IDs", async () => {
+    state.docs.set("users/auth_uid", { role: "driver" });
+    state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId: null });
+    state.userClaims.set("auth_uid", { role: "driver", driverId: "previous_driver", assignedBusId: "bus_1" });
+    state.mirrors.driver_1 = state.mirrors.previous_driver = state.mirrors.auth_uid = { bus_1: { route_1: true } };
+    expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([true]);
+    expect(state.userClaims.get("auth_uid")).toMatchObject({ role: "driver", authorizationVersion: expect.any(String) });
+    expect(state.userClaims.get("auth_uid")?.driverId).toBeUndefined();
+    expect(state.userClaims.get("auth_uid")?.assignedBusId).toBeUndefined();
+    expect(state.docs.get("_userAuthorization/auth_uid")).toMatchObject({ role: "driver", driverId: null, assignedBusId: null });
+    expect(state.mirrors).toEqual({});
+  });
+  it("retains the CLI lock until delayed mirror cleanup settles after another removal fails", async () => {
+    state.docs.set("users/auth_uid", { role: "passenger" });
+    state.userClaims.set("auth_uid", { role: "driver", driverId: "previous_driver", assignedBusId: "bus_1" });
+    state.failMirrorRemoval = "auth_uid";
+    let release!: () => void;
+    state.mirrorRemovalGate = new Promise<void>(done => { release = done; });
+    const publication = syncRoleClaimsChunk(["auth_uid"]);
+    try {
+      await vi.waitFor(() => expect(state.mirrorRemovalStarted).toBe(true));
+      expect((await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" })).status).toBe(409);
+    } finally { release(); }
+    expect(await publication).toEqual([false]);
+    expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
   });
   it("drains accepted fleet work while rejecting late mutation admission", async () => {
     let release!: () => void; state.gate = new Promise<void>(done => { release = done; });

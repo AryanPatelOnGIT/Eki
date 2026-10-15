@@ -32,6 +32,9 @@ export async function authorizationIsCurrent(uid: string, claims: Record<string,
 }
 
 /**
+ * Callers must hold the durable fleet mutex from authoritative reads through
+ * publication and assignment-mirror writes. Version predicates alone cannot
+ * serialize the initial invalidation or Auth writes.
  * Rotate before changing claims. A fresh version prevents old tokens from
  * regaining privilege after a repeated demotion/promotion or reassignment.
  * There is no cross-product transaction: deny both first, settle all writes,
