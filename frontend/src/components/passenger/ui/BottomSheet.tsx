@@ -49,7 +49,7 @@ export default function BottomSheet({
       {/* Sheet */}
       <div
         className={`fixed inset-x-0 z-50 rounded-t-2xl transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
-          isOpen ? "translate-y-0" : "translate-y-[calc(100%-56px)]"
+          isOpen ? "translate-y-0" : "translate-y-[calc(100%_-_56px)]"
         }`}
         style={{
           // Navigation is 60px controls + 20px padding + 1px border.

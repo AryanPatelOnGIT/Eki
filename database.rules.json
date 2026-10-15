@@ -15,7 +15,7 @@
       ".write": false
     },
     "publicRouteBuses": {
-      ".read": "auth != null && auth.token.admin == true",
+      ".read": "auth != null && auth.token.admin == true && auth.token.role == 'admin' && auth.token.authorizationVersion != null && root.child('_userAuthorization').child(auth.uid).child('version').val() == auth.token.authorizationVersion && root.child('_userAuthorization').child(auth.uid).child('role').val() == 'admin'",
       ".write": false,
       "$routeId": {
         "buses": { ".read": "auth != null", ".write": false }
@@ -29,6 +29,10 @@
       ".read": false,
       ".write": false,
       "public": { ".read": "auth != null", ".write": false }
+    },
+    "_userAuthorization": {
+      ".read": false,
+      ".write": false
     },
     "_deviceRateLimits": {
       ".read": false,

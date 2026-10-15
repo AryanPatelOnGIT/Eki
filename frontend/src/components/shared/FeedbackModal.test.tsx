@@ -26,6 +26,13 @@ async function submitGeneral() {
 }
 
 describe("passenger feedback workflow", () => {
+  it("explains empty ride feedback without making a request", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FeedbackModal userId="qa-passenger" busId="bus" sessionId="ride" onClose={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Submit Feedback" }));
+    expect(screen.getByRole("status").textContent).toContain("Please add a rating or comment before submitting.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it.each(["{}", "null", '{"submitted":false}'])("requires the backend submission acknowledgement: %s", async body => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
     await submitGeneral();
