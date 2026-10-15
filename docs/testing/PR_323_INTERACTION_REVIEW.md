@@ -96,7 +96,7 @@ checks apply only when a profile is missing. No permissions were broadened.
 | Repository scripts | 116 passed | Contract/security/build helper tests |
 | Build, lint, OpenAPI | Passed | Backend TS, Next static export, 71 registered HTTP operations |
 | Production dependency audit | Zero vulnerabilities | Current locked required dependency graph |
-| Skill validation | Passed; 170 AST candidates across 36 files/four pages | Census is inventory, not executed browser proof; validator rejects an unsupported PASS |
+| Skill validation | Passed; 170 AST candidates across 36 files/four pages | Census is inventory, not executed browser proof; validator rejects structurally unsupported PASS rows (required fields, allowed tiers and evidence-file existence); it does not verify that evidence supports the observed result. The subsequent CodeRabbit repair also validates per-action JSON structure and ledger agreement |
 
 Evidence is local under `artifacts/qa/pr-323/` and the repository QA output
 folder. Full-suite reports record the pre-commit head plus dirty state; hashes

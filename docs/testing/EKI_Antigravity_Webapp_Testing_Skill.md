@@ -20,14 +20,14 @@ You are a meticulous, adversarial QA engineer using source inspection **and an a
 
 - Repository: `https://github.com/notnamansinha/Eki`. When invoked for PR #323, fetch and inspect its current head (it is on AryanPatelOnGIT/Eki, not origin’s ordinary branch refs). Otherwise default to branch `testing`; record exact **HEAD SHA**, local uncommitted changes, app URL, backend URL, test principal/roles, time zone and environment. Never assume `main` has the same UI.
 - **Inspect current code before assuming features or selectors.** In the 2026-10-12 `testing` baseline, the Next frontend exposes `/`, `/passenger`, `/admin` and `/feedback`; the admin tabs are **Live Ops, Routes, Fleet & People, History, Feedback, Settings**. The passenger workspace switches among home, tracking and profile. These are leads, not an exhaustive/current route census.
-- Read `references/EKI-SOURCE-MAP.md`, then inspect actual `frontend/src/app`, component imports and conditional render branches, plus `backend` contracts. Read `docs/testing/WEBAPP_A_Z_AB_TESTING.md` and its plan, `qa/README.md`, `docs/testing/TEST_STRATEGY.md`, recent non-UI PRs and unresolved issues. **Do not mark historical checklist entries PASS solely because they exist.**
-- Before execution read `references/EXECUTION-PROTOCOL.md` and `references/CONTROL-MATRIX.md`. For nuanced test oracles read `references/FAILURE-ORACLES.md`; for practical Playwright patterns see `references/PLAYWRIGHT-RECIPES.md`; for required output use `references/REPORTING.md`.
+- Read `skills/eki-antigravity-webapp-audit/references/EKI-SOURCE-MAP.md`, then inspect actual `frontend/src/app`, component imports and conditional render branches, plus `backend` contracts. Read `docs/testing/WEBAPP_A_Z_AB_TESTING.md` and its plan, `qa/README.md`, `docs/testing/TEST_STRATEGY.md`, recent non-UI PRs and unresolved issues. **Do not mark historical checklist entries PASS solely because they exist.**
+- Before execution read `skills/eki-antigravity-webapp-audit/references/EXECUTION-PROTOCOL.md` and `skills/eki-antigravity-webapp-audit/references/CONTROL-MATRIX.md`. For nuanced test oracles read `skills/eki-antigravity-webapp-audit/references/FAILURE-ORACLES.md`; for practical Playwright patterns see `skills/eki-antigravity-webapp-audit/references/PLAYWRIGHT-RECIPES.md`; for required output use `skills/eki-antigravity-webapp-audit/references/REPORTING.md`.
 
 ## Antigravity browser execution
 
 Open the application in Antigravity's actual browser and use its browser interaction tools to inspect and operate the rendered UI. A terminal-only run, screenshots without actions, source reading, or green CI cannot satisfy this request. Record the browser tab URL and inspected accessibility/DOM controls at each state. Use ordinary pointer taps at the visible control centre without force-clicking or removing overlays. Use keyboard separately. Use Playwright only as supplemental deterministic evidence, or as the browser implementation when interactive tooling is unavailable; disclose that distinction. Open the real Next build in addition to component fixtures: fixture UI bypasses routing, production CSP, hosting and provider initialization.
 
-Read [references/PR-323-REGRESSIONS.md](references/PR-323-REGRESSIONS.md) for the current repair oracles and account-deletion contract. Discover every current feature from source and runtime, including controls absent from the starter matrix. Keep the browser visibly open where the environment supports it.
+Read [references/PR-323-REGRESSIONS.md](skills/eki-antigravity-webapp-audit/references/PR-323-REGRESSIONS.md) for the current repair oracles and account-deletion contract. Discover every current feature from source and runtime, including controls absent from the starter matrix. Keep the browser visibly open where the environment supports it.
 
 If using this bundled single Markdown document, its `Included document:` sections are the referenced files. If executable census/gate helpers are unavailable, inspect the tracked package in `docs/testing/skills/eki-antigravity-webapp-audit/`; do not claim a helper ran if it did not. Run from the repository root; inspect each helper's documented CLI first (the census helper has no help switch).
 
@@ -432,13 +432,22 @@ test('admin Places input produces a selectable stop', async ({ page }) => {
   // Enter Create/Edit using the real UI control from the current source.
   // Check the final form and name against HEAD, not a hardcoded guessed button.
   const input = page.getByRole('searchbox', { name: 'Search for a stop' });
+  let searchRequests = 0;
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/api/places/search')) {
+      searchRequests += 1;
+    }
+  });
   await input.fill('Ah'); // fewer than three chars: no search expected
   await page.waitForTimeout(450); // only for documenting the debounce negative case
-  const match = page.waitForResponse(r =>
-    r.url().includes('/api/places/search?q=') && r.request().method() === 'GET',
-    { timeout: 12_000 },
-  );
-  await input.fill('Ahmedabad University');
+  expect(searchRequests).toBe(0);
+  const query = 'Ahmedabad University';
+  const match = page.waitForResponse(r => {
+    const url = new URL(r.url());
+    return url.pathname.endsWith('/api/places/search') &&
+      url.searchParams.get('q') === query && r.request().method() === 'GET';
+  }, { timeout: 12_000 });
+  await input.fill(query);
   const response = await match;
   expect(response.ok()).toBe(true);
   const json = await response.json();
@@ -542,10 +551,11 @@ Required values:
 - `evidence_tier`: `STATIC`, `UNIT`, `SYNTHETIC_BROWSER`, `EMULATOR_BROWSER`, `LIVE_PROVIDER_BROWSER`, `LIVE_CLOUD`, `PHYSICAL_GNSS`.
 - `executed`: `true` only for executed **and asserted** tests, `false` for candidates/blocked/untested.
 - `oracle_passed`: `true` only if result matched observable expected behavior. A mock-only PASS is tier-specific.
-- `evidence_path`: relative path to actual sanitized trace/screenshot/JSON/report, populated for executed rows; do not invent.
+- `source_id`: copy the exact `id` from the current census candidate; distinct controls on one source line require separate source IDs. Keep `control_id` unique to the action/state assertion. Strict reconciliation checks source ID and its file/line. Re-run the census after source changes.
+- `evidence_path`: for PASS, path to a sanitized per-action JSON record described in `PLAYWRIGHT-RECIPES.md`; for FAIL, path to actual JSON/trace/screenshot/report. Paths are relative to the ledger directory unless absolute.
 - `source_path`, `source_line`, `locator`, `control_name`, `precondition`, `action`, `expected`, `observed`, `role`, `viewport`, `environment`, `bug_id`, `blocker_reason`.
 
-Every PASS requires `executed=true`, `oracle_passed=true` and nonempty `evidence_path` pointing to a **real file**; expected/oracle must be meaningful. FAIL requires executed and evidence. `NOT_APPLICABLE` must explain proof it no longer exists in current source. BLOCKED must explain exact prerequisite and named owner when possible.
+Every PASS requires `executed=true`, `oracle_passed=true` and nonempty `evidence_path` pointing to a **real per-action JSON file**. The gate checks all documented fields, matches control, page, role, viewport, precondition, action, expected, observed and provider tier against the ledger, and validates commit SHA/timestamp formats. `http_status` is null for actions without an HTTP response; screenshot/trace paths are strings (empty when absent), resolved relative to the JSON record. Referenced files must exist. These are structural checks: a human still needs to verify that the evidence supports the observation. FAIL requires executed and evidence. `NOT_APPLICABLE` must explain proof it no longer exists in current source. BLOCKED must explain exact prerequisite and named owner when possible.
 
 ## Mandatory `EXECUTION.md` sections
 

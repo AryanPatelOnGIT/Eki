@@ -11,10 +11,11 @@ Required values:
 - `evidence_tier`: `STATIC`, `UNIT`, `SYNTHETIC_BROWSER`, `EMULATOR_BROWSER`, `LIVE_PROVIDER_BROWSER`, `LIVE_CLOUD`, `PHYSICAL_GNSS`.
 - `executed`: `true` only for executed **and asserted** tests, `false` for candidates/blocked/untested.
 - `oracle_passed`: `true` only if result matched observable expected behavior. A mock-only PASS is tier-specific.
-- `evidence_path`: relative path to actual sanitized trace/screenshot/JSON/report, populated for executed rows; do not invent.
+- `source_id`: copy the exact `id` from the current census candidate; distinct controls on one source line require separate source IDs. Keep `control_id` unique to the action/state assertion. Strict reconciliation checks source ID and its file/line. Re-run the census after source changes.
+- `evidence_path`: for PASS, path to a sanitized per-action JSON record described in `PLAYWRIGHT-RECIPES.md`; for FAIL, path to actual JSON/trace/screenshot/report. Paths are relative to the ledger directory unless absolute.
 - `source_path`, `source_line`, `locator`, `control_name`, `precondition`, `action`, `expected`, `observed`, `role`, `viewport`, `environment`, `bug_id`, `blocker_reason`.
 
-Every PASS requires `executed=true`, `oracle_passed=true` and nonempty `evidence_path` pointing to a **real file**; expected/oracle must be meaningful. FAIL requires executed and evidence. `NOT_APPLICABLE` must explain proof it no longer exists in current source. BLOCKED must explain exact prerequisite and named owner when possible.
+Every PASS requires `executed=true`, `oracle_passed=true` and nonempty `evidence_path` pointing to a **real per-action JSON file**. The gate checks all documented fields, matches control, page, role, viewport, precondition, action, expected, observed and provider tier against the ledger, and validates commit SHA/timestamp formats. `http_status` is null for actions without an HTTP response; screenshot/trace paths are strings (empty when absent), resolved relative to the JSON record. Referenced files must exist. These are structural checks: a human still needs to verify that the evidence supports the observation. FAIL requires executed and evidence. `NOT_APPLICABLE` must explain proof it no longer exists in current source. BLOCKED must explain exact prerequisite and named owner when possible.
 
 ## Mandatory `EXECUTION.md` sections
 

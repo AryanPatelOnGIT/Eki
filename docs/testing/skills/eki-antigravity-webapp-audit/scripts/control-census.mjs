@@ -103,7 +103,7 @@ for (const filename of files) {
         const loc = ast.getLineAndCharacterOfPosition(node.getStart(ast));
         const line = loc.line+1;
         const display=short(allAttrs['aria-label'] || allAttrs.title || allAttrs.placeholder || childText(node.parent,ast) || allAttrs.name || allAttrs.id || allAttrs['data-testid'] || '');
-        const raw = `${rel}:${line}:${tag}:${Object.keys(allAttrs).join(',')}`;
+        const raw = `${rel}:${line}:${loc.character+1}:${tag}:${Object.keys(allAttrs).join(',')}`;
         records.push({id:'src-'+crypto.createHash('sha256').update(raw).digest('hex').slice(0,12), source_path:rel, source_line:line, source_column:loc.character+1, tag, role, label_clue:display, handlers, testid:allAttrs['data-testid'] || '', aria_label:allAttrs['aria-label'] || '', placeholder:allAttrs.placeholder || '', type:allAttrs.type || '', disabled_clue:allAttrs.disabled || '', href_clue:allAttrs.href || '', notes:'SOURCE CANDIDATE ONLY: not a browser pass'});
       }
     }

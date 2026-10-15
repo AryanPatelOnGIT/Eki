@@ -70,6 +70,9 @@ router.post("/bootstrap", requireAuth, async (req: AuthenticatedRequest, res: Re
     }
 
     const userRef = db.collection("users").doc(uid);
+    // Fetch once outside the callback: Firestore can retry it on contention.
+    // Claim synchronization below still reads fresh Auth claims after commit.
+    const currentAccount = await auth.getUser(uid);
     const result = await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(userRef);
       if (snapshot.exists) {
@@ -81,12 +84,11 @@ router.post("/bootstrap", requireAuth, async (req: AuthenticatedRequest, res: Re
       }
 
       // A revocation-cache hit is not authority to recreate a retired profile.
-      // Read the deletion fence in the same transaction, then check current
-      // Auth existence before any profile write. Existing profiles incur no
-      // additional reads on the normal bootstrap path.
+      // Read the deletion fence in the same transaction. Auth existence was
+      // checked before the transaction; a concurrent deletion request still
+      // prevents profile creation through this atomic fence.
       const deletion = await transaction.get(db.collection("_privacy_deletion_requests").doc(uid));
       if (deletion.exists) throw new ProfileDeletionPending();
-      const currentAccount = await auth.getUser(uid);
       if (currentAccount.disabled) throw Object.assign(new Error("Account is disabled."), { code: "auth/user-disabled" });
 
       transaction.create(userRef, {

@@ -45,13 +45,22 @@ test('admin Places input produces a selectable stop', async ({ page }) => {
   // Enter Create/Edit using the real UI control from the current source.
   // Check the final form and name against HEAD, not a hardcoded guessed button.
   const input = page.getByRole('searchbox', { name: 'Search for a stop' });
+  let searchRequests = 0;
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/api/places/search')) {
+      searchRequests += 1;
+    }
+  });
   await input.fill('Ah'); // fewer than three chars: no search expected
   await page.waitForTimeout(450); // only for documenting the debounce negative case
-  const match = page.waitForResponse(r =>
-    r.url().includes('/api/places/search?q=') && r.request().method() === 'GET',
-    { timeout: 12_000 },
-  );
-  await input.fill('Ahmedabad University');
+  expect(searchRequests).toBe(0);
+  const query = 'Ahmedabad University';
+  const match = page.waitForResponse(r => {
+    const url = new URL(r.url());
+    return url.pathname.endsWith('/api/places/search') &&
+      url.searchParams.get('q') === query && r.request().method() === 'GET';
+  }, { timeout: 12_000 });
+  await input.fill(query);
   const response = await match;
   expect(response.ok()).toBe(true);
   const json = await response.json();
