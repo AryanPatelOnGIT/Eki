@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { FieldValue, type DocumentReference } from "firebase-admin/firestore";
+import { FieldValue, type DocumentReference, type Transaction } from "firebase-admin/firestore";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -23,12 +23,27 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 class SessionCreationConflict extends Error {}
 
+async function runSessionTransaction<T>(work: (transaction: Transaction) => Promise<T>): Promise<T> {
+  try {
+    return await db.runTransaction(work);
+  } catch (error) {
+    // The SDK retries expired transaction IDs, but not this closed-ID response.
+    // Start one fresh transaction; every ownership/lifecycle read runs again.
+    // Callers keep session IDs and idempotency keys outside the retry callback.
+    if (typeof error !== "object" || error === null ||
+        !("code" in error) || error.code !== 3 ||
+        !("details" in error) || error.details !== "Transaction is invalid or closed.") throw error;
+    console.warn("[Shifts] Retrying a closed Firestore transaction once.");
+    return db.runTransaction(work);
+  }
+}
+
 type SessionProjection = { ref: DocumentReference; data: Record<string, unknown>; merge?: boolean };
 
 // Protect terminal transitions and newer telemetry/delay projections when a
 // creation retry races another writer. All reads precede transaction writes.
 async function commitCreationProjections(writes: SessionProjection[]) {
-  await db.runTransaction(async transaction => {
+  await runSessionTransaction(async transaction => {
     const session = await transaction.get(writes[0].ref);
     const stored = session.data();
     if (!session.exists || ["completed", "interrupted", "failed"].includes(stored?.status)) {
@@ -101,7 +116,7 @@ function activeBusLockRef(busId: string) {
 
 async function releaseActiveBusLock(busId: string, sessionId: string): Promise<void> {
   const lockRef = activeBusLockRef(busId);
-  await db.runTransaction(async (transaction) => {
+  await runSessionTransaction(async (transaction) => {
     const lock = await transaction.get(lockRef);
     if (lock.data()?.sessionId === sessionId) transaction.delete(lockRef);
   });
@@ -237,6 +252,10 @@ async function updateDelay(req: AuthenticatedRequest, res: Response) {
     const nodeRef = rtdb.ref(`activeBuses/${assignment.busId}_${assignment.routeId}`);
     const requestedAt = Date.now();
     const liveUpdate = await nodeRef.transaction((value) => {
+      // A cold SDK cache can supply null before the server value is known.
+      // Returning null sends the compare-and-set and lets the SDK retry with
+      // server data; undefined would abort locally without checking the ride.
+      if (value === null) return null;
       const current = value as Record<string, unknown> | null;
       if (
         !current ||
@@ -392,7 +411,7 @@ async function startShift(req: AuthenticatedRequest, res: Response) {
         ? current.tripState === "pre_departure" ? "armed" : "active"
         : "pending";
       const lockRef = activeBusLockRef(assignment.busId);
-      const lockClaimed = await db.runTransaction(async (transaction) => {
+      const lockClaimed = await runSessionTransaction(async (transaction) => {
         const binding = keyRef ? await transaction.get(keyRef) : null;
         const lock = await transaction.get(lockRef);
         const session = await transaction.get(db.collection("ride_sessions").doc(current.sessionId as string));
@@ -524,7 +543,7 @@ async function startShift(req: AuthenticatedRequest, res: Response) {
     const proposedSessionRef = db.collection("ride_sessions").doc();
     const lockRef = activeBusLockRef(assignment.busId);
     const proposedArmedAt = Date.now();
-    const lockClaim = await db.runTransaction(async (transaction) => {
+    const lockClaim = await runSessionTransaction(async (transaction) => {
       const binding = keyRef ? await transaction.get(keyRef) : null;
       const lock = await transaction.get(lockRef);
       if (binding?.exists && (!matchesAssignment(binding.data()!) ||

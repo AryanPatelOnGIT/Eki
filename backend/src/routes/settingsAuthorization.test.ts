@@ -8,8 +8,9 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("../middleware/verifiedRequest", () => ({
-  verifyRequestToken: async () => ({ uid: "user_1", admin: harness.admin }),
+  verifyRequestToken: async () => ({ uid: "user_1", admin: harness.admin, role: harness.admin ? "admin" : "passenger", authorizationVersion: "current" }),
 }));
+vi.mock("../services/userAuthorization", () => ({ authorizationIsCurrent: async () => true }));
 vi.mock("../lib/firebaseAdmin", () => ({
   db: { collection: () => ({ doc: () => ({
     set: async () => { harness.writes++; },

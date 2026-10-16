@@ -7,6 +7,7 @@ vi.mock("../services/authTokenVerifier", () => ({
   verifyRevocationAwareIdToken: mocks.verify,
   AuthVerificationCapacityError: class extends Error {},
 }));
+vi.mock("../services/userAuthorization", () => ({ authorizationIsCurrent: async () => true }));
 vi.mock("../lib/firebaseAdmin", () => ({ db: {
   collection: () => ({ orderBy: mocks.order }),
 } }));
@@ -21,7 +22,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.verify.mockResolvedValue({ uid: "admin", admin: true });
+  vi.clearAllMocks(); mocks.verify.mockResolvedValue({ uid: "admin", admin: true, role: "admin", authorizationVersion: "current" });
   mocks.order.mockReturnValue({ limit: mocks.limit }); mocks.limit.mockReturnValue({ get: mocks.get });
   mocks.get.mockResolvedValue({ docs: [] });
 });

@@ -553,16 +553,24 @@ test('admin operator creation edit cancellation and deletion update real claims 
 test('admin live service controls persist bounded delay and interrupt safely before a distinct restart', async ({ page, request }) => {
   await page.goto('/?panel=ops'); await login(page, 'qa_admin');
   await page.getByRole('button', { expanded: false }).filter({ hasText: 'Synthetic bus' }).click();
-  const decrease = page.getByRole('button', { name: 'Decrease delay by 1 minutes for qa_bus', exact: true });
-  await decrease.click();
-  await expect(page.getByText('Delay updated to 0 minutes for qa_bus.', { exact: true })).toBeVisible();
-  expect((await evidence(request)).live.delayMinutes).toBe(0);
-  await page.getByRole('button', { name: 'Increase delay by 1 minutes for qa_bus', exact: true }).click();
-  await expect(page.getByText('Delay updated to 1 minutes for qa_bus.', { exact: true })).toBeVisible();
-  expect((await evidence(request)).live.delayMinutes).toBe(1);
-  await decrease.click();
-  await expect(page.getByText('Delay updated to 0 minutes for qa_bus.', { exact: true })).toBeVisible();
-  expect((await evidence(request)).live.delayMinutes).toBe(0);
+  const saveDelay = async (buttonName: string, delayMinutes: number) => {
+    // Match the start-service oracle below: observe the actual request before
+    // starting the UI assertion window. A pending request is not a failed toast.
+    const acknowledgement = page.waitForResponse(response =>
+      response.url() === 'http://127.0.0.1:3116/api/shifts/delay'
+        && response.request().method() === 'PATCH', { timeout: 15_000 });
+    await page.getByRole('button', { name: buttonName, exact: true }).click();
+    const response = await acknowledgement;
+    const result = await response.json();
+    const stored = await evidence(request);
+    expect(response.status(), JSON.stringify({ acknowledgement: result, live: stored.live })).toBe(200);
+    expect(result).toMatchObject({ saved: true, delayMinutes });
+    await expect(page.getByText(`Delay updated to ${delayMinutes} minutes for qa_bus.`, { exact: true })).toBeVisible();
+    expect(stored.live.delayMinutes).toBe(delayMinutes);
+  };
+  await saveDelay('Decrease delay by 1 minutes for qa_bus', 0);
+  await saveDelay('Increase delay by 1 minutes for qa_bus', 1);
+  await saveDelay('Decrease delay by 1 minutes for qa_bus', 0);
   await page.getByRole('button', { name: 'Boarding code', exact: true }).click();
   await expect(page.getByRole('button', { name: /^[A-Z0-9]{4}-[A-Z0-9]{4}$/ })).toBeVisible();
   await page.getByRole('button', { name: 'End ride early', exact: true }).click();
@@ -586,8 +594,9 @@ test('admin live service controls persist bounded delay and interrupt safely bef
       && response.request().method() === 'POST', { timeout: 15_000 });
   await page.getByRole('button', { name: 'Start service', exact: true }).click();
   const startResponse = await startAcknowledgement;
-  expect(startResponse.ok()).toBe(true);
   const startResult = await startResponse.json();
+  const startEvidence = startResponse.ok() ? null : await evidence(request);
+  expect(startResponse.ok(), JSON.stringify({ acknowledgement: startResult, live: startEvidence?.live, lock: startEvidence?.lock })).toBe(true);
   expect(startResult.sessionId).toEqual(expect.any(String));
   expect(startResult.resumed).not.toBe(true);
   await expect(page.getByText(/^Service started /)).toBeVisible();
