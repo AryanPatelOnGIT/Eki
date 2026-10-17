@@ -121,11 +121,11 @@ beforeEach(() => {
 });
 afterEach(async () => { await settle(); await stop?.(); stop = undefined; vi.useRealTimers(); });
 
-async function fixture(startEngine = true) {
+async function fixture(startEngine = true, stopCount = 3) {
   const suffix = ++fixtureId;
   const busId = `loop_bus_${suffix}`, routeId = `loop_route_${suffix}`, driverId = `loop_driver_${suffix}`;
   const deviceId = `loop_device_${suffix}`, sessionId = `outbound_${suffix}`, key = `${busId}_${routeId}`;
-  const stops = [0, 1, 2].map(i => ({ id: `s${i}`, name: `Stop ${i}`, lat: 23 + i * 0.002, lng: 72 }));
+  const stops = Array.from({ length: stopCount }, (_, i) => ({ id: `s${i}`, name: `Stop ${i}`, lat: 23 + i * 0.002, lng: 72 }));
   // Independent return carriageway, not a reversed coordinate array.
   const reverse = [...stops].reverse().map(point => ({ ...point, lng: point.lng + 0.00015 }));
   state.docs.set(`routes/${routeId}`, { stops, forwardPolyline: encodePolyline(stops), reversePolyline: encodePolyline(reverse), geometryVersion: 1 });
@@ -154,10 +154,68 @@ async function fixture(startEngine = true) {
     await send(23.0038, 50_000); await send(23.004, 55_000, "stopped");
     await send(23.004, 56_000, "stopped"); await send(23.004, 57_000, "stopped");
   };
-  return { busId, routeId, driverId, sessionId, key, send, arrive, live, stops };
+  return { busId, routeId, driverId, sessionId, key, send, arrive, live, stops, rebootDevice: () => { seq = 0; } };
 }
 
 describe("routing lifecycle through actual ingestion and listeners", () => {
+  it.each([2, 26])("retains all %i ordered stop records, passenger and chat identity across completion and reboot", async count => {
+    const f = await fixture(true, count);
+    const session = state.docs.get(`ride_sessions/${f.sessionId}`);
+    session.passengers = { passenger: { userId: "fixture-passenger", boardingStopId: "s0", alightingStopId: `s${count - 1}` } };
+    state.docs.set(`ride_sessions/${f.sessionId}/messages/kept`, { text: "Synthetic retained chat", senderId: "fixture-passenger" });
+    await f.send(f.stops[0].lat, 0, "stopped");
+    await f.send(23.001, 15_000);
+    let now = 15_000;
+    for (let i = 1; i < count; i++) {
+      now += 30_000;
+      await f.send(f.stops[i].lat, now, i === count - 1 ? "stopped" : "moving");
+      expect(state.docs.get(`ride_sessions/${f.sessionId}`).status).toBe("active");
+      if (i === Math.floor(count / 2) && i < count - 1) {
+        // A long traffic pause at an intermediate stop never creates a return.
+        for (let n = 0; n < 4; n++) { now += 60_000; await f.send(f.stops[i].lat, now, "stopped"); }
+        expect(f.live()).toMatchObject({ direction: "forward", tripState: "in_service", sessionId: f.sessionId });
+      }
+    }
+    const terminal = f.stops.at(-1)!.lat;
+    await f.send(terminal, now + 1000, "stopped"); await f.send(terminal, now + 2000, "stopped");
+    const completed = state.docs.get(`ride_sessions/${f.sessionId}`);
+    expect(completed.status).toBe("completed");
+    expect(completed.firstKnownLocation).toMatchObject({ lat: 23, lng: 72, sampledAt: baseTime });
+    expect(Object.values(completed.stopsReached).map((record: any) => record.stopId)).toEqual(f.stops.map(stop => stop.id));
+    expect(completed.passengers).toEqual(session.passengers);
+    expect(completed.lastKnownLocation).toMatchObject({ lat: terminal, lng: 72, sampledAt: baseTime + now + 2000 });
+    expect(state.docs.get(`ride_sessions/${f.sessionId}/messages/kept`)).toMatchObject({ text: "Synthetic retained chat" });
+    await stop!(); stop = undefined; await rtdb.ref(`activeBuses/${f.key}`).set(null);
+    stop = startTripStateEngine();
+    f.rebootDevice();
+    await f.send(terminal, now + 300_000, "stopped"); await f.send(terminal, now + 301_000, "stopped");
+    expect(f.live()).toMatchObject({ direction: "reverse", tripState: "pre_departure", previousSessionId: f.sessionId });
+    const returning = state.docs.get(`ride_sessions/${f.live().sessionId}`);
+    expect(returning).toMatchObject({ status: "armed", originStopId: f.stops.at(-1)!.id, destinationStopId: "s0", passengers: {} });
+    expect(state.docs.get(`completed_trips/${f.sessionId}`).stopCount).toBe(count);
+  });
+  it("archives the last raw accepted fix on each signal loss without per-fix history writes", async () => {
+    const f = await fixture();
+    await f.send(23, 0, "stopped"); await f.send(23.001, 15_000);
+    expect(state.docs.get(`ride_sessions/${f.sessionId}`).connectionEvents).toBeUndefined();
+    await rtdb.ref(`activeBuses/${f.key}`).set({ ...f.live(), deviceState: "offline" }); await settle();
+    const first = state.docs.get(`ride_sessions/${f.sessionId}`).lastKnownLocation;
+    expect(first).toMatchObject({ lat: 23.001, lng: 72, sampledAt: baseTime + 15_000 });
+    await f.send(23.002, 30_000);
+    await rtdb.ref(`activeBuses/${f.key}`).set(null); await settle();
+    const history = state.docs.get(`ride_sessions/${f.sessionId}`);
+    expect(history.lastKnownLocation.sampledAt).toBe(baseTime + 30_000);
+    expect(Object.values(history.connectionEvents)).toHaveLength(2);
+    expect(state.docs.get(`bus_locations/${f.busId}`).lastKnownLocation).toEqual(history.lastKnownLocation);
+  });
+  it("keeps the final shutdown fix after completed-terminal heartbeats were deduplicated", async () => {
+    const f = await fixture(); await f.arrive();
+    await f.send(23.004, 60_000, "stopped"); await f.send(23.004, 70_000, "stopped");
+    await rtdb.ref(`activeBuses/${f.key}`).set(null); await settle();
+    const history = state.docs.get(`ride_sessions/${f.sessionId}`);
+    expect(history.lastKnownLocation.sampledAt).toBe(baseTime + 70_000);
+    expect(Object.values(history.connectionEvents)).toHaveLength(1);
+  });
   it("preserves an already armed return through the real abandoned-session sweep overnight", async () => {
     const f = await fixture(); await f.arrive();
     await f.send(23.004, 87_000, "stopped"); await f.send(23.004, 88_000, "stopped");
@@ -283,6 +341,7 @@ describe("routing lifecycle through actual ingestion and listeners", () => {
     await stop!(); stop = undefined;
     await rtdb.ref(`activeBuses/${f.key}`).set(null); // same removal boundary as stale sweep
     stop = startTripStateEngine();
+    f.rebootDevice();
     await f.send(23.004, 57_000 + gap, "stopped"); await f.send(23.004, 58_000 + gap, "stopped");
     expect(f.live()).toMatchObject({ direction: "reverse", tripState: "pre_departure", previousSessionId: f.sessionId });
     const returns = [...state.docs.values()].filter(value => value.previousSessionId === f.sessionId && value.id);

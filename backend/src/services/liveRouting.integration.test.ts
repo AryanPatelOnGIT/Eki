@@ -72,6 +72,7 @@ describe("live routing publication", () => {
     const live = state.values.get(key)!;
     expect(live).toMatchObject({ direction, routeDirection: direction, routeSource: "dynamic-reroute", routeTrafficState: "current", tripState: "pre_departure" });
     expect(live.routeComputedAt).toEqual(expect.any(Number));
+    expect(state.values.get(`activeRouteGeometry/${key.slice("activeBuses/".length)}/${live.routeVersion}`)).toMatchObject({ firstStopIndex: 1 });
     publish({ ...sample(2), ...ordered[0], speed: 0, motionState: "stopped" }); await drainTelemetryRouteProcessing();
     expect(state.compute).toHaveBeenCalledTimes(1);
   });

@@ -707,6 +707,8 @@ async function activateReroute(
     sessionId: expectedSessionId,
     computedAt: publicationCreatedAt,
     routeVersion: nextVersion,
+    // Dynamic geometry starts at the bus; this boundary never follows later progress.
+    firstStopIndex: departure?.phase === "ready" ? 1 : Math.max(1, expectedStopIndex ?? 1),
     createdAt: { ".sv": "timestamp" },
   });
   const publication = await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {

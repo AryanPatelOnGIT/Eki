@@ -31,8 +31,10 @@ node node_modules/vite/bin/vite.js --config e2e/routing/live-maps/vite.config.mt
 ```
 
 Open `http://127.0.0.1:3163/?telemetryTrace=1`. Use A → B / B → A, Next fix,
-Play simulated GNSS, Low-confidence fix and Delayed old revision. The actual
-passenger timeline and admin live-details dialog are available. Start-service
+Play simulated GNSS, Low-confidence fix and Delayed old revision. The
+Reach next stop control advances the backend-style next-stop index independently
+of marker displacement: only the current road leg is blue, with other legs grey.
+The actual passenger timeline and admin live-details dialog are available. Start-service
 and messaging mutations are outside this replay. The dev server binds loopback
 only and receives only the existing public browser Maps key/map ID.
 

@@ -31,27 +31,54 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
   await expect.poll(async () => {
     if (errors.length) throw new Error(errors.join("; "));
     return (await sdk())?.lines.length ?? 0;
-  }, { timeout: 40_000 }).toBe(4);
+  }, { timeout: 40_000 }).toBe(6);
   const assertDirection = async (direction: "forward" | "reverse") => {
     const expected = decodePolyline(probe.directions.find((item: any) => item.direction === direction).encodedPolyline);
     await expect.poll(async () => (await sdk()).lines.filter((line: any) => JSON.stringify(line.path) === JSON.stringify(expected)).length).toBe(4);
     for (const view of ["Eki passenger map", "Eki admin map"]) {
       await expect.poll(async () => (await sdk()).lines.filter((line: any) => line.view === view && JSON.stringify(line.path) === JSON.stringify(expected)).length).toBe(2);
+      const lines = (await sdk()).lines.filter((line: any) => line.view === view);
+      expect(lines.filter((line: any) => line.color === "#71717a").map((line: any) => line.path)).toEqual([expected]);
+      const blue = lines.filter((line: any) => line.color === "#3b82f6");
+      expect(blue).toHaveLength(1);
+      expect(blue[0].path.length).toBeGreaterThanOrEqual(2);
+      expect(blue[0].path.length).toBeLessThan(expected.length);
     }
     await expect.poll(async () => (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS")).length).toBe(2);
   };
   await assertDirection("forward");
   await expect.poll(async () => (await sdk()).maps.filter((map: any) => map.tilesLoaded).length, { timeout: 30_000 }).toBe(2);
+  await expect.poll(async () => {
+    const markers = (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"));
+    return markers.length === 2 && markers.every((marker: any) => typeof marker.visualOffsetPx === "number" && marker.visualOffsetPx < 3);
+  }).toBe(true);
   await page.screenshot({ path: info.outputPath("eki-in-app-forward.png"), fullPage: true });
+  // Stop progress is supplied by the backend-style tuple at simulated arrival.
+  const firstLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+  await page.getByRole("button", { name: "Reach next stop", exact: true }).click();
+  await expect.poll(async () => {
+    const blue = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+    return blue.length === 2 && blue.every((line: any, index: number) => JSON.stringify(line.path) !== JSON.stringify(firstLeg[index].path));
+  }).toBe(true);
+  const secondLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+  expect(secondLeg[0].path).toEqual(secondLeg[1].path);
+  for (let i = 0; i < 2; i++) expect(secondLeg[i].path[0]).toEqual(firstLeg[i].path.at(-1));
+  const adminTileLoads = (await sdk()).maps.find((map: any) => map.view === "Eki admin map").tileLoads;
+  await page.getByRole("region", { name: "Eki admin map", exact: true }).getByTitle(/^SIMULATED-BUS —/).click();
+  await expect.poll(async () => (await sdk()).maps.find((map: any) => map.view === "Eki admin map")?.zoom).toBe(15);
+  await expect.poll(async () => (await sdk()).maps.find((map: any) => map.view === "Eki admin map")?.tileLoads, { timeout: 30_000 }).toBeGreaterThan(adminTileLoads);
+  await page.screenshot({ path: info.outputPath("eki-in-app-next-leg.png"), fullPage: true });
   await page.getByRole("button", { name: "Open live details for SIMULATED-BUS" }).click();
   await expect(page.getByRole("dialog", { name: "Live details for SIMULATED-BUS" })).toBeVisible();
   await page.getByRole("button", { name: "Close live details", exact: true }).click();
   const before = (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"));
+  const roadObjectsBeforeFix = (await sdk()).observedPolylineCount;
   await page.getByRole("button", { name: "Next fix", exact: true }).click();
   await expect.poll(async () => {
     const next = (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"));
     return next.length === 2 && next.every((marker: any, index: number) => JSON.stringify(marker.position) !== JSON.stringify(before[index].position));
   }).toBe(true);
+  expect((await sdk()).observedPolylineCount).toBe(roadObjectsBeforeFix);
   await page.getByRole("button", { name: "B → A", exact: true }).click();
   await assertDirection("reverse");
   await expect.poll(async () => (await sdk()).maps.filter((map: any) => map.tilesLoaded).length, { timeout: 30_000 }).toBe(2);

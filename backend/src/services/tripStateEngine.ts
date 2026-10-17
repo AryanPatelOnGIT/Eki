@@ -19,6 +19,7 @@ import { restoreDurableRide } from "./durableRideRecovery";
 import { lifecycleIntakeFingerprint } from "./lifecycleIntake";
 import { reduceTripState, type TerminalArrivalEvidence } from "./tripStateReducer";
 import { missingStopHistory } from "./rideProgressHistory";
+import { journeyLocation, newerJourneyLocation } from "./journeyLocation";
 import {
   normalizeRideDirection,
   stopsInRideDirection,
@@ -422,8 +423,8 @@ function trackBackgroundTask(
 
 /**
  * Firestore is the durable fleet-state store, not a second telemetry stream.
- * Persist only lifecycle changes; coordinates, speed and heartbeat data remain
- * in RTDB, which prevents a Firestore write for every GNSS update.
+ * Persist lifecycle changes and a final raw fix at signal loss/completion;
+ * ordinary location heartbeats remain in RTDB.
  */
 function persistFleetState(
   data: Record<string, unknown>,
@@ -446,10 +447,20 @@ function persistFleetState(
     try {
       const persisted = await workerTransaction(db, async (transaction) => {
         const lock = await transaction.get(lockRef);
+        const sessionRef = db.collection("ride_sessions").doc(sessionId);
+        const session = data.deviceState === "offline" ? await transaction.get(sessionRef) : null;
         if (!lock.exists || normalizeIdentifier(lock.data()?.sessionId) !== sessionId) {
           return false;
         }
         transaction.set(locationRef, { ...state, lastSeen }, { merge: true });
+        const lastKnownLocation = newerJourneyLocation(data, session?.data()?.lastKnownLocation);
+        if (session?.exists && lastKnownLocation) {
+          transaction.set(sessionRef, { lastKnownLocation, lastSignalLostAt: Date.now(),
+            connectionEvents: { [`lost_${lastKnownLocation.sampledAt}_${lastKnownLocation.seq ?? 0}`]: {
+              type: "signal_lost", observedAt: Date.now(), location: lastKnownLocation,
+            } } }, { merge: true });
+          transaction.set(locationRef, { lastKnownLocation }, { merge: true });
+        }
         return true;
       });
       // The lock check failed, so this state was not persisted. Allow a later
@@ -476,6 +487,7 @@ async function persistOfflineFleetState(
   data: Record<string, unknown>,
   lastSeen: string,
   confirmMissing?: () => Promise<boolean>,
+  signalLost = false,
 ): Promise<boolean> {
   const busId = normalizeIdentifier(data.busId);
   if (!busId) return false;
@@ -485,7 +497,8 @@ async function persistOfflineFleetState(
     status: "offline",
     deviceState: "offline",
   });
-  const fingerprint = lifecycleFingerprint(state);
+  const recordSignalLoss = signalLost || data.deviceState === "offline" || Boolean(confirmMissing);
+  const fingerprint = JSON.stringify([lifecycleFingerprint(state), recordSignalLoss ? journeyLocation(data) : null]);
   const lockRef = db.collection("_active_bus_locks").doc(busId);
   const locationRef = db.collection("bus_locations").doc(busId);
   try {
@@ -493,6 +506,8 @@ async function persistOfflineFleetState(
       if (confirmMissing && !(await confirmMissing())) return false;
       return workerTransaction(db, async (transaction) => {
         const lock = await transaction.get(lockRef);
+        const sessionRef = expectedSessionId ? db.collection("ride_sessions").doc(expectedSessionId) : null;
+        const session = sessionRef ? await transaction.get(sessionRef) : null;
         const lockSessionId = normalizeIdentifier(lock.data()?.sessionId);
         if (
           lock.exists &&
@@ -501,6 +516,19 @@ async function persistOfflineFleetState(
           return false;
         }
         transaction.set(locationRef, { ...state, lastSeen }, { merge: true });
+        const lastKnownLocation = newerJourneyLocation(data, session?.data()?.lastKnownLocation);
+        if (lastKnownLocation) {
+          transaction.set(locationRef, { lastKnownLocation }, { merge: true });
+          if (sessionRef && session?.exists) transaction.set(sessionRef, {
+            lastKnownLocation,
+            ...(recordSignalLoss ? {
+              lastSignalLostAt: Date.now(),
+              connectionEvents: { [`lost_${lastKnownLocation.sampledAt}_${lastKnownLocation.seq ?? 0}`]: {
+                type: "signal_lost", observedAt: Date.now(), location: lastKnownLocation,
+              } },
+            } : {}),
+          }, { merge: true });
+        }
         return true;
       });
     });
@@ -622,6 +650,7 @@ function persistActiveRideLifecycle(
     currentStopIndex,
     hasDepartedOrigin,
     terminalArrival,
+    hasTelemetry: journeyLocation(data) !== null,
     lastRouteVersion: Number.isSafeInteger(data.routeVersion) && Number(data.routeVersion) > 0 ? Number(data.routeVersion) : 0,
     delayMinutes,
     delayUpdatedAt,
@@ -667,8 +696,10 @@ function persistActiveRideLifecycle(
             FieldValue.serverTimestamp(), Number(data.currentStopIndex),
           );
           const activating = checkpoint.tripState === "in_service" && sessionData?.status !== "active";
-          if (activating || Object.keys(stopsReached).length > 0) {
+          const firstLocation = !sessionData?.firstKnownLocation ? journeyLocation(data) : null;
+          if (activating || firstLocation || Object.keys(stopsReached).length > 0) {
             transaction.set(sessionRef, {
+              ...(firstLocation ? { firstKnownLocation: firstLocation, firstTelemetryAt: firstLocation.sampledAt } : {}),
               ...(activating ? {
                 status: "active",
                 startTime: sessionData?.startTime ?? Date.now(),
@@ -1039,6 +1070,8 @@ export function startTripStateEngine(): () => Promise<void> {
             );
             transaction.set(sessionRef!, {
               status: "completed",
+              ...(newerJourneyLocation(data, session?.data()?.lastKnownLocation)
+                ? { lastKnownLocation: newerJourneyLocation(data, session?.data()?.lastKnownLocation) } : {}),
               terminalArrivalConfirmedAt: completionTimeMs,
               endTime: Date.now(),
               ...(Object.keys(stopsReached).length > 0 ? { stopsReached } : {}),
@@ -1212,7 +1245,7 @@ export function startTripStateEngine(): () => Promise<void> {
     // RTDB is the live-presence source. Preserve the final offline lifecycle
     // state only if a newer session has not claimed this bus.
     trackBackgroundTask(
-      persistOfflineFleetState(data, new Date().toISOString()),
+      persistOfflineFleetState(data, new Date().toISOString(), undefined, true),
       `[TripState] Failed to persist removed node ${nodeKey}:`,
     );
     processedTelemetry.delete(nodeKey);

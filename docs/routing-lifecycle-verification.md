@@ -762,3 +762,136 @@ general UI polish, assignment-ID simplification, open live-data issue, new Roads
 dependency, production record, merge, or deployment was changed. Only routing,
 its lifecycle/cleanup/analytics dependencies, shared map selection, regression
 fixtures and this report are in the diff.
+
+## Follow-up: active legs and complete ride history (2026-10-17)
+
+The user's follow-up explicitly includes route-leg styling and retained admin
+history. This extends the earlier scope to the following changes:
+
+- `routeLegPaths` projects stops onto the existing directional road, preserving
+  itinerary order through crossings, and cuts road segments at those projections.
+  `DirectionsRoute` draws the entire road grey and only the backend next-stop
+  leg blue. Index zero previews the first leg; absent/invalid progress stays grey.
+  No straight stop-to-stop chords or extra provider requests are introduced.
+  Full-route endpoints remain anchored to the provider's first/last road point,
+  preserving legal terminal detours even when the path revisits an endpoint
+  coordinate. `routing-followup-endpoint-leg-red.log` captures the red regression
+  before this correction; the ordered-leg suite passes with the correction.
+- Passenger maps use the selected bus's progress. Fleet views highlight the
+  union of the buses' own active legs, rather than copying the first bus's index.
+  Admin reverse overlays now supply stops in reverse travel order. A full grey
+  configured route remains underneath each bus's own dynamic geometry.
+- `activateReroute` stores immutable `firstStopIndex` with versioned geometry:
+  one for a ready itinerary, or the first remaining stop at computation time.
+  The frontend retains that boundary while progress advances, so a partial
+  reroute starting at the bus is not mistaken for a complete origin-to-terminal
+  path. Legacy geometry without the boundary stays grey. Stop-coordinate keys
+  and deduplicated index keys prevent ordinary location ticks from rebuilding
+  Google polylines or repeating ordered projections.
+- Street-level browser inspection exposed a separate icon registration bug:
+  the default pin anchor placed the passenger arrow approximately 22 pixels and
+  the admin arrow approximately 40 pixels above the reported coordinate in this
+  fixture. Both custom glyphs now use centered SDK anchors, and the admin label
+  is positioned outside the square glyph box. The real-SDK regression compares
+  glyph DOM centers against the map's public geographic projection with a
+  three-pixel tolerance. It fails before the correction and passes afterwards
+  (`routing-followup-visual-anchor-red.log` / `-green.log`). This corrects visual
+  registration without moving the selected GNSS coordinate or adding a lane offset.
+- `journeyLocation` records validated raw accepted coordinates, sample time,
+  sequence and receipt time, with timestamp/sequence rollback protection.
+  `persistActiveRideLifecycle` records the first available fix once per session;
+  completion, manual early termination and signal loss retain the last available
+  fix. Signal-loss snapshots also remain in `bus_locations`. Explicit signal-loss
+  evidence participates in duplicate suppression, including after completion.
+  The red regression in `routing-followup-shutdown-red.log` reproduced a dropped
+  completed-terminal disconnect; the corresponding test passes after the fix.
+- `ride_sessions/{id}` retains arming/departure/end times, ordered `stopsReached`,
+  the passenger manifest, first/last fixes and per-sample signal-loss events.
+  Existing stop records retain their original timestamps/names; recovered missing
+  records remain labelled as recovery evidence rather than an invented arrival.
+- Clearing live chat now atomically copies each message to the same session's
+  `archivedMessages` before deleting its live copy. Batches contain at most 200
+  messages/400 writes and retries keep the original message IDs.
+  Message sending also checks the archive, preserving request-ID replay and
+  rejecting changed content after a clear. Archive transactions read the parent
+  session and deletion job so concurrent history deletion cannot recreate
+  descendants. New Firestore rules restrict archives to current session operators and prohibit client
+  mutations. Admin history merges live and archived messages without duplicate
+  IDs and exposes older messages and older rides on request. Explicit terminal
+  history deletion still removes the session and all its descendants.
+
+History is associated with an authorized ride beginning at arming; powering a
+device alone does not fabricate a passenger service or bypass bus/driver locks.
+The device's first available fix and observed signal loss are distinguishable
+from service departure/completion. Without a shutdown packet, the server cannot
+know the exact instant of an engine switch-off: it saves the last **received**
+fix when signal loss/cleanup is observed (the existing stale sweep defaults to
+five minutes). No every-second raw GNSS archive or new retention guarantee is
+claimed. Reboot with no completed terminal evidence conservatively resumes the
+existing journey; overlapping endpoint geofences remain unresolved.
+
+Additional regression evidence: two-stop and 26-stop journeys through real
+ingestion, listeners, recovery and simulated transactional persistence assert
+all ordered stop records, original passenger/chat identity, terminal confirmation,
+return arming after restart and no midroute turnaround during a long traffic
+pause. Cold-boot replays reset the device sequence counter while retaining fresh
+device timestamps, exercising actual ingestion ordering as well as recovery.
+Pure road-leg tests cover both directions, between-vertex stop projections,
+loops/crossings, partial reroutes and unavailable geometry. The real Maps SDK
+replay checks full grey directional paths and a blue-leg handoff in both actual
+passenger/admin components, alongside marker movement, uncertainty and rejection
+of an older revision. The authenticated Firebase browser journey additionally
+sends a real protected chat message, completes service through device HTTP
+telemetry, clears live chat, and checks the retained archive and raw terminal fix
+in the actual admin history component before explicit history deletion.
+
+Maps SDK replay uses cached independently computed Google geometry and simulated
+stores; the Firebase browser suite uses actual disposable Auth/Firestore/RTDB
+with a synthetic map/provider boundary. These are complementary tests, not a
+claim of production-cloud transport or a physical road test. No lane-accuracy,
+GNSS power-off timing or measured physical latency improvement is claimed.
+The existing telemetry timing/unit tests and bounded provider-call checks are
+rerun; unrelated ingestion, firmware and latency policy remain unchanged.
+
+PR review follow-up: the initial hosted web job stopped at the exact-source
+regression mapping gate. `qa/routing-test-map.mjs` now links the changed critical
+sources to their specific assertions. The documentation mirror required for the
+new live replay README is included. The CodeQL network-to-file comment concerns
+the deliberate fixed-path public geometry JSON cache; the probe now bounds and
+validates decoded coordinates/metrics, re-encodes the geometry, and persists an
+explicit schema rather than spreading provider objects or saving upstream error
+content. Copilot's initial review was unavailable due to account quota; CodeRabbit
+and hosted checks must be reported from their actual final-head state, separately
+from local test execution.
+
+### Final follow-up local execution record
+
+These runs supersede earlier local attempts. Product sources were unchanged
+between the final full-suite run and the follow-up commit; this record and PR
+metadata were completed afterwards. Emulator-only cases skipped by the normal
+backend invocation were executed explicitly in the isolated suite.
+
+| Scope | Observed result |
+|---|---|
+| Full backend (`npm test --workspace=backend -- --pool=forks --maxWorkers=2`) | **1,199 passed**; 57 emulator-only cases skipped in this invocation |
+| Full frontend (`npm test --workspace=frontend -- --pool=forks --maxWorkers=2`) | **650 passed**, 77 files |
+| Root Node scripts (`node --test scripts/*.test.mjs`) | **138 passed** |
+| Disposable Firebase rules/HTTP integration | **57 passed**, zero failed/blocked; `GREEN_FOR_EXECUTED_EMULATOR_SCOPE` |
+| Authenticated mobile/desktop Firebase browser suite, including archived replay | **38 passed**, zero failed/skipped/flaky; `GREEN_FOR_EXECUTED_BROWSER_SCOPE` |
+| Protected HTTP authorization against disposable backend | **8 passed**, zero failed/blocked; `GREEN_FOR_EXECUTED_API_SCOPE` |
+| Admin access browser regression | **22 passed** |
+| Offline production marker-hook browser simulations | **2 passed** |
+| Actual passenger/admin Google Maps SDK replay | **1 passed**, including current-leg handoff, stable polyline identity, and glyph-to-projection registration |
+| General Places/browser recipes | **8 passed**; four production-page authenticated responsive cases skipped because no saved production auth state was supplied |
+| Lint, frontend/harness types, backend compilation | Passed |
+| Frontend production Webpack build | Passed, 11 static pages; service worker generated and CSP hashes checked; source `firebase.json` restored exactly |
+| OpenAPI/UI/QA configuration contracts | Passed; 71 registered HTTP operations. The broad product acceptance catalog remains `NOT_RELEASE_READY`, not a claim that every feature/hardware gate passed |
+| Production dependency audit (`--omit=dev --omit=optional`) | Zero reported vulnerabilities |
+
+The actual authenticated Firebase suite above is separate from the four skipped
+production-page cases, and is not represented as their execution. Default local
+Turbopack still has the documented external dependency-junction limitation; hosted
+CI installs dependencies normally and must verify its own strict production build.
+The local post-build origin check has no configured deployment URL and is not
+counted as deployed-origin acceptance. Hosted CI and review disposition are
+reported on the pull request for its final pushed commit.

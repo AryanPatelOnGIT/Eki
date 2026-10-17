@@ -16,7 +16,7 @@ export const paths = { forward: decodePolyline(route.forwardPolyline!), reverse:
 type State = { direction: "forward" | "reverse"; index: number; bus: ActiveBusEntry; entries: ActiveBusEntry[] };
 const listeners = new Set<() => void>();
 let seq = 0;
-function create(direction: State["direction"], index: number, reliable = true, version?: number): State {
+function create(direction: State["direction"], index: number, reliable = true, version?: number, nextStopIndex = 1): State {
   const path = paths[direction], point = path[index], next = path[Math.min(index + 1, path.length - 1)];
   const heading = (Math.atan2(next.lng - point.lng, next.lat - point.lat) * 180 / Math.PI + 360) % 360;
   const now = Date.now(), revision = version ?? (direction === "forward" ? 4 : 5);
@@ -24,7 +24,7 @@ function create(direction: State["direction"], index: number, reliable = true, v
     sessionId: `simulated-${direction}`, direction, directionState: "resolved", routeDirection: direction,
     routeVersion: revision, routeSource: "configured", routeState: "ON_ROUTE",
     activeRouteId: `${route.id}:configured:${direction}`, status: "active", tripState: "in_service",
-    deviceState: "online", motionState: "moving", currentStopIndex: 0,
+    deviceState: "online", motionState: "moving", currentStopIndex: nextStopIndex,
     lat: point.lat, lng: point.lng + (reliable ? 0 : .0002), speed: 20, heading,
     timestamp: now, backendReceivedAt: now, seq: ++seq,
     rawLocation: { lat: point.lat, lng: point.lng + .0002, speed: 20, heading, gpsHdop: 2,
@@ -36,8 +36,8 @@ function create(direction: State["direction"], index: number, reliable = true, v
   return { direction, index, bus, entries: [bus] };
 }
 let current = create("forward", 20);
-export function publish(direction = current.direction, index = current.index, reliable = true, version?: number) {
-  current = create(direction, index, reliable, version); listeners.forEach(listener => listener());
+export function publish(direction = current.direction, index = current.index, reliable = true, version?: number, nextStopIndex = direction === current.direction ? current.bus.currentStopIndex : 1) {
+  current = create(direction, index, reliable, version, nextStopIndex); listeners.forEach(listener => listener());
 }
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const useSimulation = () => useSyncExternalStore(subscribe, () => current);

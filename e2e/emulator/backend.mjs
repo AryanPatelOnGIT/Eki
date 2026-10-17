@@ -177,6 +177,7 @@ const control = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/evidence') {
       const ride = (await db.collection('ride_sessions').doc('qa_session').get()).data();
       const messages = await db.collection('ride_sessions').doc('qa_session').collection('messages').get();
+      const archivedMessages = await db.collection('ride_sessions').doc('qa_session').collection('archivedMessages').get();
       const feedbacks = await db.collection('feedbacks').get();
       const buses = await db.collection('buses').get();
       const sessions = await db.collection('ride_sessions').get();
@@ -185,7 +186,7 @@ const control = createServer(async (req, res) => {
       const routes = await db.collection('routes').get();
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ fixtureProcessId: process.pid, passengers: ride?.passengers ?? {}, passengerIds: ride?.passengerIds ?? [],
-        messages: messages.docs.map(doc => ({ id: doc.id, ...doc.data() })), feedbacks: feedbacks.docs.map(doc => doc.data()),
+        messages: messages.docs.map(doc => ({ id: doc.id, ...doc.data() })), archivedMessages: archivedMessages.docs.map(doc => ({ id: doc.id, ...doc.data() })), feedbacks: feedbacks.docs.map(doc => doc.data()),
         buses: buses.docs.map(doc => ({ id: doc.id, ...doc.data() })),
         sessions: sessions.docs.map(doc => ({ id: doc.id, ...doc.data() })),
         completions: completions.docs.map(doc => ({ id: doc.id, ...doc.data() })),
