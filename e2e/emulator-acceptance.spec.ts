@@ -434,7 +434,8 @@ test('authenticated telemetry completes the joined ride and arms a distinct retu
   expect(middle.ok()).toBe(true); expect((await middle.json()).statuses).toEqual([202, 202]);
   await expect.poll(async () => (await evidence(request)).live.currentStopIndex).toBe(2);
   const end = await request.post(`${control}/telemetry/end`);
-  expect(end.ok()).toBe(true); expect((await end.json()).statuses).toEqual([202]);
+  const terminalResult = await end.json();
+  expect(end.ok(), JSON.stringify(terminalResult)).toBe(true); expect(terminalResult.statuses).toEqual([202, 202, 202]);
   await expect(page.getByText('Route ended', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect.poll(async () => (await evidence(request)).sessions.filter((ride: { automaticTurnaround?: boolean }) => ride.automaticTurnaround).length,
     { timeout: 15000 }).toBe(1);
@@ -444,8 +445,8 @@ test('authenticated telemetry completes the joined ride and arms a distinct retu
   expect(original).toMatchObject({ status: 'completed', direction: 'forward', passengerIds: ['qa_passenger'] });
   expect(original.passengers.qa_passenger).toEqual(joined);
   expect(returning).toMatchObject({ direction: 'reverse', previousSessionId: 'qa_session', passengers: {} });
-  // The real engine may already advance armed to active at the return origin.
-  expect(['armed', 'active']).toContain(returning.status);
+  expect(returning.status).toBe('armed');
+  expect(completed.live).toMatchObject({ direction: 'reverse', tripState: 'pre_departure', hasDepartedOrigin: false });
   expect(returning.id).not.toBe('qa_session');
   expect(completed.lock.sessionId).toBe(returning.id);
   expect(completed.completions).toEqual([expect.objectContaining({ id: 'qa_session', sessionId: 'qa_session', direction: 'forward' })]);

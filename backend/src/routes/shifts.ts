@@ -634,6 +634,10 @@ async function startShift(req: AuthenticatedRequest, res: Response) {
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+      // A deliberate new shift consumes any earlier terminal recovery intent.
+      transaction.set(db.collection("bus_locations").doc(assignment.busId), {
+        terminalJourney: FieldValue.delete(),
+      }, { merge: true });
       return {
         sessionId: proposedSessionRef.id,
         armedAt: proposedArmedAt,

@@ -17,7 +17,7 @@ import { withoutLiveRouteContext } from "../lib/liveRouteContext";
 import { SerializedChangeWriter } from "./serializedChangeWriter";
 import { restoreDurableRide } from "./durableRideRecovery";
 import { lifecycleIntakeFingerprint } from "./lifecycleIntake";
-import { reduceTripState } from "./tripStateReducer";
+import { reduceTripState, type TerminalArrivalEvidence } from "./tripStateReducer";
 import { missingStopHistory } from "./rideProgressHistory";
 import {
   normalizeRideDirection,
@@ -82,6 +82,8 @@ interface RideCheckpoint {
   tripState: "pre_departure" | "in_service";
   currentStopIndex: number;
   hasDepartedOrigin: boolean;
+  terminalArrival?: TerminalArrivalEvidence | null;
+  lastRouteVersion?: number;
 }
 const processedTelemetry = new LruCache<string, TelemetrySample>(MAX_CACHE_ENTRIES);
 
@@ -103,7 +105,7 @@ function readIntervalMs(value: string | undefined, fallback: number, minimum: nu
 const STALE_BUS_MS = readIntervalMs(process.env.BUS_STALE_MS, 300_000, 90_000);
 const AUTOMATIC_TURNAROUND_DWELL_MS = readIntervalMs(
   process.env.AUTOMATIC_TURNAROUND_DWELL_MS,
-  0,
+  30_000,
   0,
 );
 const TURNAROUND_CLAIM_STALE_MS = 60_000;
@@ -190,6 +192,7 @@ async function maybeArmAutomaticTurnaround(
       eligibleAt: Number(data.turnaroundEligibleAt),
       minimumSampleTimestamp: Number(data.turnaroundSampledAt ?? data.turnaroundEligibleAt),
       motionState: data.motionState,
+      gpsHdop: data.gpsHdop,
       position: { lat: Number(data.lat), lng: Number(data.lng) },
       destination: completedDestination,
     })
@@ -220,6 +223,7 @@ async function maybeArmAutomaticTurnaround(
         eligibleAt: Number(live.turnaroundEligibleAt),
         minimumSampleTimestamp: Number(live.turnaroundSampledAt ?? live.turnaroundEligibleAt),
         motionState: live.motionState,
+        gpsHdop: live.gpsHdop,
         position: { lat: Number(live.lat), lng: Number(live.lng) },
         destination: completedDestination,
         })
@@ -242,11 +246,12 @@ async function maybeArmAutomaticTurnaround(
   let durableCreated = false;
   try {
     durableCreated = await workerTransaction(db, async (transaction) => {
-      const [lock, completedSession, driver, bus] = await Promise.all([
+      const [lock, completedSession, driver, bus, fleet] = await Promise.all([
         transaction.get(lockRef),
         transaction.get(completedSessionRef),
         transaction.get(driverRef),
         transaction.get(busRef),
+        transaction.get(db.collection("bus_locations").doc(busId)),
       ]);
       const completed = completedSession.data();
       const assignedRoutes = Array.isArray(bus.data()?.assignedRoutes)
@@ -258,6 +263,12 @@ async function maybeArmAutomaticTurnaround(
         lock.exists ||
         !completedSession.exists ||
         completed?.status !== "completed" ||
+        completed?.direction !== previousDirection ||
+        !Number.isFinite(completed?.terminalArrivalConfirmedAt) ||
+        fleet.data()?.terminalJourney?.sessionId !== previousSessionId ||
+        fleet.data()?.terminalJourney?.direction !== previousDirection ||
+        fleet.data()?.terminalJourney?.consumedBy !== null ||
+        fleet.data()?.terminalJourney?.directionEndpointVersion !== endpointSnapshotVersion(naturalStops) ||
         completed?.busId !== busId ||
         completed?.routeId !== routeId ||
         completed?.driverId !== driverId ||
@@ -321,6 +332,9 @@ async function maybeArmAutomaticTurnaround(
         previousSessionId,
         updatedAt: FieldValue.serverTimestamp(),
       });
+      transaction.set(db.collection("bus_locations").doc(busId), {
+        terminalJourney: { consumedBy: sessionRef.id },
+      }, { merge: true });
       return true;
     });
     if (!durableCreated) return false;
@@ -347,6 +361,7 @@ async function maybeArmAutomaticTurnaround(
         tripState: "pre_departure",
         currentStopIndex: 0,
         hasDepartedOrigin: false,
+        terminalArrival: null,
         delayMinutes: 0,
         delayUpdatedAt: 0,
         directionState: "resolved",
@@ -576,6 +591,7 @@ function persistActiveRideLifecycle(
   currentStopIndex: number,
   hasDepartedOrigin: boolean,
   stops: RouteStop[],
+  terminalArrival: TerminalArrivalEvidence | null = null,
 ): Promise<RideCheckpoint | undefined> {
   const documentId = activeRideDocumentId(data);
   const busId = normalizeIdentifier(data.busId);
@@ -605,6 +621,8 @@ function persistActiveRideLifecycle(
     tripState,
     currentStopIndex,
     hasDepartedOrigin,
+    terminalArrival,
+    lastRouteVersion: Number.isSafeInteger(data.routeVersion) && Number(data.routeVersion) > 0 ? Number(data.routeVersion) : 0,
     delayMinutes,
     delayUpdatedAt,
   };
@@ -637,6 +655,10 @@ function persistActiveRideLifecycle(
           tripState: sameSession && durable?.tripState === "in_service" ? "in_service" : tripState,
           currentStopIndex: Math.max(currentStopIndex, durableIndex),
           hasDepartedOrigin: hasDepartedOrigin || (sameSession && durable?.hasDepartedOrigin === true),
+          terminalArrival: sameSession && durable?.terminalArrival?.lastSampledAt > Number(data.timestamp)
+            ? durable.terminalArrival : terminalArrival,
+          lastRouteVersion: Math.max(state.lastRouteVersion,
+            sameSession && Number.isSafeInteger(durable?.lastRouteVersion) ? Number(durable.lastRouteVersion) : 0),
         };
         const sessionData = session.data();
         if (session.exists && ["pending", "armed", "active"].includes(sessionData?.status)) {
@@ -816,7 +838,7 @@ export function startTripStateEngine(): () => Promise<void> {
     if (data.tripState === "completed") {
       try {
         if (await restoreDurableRide({ busId: data.busId, routeId: data.routeId }, undefined,
-          typeof data.turnaroundClaimId === "string" ? data.turnaroundClaimId : null)) return;
+          typeof data.turnaroundClaimId === "string" ? data.turnaroundClaimId : null, false)) return;
         const armed =
           Number.isFinite(data.lat) && Number.isFinite(data.lng)
             ? await maybeArmAutomaticTurnaround(
@@ -854,7 +876,7 @@ export function startTripStateEngine(): () => Promise<void> {
     const isNewTelemetry =
       Number.isFinite(telemetryTimestamp) &&
       (!previousTelemetry || telemetryTimestamp > previousTelemetry.timestamp);
-    let { tripState, currentStopIndex, hasDepartedOrigin } = isNewTelemetry
+    let { tripState, currentStopIndex, hasDepartedOrigin, terminalArrival } = isNewTelemetry
       ? reduceTripState({
       lat: data.lat,
       lng: data.lng,
@@ -866,21 +888,28 @@ export function startTripStateEngine(): () => Promise<void> {
       currentStopIndex: Number.isInteger(data.currentStopIndex) ? data.currentStopIndex : 0,
       stops,
       hasDepartedOrigin: data.hasDepartedOrigin === true,
+      terminalArrival: data.terminalArrival,
+      timestamp: telemetryTimestamp,
+      now: Date.now(),
+      gpsHdop: data.gpsHdop,
+      speed: data.speed,
       })
       : {
           tripState: data.tripState,
           currentStopIndex: data.currentStopIndex,
           hasDepartedOrigin: data.hasDepartedOrigin === true,
+          terminalArrival: data.terminalArrival ?? null,
         };
 
     if (tripState === "pre_departure" || tripState === "in_service") {
       // Commit lifecycle and all crossed-stop history together before exposing
       // the next index. A failed write leaves the same sample retryable.
-      const checkpoint = await persistActiveRideLifecycle(data, tripState, currentStopIndex, hasDepartedOrigin, stops);
-      if (checkpoint) ({ tripState, currentStopIndex, hasDepartedOrigin } = checkpoint);
+      const checkpoint = await persistActiveRideLifecycle(data, tripState, currentStopIndex, hasDepartedOrigin, stops, terminalArrival ?? null);
+      if (checkpoint) ({ tripState, currentStopIndex, hasDepartedOrigin, terminalArrival } = checkpoint);
     }
     const liveStateChanged = tripState !== data.tripState || currentStopIndex !== data.currentStopIndex ||
-      hasDepartedOrigin !== (data.hasDepartedOrigin === true);
+      hasDepartedOrigin !== (data.hasDepartedOrigin === true) ||
+      JSON.stringify(terminalArrival ?? null) !== JSON.stringify(data.terminalArrival ?? null);
     if (liveStateChanged && tripState !== "completed") {
       try {
         // Guarded write: the plain update() could recreate a node the stale
@@ -909,6 +938,7 @@ export function startTripStateEngine(): () => Promise<void> {
             tripState,
             currentStopIndex,
             hasDepartedOrigin,
+            terminalArrival: terminalArrival ?? null,
           };
         });
       } catch (error) {
@@ -1009,6 +1039,7 @@ export function startTripStateEngine(): () => Promise<void> {
             );
             transaction.set(sessionRef!, {
               status: "completed",
+              terminalArrivalConfirmedAt: completionTimeMs,
               endTime: Date.now(),
               ...(Object.keys(stopsReached).length > 0 ? { stopsReached } : {}),
               updatedAt: FieldValue.serverTimestamp(),
@@ -1024,6 +1055,19 @@ export function startTripStateEngine(): () => Promise<void> {
           ) {
             transaction.delete(lockRef);
           }
+          // A bounded operational checkpoint survives transient RTDB cleanup.
+          // History alone must never recreate an already consumed return.
+          transaction.set(db.collection("bus_locations").doc(data.busId), {
+            terminalJourney: {
+              busId: data.busId, routeId: data.routeId, driverId: data.driverId,
+              sessionId: data.sessionId, direction,
+              directionEndpointVersion: endpointSnapshotVersion(naturalStops),
+              completedAt: completionTimeMs, turnaroundEligibleAt,
+              turnaroundSampledAt: Math.max(Number(data.timestamp), turnaroundEligibleAt), consumedBy: null,
+              currentStopIndex, hasDepartedOrigin: true,
+              originStopId: stops[0]?.id ?? null, destinationStopId: stops.at(-1)?.id ?? null,
+            },
+          }, { merge: true });
           return { completedAtMs: completionTimeMs, eligibleAt: turnaroundEligibleAt };
         });
         // A concurrent manual termination or replacement session won. Do not
@@ -1032,6 +1076,10 @@ export function startTripStateEngine(): () => Promise<void> {
         completionTimeMs = persistedCompletion.completedAtMs;
         completionTimestamp = new Date(completionTimeMs).toISOString();
         turnaroundEligibleAt = persistedCompletion.eligibleAt;
+        console.info("[TripState] Terminal service confirmed", {
+          busId: data.busId, routeId: data.routeId, sessionId: data.sessionId,
+          direction, sampledAt: telemetryTimestamp, completedAt: completionTimeMs, turnaroundEligibleAt,
+        });
         if (activeRideId) {
           activeRideWrites.invalidate(activeRideId);
         }
@@ -1043,6 +1091,8 @@ export function startTripStateEngine(): () => Promise<void> {
             tripState,
             currentStopIndex,
             hasDepartedOrigin,
+            terminalArrival: null,
+            terminalArrivalConfirmedAt: completionTimeMs,
             completedAt: completionTimeMs,
             ...(typeof data.sessionId === "string" ? { lastCompletedSessionId: data.sessionId, lastCompletedAt: completionTimeMs, lastCompletedRouteId: data.routeId } : {}),
             turnaroundEligibleAt,
