@@ -69,6 +69,15 @@ projection rounding. The independent 3 px registration check remains intact.
 
 ## Environment and limits
 
+The first hosted run of `31cd343` stopped at `qa:budget` before running web tests:
+the new abandoned-return emulator regression was not linked to
+`abandonedRideReconciler.ts` in the exact-source QA map. The follow-up maps both
+the reconciler and its policy to that existing L2 assertion under `TRIP14`.
+The gate is reproduced using PR base
+`a523731295d37c9ecaf1a917cebefa4502b34dab`; no acceptance requirement or workflow
+condition is relaxed. The downstream evidence failure was caused by the stopped
+web job producing no execution artifacts.
+
 Node 24.19.0; Java 21; Chromium via Playwright. The authenticated app runs in a
 separate managed checkout without `.env` files. Existing user changes and
 credentials in the primary checkout are preserved. A process-local
