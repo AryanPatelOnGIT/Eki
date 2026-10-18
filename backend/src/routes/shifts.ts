@@ -882,7 +882,15 @@ router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Respons
       .doc(activeRideId(assignment.busId, assignment.routeId));
     const lockRef = activeBusLockRef(assignment.busId);
     const endedAt = Date.now();
-    const liveAtEnd = (await rtdb.ref(`activeBuses/${activeRideId(assignment.busId, assignment.routeId)}`).once("value")).val();
+    let liveAtEnd: Record<string, unknown> | null = null;
+    try {
+      const value = (await rtdb.ref(`activeBuses/${activeRideId(assignment.busId, assignment.routeId)}`).once("value")).val();
+      if (value && typeof value === "object" && !Array.isArray(value)) liveAtEnd = value;
+    } catch (error) {
+      // History enrichment must not prevent the durable stop/lock release.
+      // Keep the previously recorded location when a fresh snapshot is absent.
+      console.warn("[Shifts] Final location unavailable during manual stop:", error);
+    }
     const outcome = await db.runTransaction(async (transaction) => {
       const [currentSession, activeRide, lock] = await Promise.all([
         transaction.get(sessionRef),
@@ -909,7 +917,7 @@ router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Respons
         }
         transaction.set(sessionRef, {
           status: "interrupted",
-          ...(liveAtEnd?.sessionId === sessionId && newerJourneyLocation(liveAtEnd, current.lastKnownLocation)
+          ...(liveAtEnd && liveAtEnd.sessionId === sessionId && newerJourneyLocation(liveAtEnd, current.lastKnownLocation)
             ? { lastKnownLocation: newerJourneyLocation(liveAtEnd, current.lastKnownLocation) } : {}),
           endTime: endedAt,
           interruptionReason: "manual_end_early",

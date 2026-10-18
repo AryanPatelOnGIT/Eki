@@ -46,15 +46,31 @@ it("keeps the whole road grey and advances only the blue leg without provider ca
   expect(active()).toHaveLength(2); // fleet view preserves both buses' own legs
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[]} />);
   expect(active()).toHaveLength(0);
+  expect(grey()).toHaveLength(1);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(0);
+  view.rerender(<DirectionsRoute {...props} />);
   expect(grey()).toHaveLength(0);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(1);
-  view.rerender(<DirectionsRoute {...props} color="#22c55e" nextStopIndices={[]} />);
+  view.rerender(<DirectionsRoute {...props} color="#22c55e" />);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === "#22c55e")).toHaveLength(1);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(0);
   expect(state.request).not.toHaveBeenCalled();
   view.unmount();
   expect(state.lines.filter(line => line.map)).toHaveLength(0);
   vi.unstubAllGlobals();
+});
+
+it.each([[], [-1], [1.5], [3], [Number.MAX_SAFE_INTEGER]].map(indices => ({ indices })))("keeps a live road grey without inventing an active leg for $indices", ({ indices: nextStopIndices }) => {
+  state.map = {};
+  vi.stubGlobal("google", { maps: { Polyline: class {
+    constructor(options: google.maps.PolylineOptions) { Object.assign(this, { options, map: options.map }); state.lines.push(this as unknown as ObservedLine); }
+    setMap(map: google.maps.Map | null) { Object.assign(this, { map }); }
+  } } });
+  render(<DirectionsRoute stops={[{ lat: 23, lng: 72 }, { lat: 23.01, lng: 72.01 }, { lat: 23.02, lng: 72.02 }]} polyline="_ekkC_omvLo}@o}@o}@o}@" direction="forward" color="#3b82f6" nextStopIndices={nextStopIndices} hasBuses />);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#71717a")).toHaveLength(1);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#3b82f6")).toHaveLength(0);
+  expect(state.request).not.toHaveBeenCalled();
+  cleanup(); vi.unstubAllGlobals();
 });
 it("keeps failed or corrupt repair unavailable", async () => {
   state.request.mockResolvedValue({ reversePolyline: "~" });

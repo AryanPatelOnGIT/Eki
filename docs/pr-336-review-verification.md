@@ -141,3 +141,58 @@ Detailed commands, individual results, initial failures, screenshots, candidate
 controls and uncovered cases are retained locally under
 `artifacts/qa/interaction-audit/2026-10-18-pr336/`, with supporting logs/results
 under `artifacts/pr336-*` and `artifacts/routing-in-app-maps/`.
+
+
+## Latest Falak/Aryan comments and issue #337
+
+Follow-up against `516ef2a60dba2feac1dc4d6b3ccfe58c7350c78d` on
+18 October 2026. Sources:
+[Falak's stop-progress comment](https://github.com/notnamansinha/Eki/pull/336#issuecomment-6251309241),
+[Aryan's review](https://github.com/notnamansinha/Eki/pull/336#issuecomment-6252288143)
+and [issue #337](https://github.com/notnamansinha/Eki/issues/337).
+
+| Finding | Resolution and regression |
+| --- | --- |
+| Passenger proximity can override published progress | Remove the separate nearest-stop/35 m entry/45 m exit counter. Passenger timeline, passed labels, ETA itinerary and map legs use validated backend indices in travel order. Missing/invalid progress remains unknown; missing ETA never means passed. Cover downstream proximity in both directions, corrections, colocated stops, removal/replacement, fleet selection and unknown indices. Admin displays use the same validation and count only already passed stops. |
+| Dynamic-only buses paint the full configured road blue | Distinguish an omitted active-leg list (configured preview/editor colour) from an empty live list (grey underlay). Cover passenger and admin dynamic-only and mixed fleets. |
+| Stop advancement rejects a reroute but leaves REROUTING latched | Check publication success. On rejection, release only the matching request/session/direction/version into OFF_ROUTE with the existing persisted backoff. A retry recomputes the latest required stops. Protect a newer request and avoid recording expected publication rejection as a provider/background failure. |
+| Optional final RTDB location read prevents manual termination | Treat snapshot capture as history enrichment. A failed read preserves the previously recorded location while the Firestore transaction interrupts the session and releases only its own active ride/lock. Retained manifest/chat and live retirement remain asserted. |
+| BRAVE-001: operator validation is offscreen | Render and focus an accessible alert inside the operator form for validation and API errors; retain the draft after an API failure. Test empty/repeated/incomplete submission and server rejection. |
+| PASSENGER-001: fallback endpoint appears selected | Pass explicit destination selection separately from the camera fallback. Empty, selected and cleared destination states are covered at the workspace and actual timeline boundaries. |
+| BRAVE-002: archive permission denied | A read-only cloud inspection found deployed Firestore rules released on 8 October omit the archivedMessages match that is already in this PR. Retain operator-only access and strengthen current-driver, stale-authorization and wrong-assignment regressions. Deploy the reviewed rules after merge and repeat with a fresh authorized browser session. No cloud configuration or claims were changed. |
+
+The related-code audit covered all frontend consumers of currentStopIndex,
+passed/next-stop rendering, ETA slicing and configured/dynamic overlays, both
+activateReroute callers and the final-location/manual-stop path. The departure
+caller already handles publication refusal; the deviation caller was missing
+that recovery. No other local proximity counter or missing-ETA arrival inference
+was found in these audited frontend paths. This is bounded audit evidence,
+not a guarantee that no future or unrelated bug can exist.
+
+### Follow-up validation and remaining gates
+
+- Full frontend suite: 688 tests passed in 78 files.
+- Full backend suite: 1,229 tests passed; 58 emulator-only tests skipped by
+  the normal unit command. After a nullable-value build correction, all 28
+  ride-session tests and the backend build passed again.
+- Root scripts: 138 tests passed. Frontend/backend lint, frontend TypeScript,
+  OpenAPI (71 operations), UI contracts, QA catalog validation and exact
+  PR-base source/test mapping passed. New source/test mappings cover the
+  request-rejection, optional-location and two issue #337 UI regressions.
+- Nine archive authorization assertions passed against the checked-in rules
+  using a disposable Firestore emulator on separate loopback ports: admin
+  get/list and current assigned-driver read allowed; passenger, guest, stale
+  admin, wrong driver assignment, client write and client delete rejected.
+  This focused rules check does not stand in for all 58 emulator assertions.
+- The first broad local browser attempt passed 38 of 40 executions before its
+  process deadline, including all four mobile/desktop 10 m boundary and
+  completion/return/history executions. A later attempt lost its backend
+  control endpoint. Separate QA work occupied the shared reserved ports.
+  Full local browser acceptance remains unverified for this follow-up;
+  required hosted checks must validate the pushed commit.
+- Issue #337 remains open: deployment of the archive rules, correlated logs
+  for the observed telemetry/readiness gaps, genuine passenger-role and
+  physical GNSS/latency acceptance require operational or hardware evidence.
+  The report does not establish a software cause for those observations.
+  No production deploy, service restart, live write, role/claim change,
+  physical device reset or private telemetry publication was performed.

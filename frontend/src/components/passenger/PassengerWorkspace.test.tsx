@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import PassengerWorkspace from "./PassengerWorkspace";
 import { BUS_EXPIRY_MS } from "@/lib/liveBusFreshness";
 import { setScenario } from "../../../../e2e/fixtures/state";
+import type { PassengerMapProps } from "@/components/maps/PassengerMap";
 configure({ asyncUtilTimeout: 5_000 });
 vi.mock("@/hooks/useAuth", async () => import("../../../../e2e/fixtures/state"));
 vi.mock("@/hooks/useLiveRouteCatalog", async () => import("../../../../e2e/fixtures/state"));
@@ -19,7 +20,7 @@ vi.mock("next/dynamic", () => ({ default: (loader: () => Promise<{ default: Comp
   const Loaded = lazy(loader);
   return function TestDynamic(props: Record<string, unknown>) { return <Suspense><Loaded {...props} /></Suspense>; };
 } }));
-vi.mock("@/components/maps/PassengerTrackingMap", () => ({ default: () => <div>QA map</div> }));
+vi.mock("@/components/maps/PassengerTrackingMap", () => ({ default: ({ targetStop, selectedDestinationStopId }: PassengerMapProps) => <div data-testid="tracking-map" data-target={targetStop.id} data-selected={selectedDestinationStopId ?? ""}>QA map</div> }));
 vi.mock("@/components/passenger/PassengerBoardingView", () => ({ default: ({ sessionId }: { sessionId: string }) => <div>Boarding {sessionId}</div> }));
 vi.mock("@/components/passenger/AccountTab", () => ({ default: () => <button>QA account control</button> }));
 vi.mock("@/components/shared/MessagingPanel", () => ({ default: () => <div>QA chat</div> }));
@@ -93,6 +94,20 @@ describe("passenger workspace navigation", () => {
 });
 
 describe("device preview lifecycle", () => {
+  it("keeps the preview camera fallback separate from destination selection and clearing", async () => {
+    render(<PassengerWorkspace />); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    const map = await screen.findByTestId("tracking-map");
+    expect(map.getAttribute("data-target")).toBe("b");
+    expect(map.getAttribute("data-selected")).toBe("");
+    await user.click(screen.getByRole("combobox", { name: "Destination station" }));
+    await user.click(screen.getByRole("option", { name: "Beta" }));
+    expect(map.getAttribute("data-selected")).toBe("b");
+    await user.click(screen.getByRole("combobox", { name: "Destination station" }));
+    await user.click(screen.getByRole("option", { name: "Choose destination station…" }));
+    expect(map.getAttribute("data-selected")).toBe("");
+    expect(map.getAttribute("data-target")).toBe("b");
+  });
   it("opens the unarmed stationary bus map and never exposes boarding or live chat", async () => {
     setScenario("device"); render(<PassengerWorkspace />); const user=userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));

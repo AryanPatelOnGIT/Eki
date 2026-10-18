@@ -909,6 +909,31 @@ async function requestReroute(
     if (!started.committed) return;
 
     const live = started.snapshot.val() as Record<string, unknown>;
+    const retryCurrentRequest = async (message: string) => {
+      const failures = readRerouteRetry(live.rerouteRetry, context)?.failures ?? 1;
+      const nextAttemptAt = Date.now() + rerouteBackoffMs(failures, jitter);
+      await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
+        // An empty local SDK cache must retry against the authoritative server value.
+        if (current === null) return null;
+        const currentLive = current as Record<string, unknown> | null;
+        if (!rerouteContextIsCurrent(currentLive, {
+          requestId,
+          routeVersion: expectedVersion,
+          sessionId: live.sessionId as string,
+          direction,
+        })) return;
+        return {
+          ...currentLive,
+          routeState: "OFF_ROUTE",
+          rerouteRequestId: null,
+          rerouteError: message,
+          rerouteFailedAt: { ".sv": "timestamp" },
+          rerouteRetry: {
+            context, failures, nextAttemptAt,
+          },
+        };
+      }, undefined, false);
+    };
     try {
       if (typeof live.sessionId !== "string") {
         throw new Error("Active trip has no rerouting session.");
@@ -936,7 +961,7 @@ async function requestReroute(
       if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) {
         throw new Error("Route configuration changed while rerouting.");
       }
-      await activateReroute(
+      const published = await activateReroute(
         nodeKey,
         requestId,
         expectedVersion,
@@ -949,30 +974,12 @@ async function requestReroute(
         undefined,
         Number.isInteger(live.currentStopIndex) ? Number(live.currentStopIndex) : undefined,
       );
+      // A successful provider response can still lose its publication lease
+      // when stop progress changes. Release only this request so telemetry can
+      // retry the current itinerary through the existing persisted backoff.
+      if (!published) await retryCurrentRequest("Route changed; retrying with live telemetry.");
     } catch (error) {
-      const failures = readRerouteRetry(live.rerouteRetry, context)?.failures ?? 1;
-      const nextAttemptAt = Date.now() + rerouteBackoffMs(failures, jitter);
-      await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
-        // An empty local SDK cache must retry against the authoritative server value.
-        if (current === null) return null;
-        const currentLive = current as Record<string, unknown> | null;
-        if (!rerouteContextIsCurrent(currentLive, {
-          requestId,
-          routeVersion: expectedVersion,
-          sessionId: live.sessionId as string,
-          direction,
-        })) return;
-        return {
-          ...currentLive,
-          routeState: "OFF_ROUTE",
-          rerouteRequestId: null,
-          rerouteError: "Route calculation failed; retrying with live telemetry.",
-          rerouteFailedAt: { ".sv": "timestamp" },
-          rerouteRetry: {
-            context, failures, nextAttemptAt,
-          },
-        };
-      }, undefined, false);
+      await retryCurrentRequest("Route calculation failed; retrying with live telemetry.");
       throw error;
     }
   } finally { finishProvider(); }

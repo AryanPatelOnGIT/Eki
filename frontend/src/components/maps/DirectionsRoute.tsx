@@ -7,6 +7,7 @@ import { auth } from "@/lib/firebaseAuth";
 import { apiRequest } from "@/lib/apiClient";
 import { routeDisplayPath } from "@/lib/routeDisplayPath";
 import { routeLegPaths } from "@/lib/routeLegPaths";
+import { publishedStopIndex } from "@/lib/publishedStopIndex";
 
 const geometryRequests = new Map<string, Promise<string>>();
 
@@ -59,7 +60,7 @@ interface DirectionsRouteProps {
   polylineQuality?: "HIGH_QUALITY";
   color?: string;
   hasBuses?: boolean;
-  /** Backend next-stop indices in travel order. Empty means no active leg. */
+  /** Backend indices in travel order. Omit for a colored preview; [] is a live road with no known active leg. */
   nextStopIndices?: readonly number[];
   /** First required stop in a dynamic path that starts at the bus. */
   firstStopIndex?: number;
@@ -100,8 +101,11 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
   }, [repairedPolyline, routeId, stableStops, storedPath]);
   const legs = useMemo(() => routeLegPaths(path, stableStops, firstStopIndex), [path, stableStops, firstStopIndex]);
   // Location ticks do not recreate road overlays or reproject the itinerary.
-  const activeIndices = JSON.stringify([...new Set(nextStopIndices?.map(index => index === 0 ? 1 : index) ?? [])].sort((a, b) => a - b));
-  const baseColor = nextStopIndices?.length ? "#71717a" : (color ?? "#3b82f6");
+  const activeIndices = JSON.stringify([...new Set(nextStopIndices?.flatMap(value => {
+    const index = publishedStopIndex(value, stableStops.length);
+    return index === undefined ? [] : [index === 0 ? 1 : index];
+  }) ?? [])].sort((a, b) => a - b));
+  const baseColor = nextStopIndices !== undefined ? "#71717a" : (color ?? "#3b82f6");
 
   useEffect(() => {
     onGeometryReady?.(path);

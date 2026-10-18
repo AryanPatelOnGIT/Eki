@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   transactionFailures: [] as Array<{ code: number; details: string }>,
   onTransactionFailure: null as (() => void) | null,
   coldLiveTransaction: false,
+  failLiveRead: false,
   batchSizes: [] as number[],
 }));
 
@@ -104,7 +105,10 @@ vi.mock("../lib/firebaseAdmin", () => {
       });
       state.transactionTail = execution.catch(() => {}); return execution;
     } },
-    rtdb: { ref: () => ({ once: async () => ({ val: () => ({ ...state.live }) }),
+    rtdb: { ref: () => ({ once: async () => {
+      if (state.failLiveRead) throw new Error("Location snapshot unavailable");
+      return { val: () => ({ ...state.live }) };
+    },
       transaction: async (callback: (value: Record<string, unknown> | null) => unknown) => {
         if (state.coldLiveTransaction) {
           state.coldLiveTransaction = false;
@@ -142,6 +146,7 @@ beforeEach(() => {
   state.transactionAttempts = 0; state.transactionFailureAt = 1; state.transactionFailures = [];
   state.onTransactionFailure = null;
   state.coldLiveTransaction = false;
+  state.failLiveRead = false;
   state.user = { uid: "driver_uid", role: "driver", driverId: "driver_1", assignedBusId: "bus_1" };
   state.docs.set("drivers/driver_1", { authUid: "driver_uid", assignedBusId: "bus_1" });
   state.docs.set("buses/bus_1", { assignedRoutes: ["route_1", "route_2"] });
@@ -164,6 +169,20 @@ function end(status = "completed") {
 }
 
 describe("versioned session identity and lifecycle", () => {
+  it("ends a shift and releases its lock when optional RTDB location capture fails", async () => {
+    const { sessionId } = await (await start()).json();
+    const recorded = { lat: 23, lng: 72.5, sampledAt: Date.now(), seq: 1 };
+    Object.assign(state.docs.get(`ride_sessions/${sessionId}`)!, { lastKnownLocation: recorded, passengers: { rider: { userId: "rider" } } });
+    state.docs.set(`ride_sessions/${sessionId}/messages/kept`, { text: "Retained" });
+    state.failLiveRead = true;
+    const response = await contractFetch(`${base}/api/shifts/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ busId: "bus_1", routeId: "route_1", sessionId }) });
+    expect(response.status).toBe(200);
+    expect(state.docs.get(`ride_sessions/${sessionId}`)).toMatchObject({ status: "interrupted", lastKnownLocation: recorded, passengers: { rider: { userId: "rider" } } });
+    expect(state.docs.get(`ride_sessions/${sessionId}/messages/kept`)).toEqual({ text: "Retained" });
+    expect(state.docs.has("_active_bus_locks/bus_1")).toBe(false);
+    expect(state.docs.has("active_rides/bus_1_route_1")).toBe(false);
+    expect(state.live.sessionId).toBeUndefined();
+  });
   it("captures the final raw fix before a manual early end without losing the manifest or chat", async () => {
     const { sessionId } = await (await start()).json();
     Object.assign(state.docs.get(`ride_sessions/${sessionId}`)!, { passengers: { rider: { userId: "rider" } } });

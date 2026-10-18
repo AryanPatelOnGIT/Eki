@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DashboardPanel from "./DashboardPanel";
 import type { ActiveBusEntry } from "@/lib/activeBusEntries";
-const state = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[], geometries: new Map() }));
+import type { RouteData } from "@/hooks/useRoutes";
+import { fixtureBus, route } from "../../../../e2e/fixtures/state";
+const state = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[], geometries: new Map(), routes: [] as RouteData[] }));
 vi.mock("@vis.gl/react-google-maps", () => ({ Map: ({children}: {children: ReactNode}) => <div>{children}</div>, AdvancedMarker: ({ children, position, anchorLeft, anchorTop }: { children: ReactNode; position: unknown; anchorLeft?: string; anchorTop?: string }) => <div data-marker={JSON.stringify(position)} data-anchor={JSON.stringify([anchorLeft, anchorTop])}>{children}</div>, useMap: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ role: "admin", user: {uid: "qa-admin"} }) }));
 vi.mock("@/hooks/useActiveBuses", () => ({ useActiveBuses: () => state.entries }));
@@ -13,10 +15,11 @@ vi.mock("@/hooks/useDynamicRouteGeometries", () => ({ useDynamicRouteGeometries:
 vi.mock("@/hooks/useRTDBResume", () => ({ useRTDBResume: () => ({ isResuming: false }) }));
 vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: [{id: "qa-bus", name: "QA bus", assignedRoutes: ["qa-route"]}] }) }));
 vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: [{id: "qa-driver", name: "QA driver", assignedBusId: "qa-bus"}] }) }));
-vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ routes: [{id: "qa-route", name: "QA route", stops: []}] }) }));
+vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ routes: state.routes }) }));
+vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices }: ComponentProps<typeof import("../maps/DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} /> }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: {currentUser: {getIdToken: async () => "synthetic-token"}} }));
 vi.mock("@/components/ui/CustomSelect", () => ({default: ({ariaLabel, value, options, onChange, disabled}: {ariaLabel: string; value: string; options: {value: string; label: string}[]; onChange: (value: string) => void; disabled?: boolean}) => <select aria-label={ariaLabel} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}));
-beforeEach(() => { state.entries = []; vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
+beforeEach(() => { state.entries = []; state.routes = [{ ...route, stops: [] }]; state.geometries.clear(); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 async function prepare() {
   const user = userEvent.setup(); render(<DashboardPanel />);
@@ -25,6 +28,29 @@ async function prepare() {
   return user;
 }
 describe("admin service creation", () => {
+  it.each(["forward", "reverse"] as const)("shows only published passed stops and the ordered next stop in %s travel", async direction => {
+    state.routes = [{ ...route, stops: [...route.stops, { id: "c", name: "Gamma", shortName: "C", lat: 23.02, lng: 72.02 }] }];
+    state.entries = [{ ...fixtureBus(direction), currentStopIndex: 2 } as ActiveBusEntry];
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByText("QA bus").closest("button")!);
+    expect(screen.getByText("2/3 passed")).toBeTruthy();
+    expect(screen.queryByText("3/3 stops")).toBeNull();
+    expect(screen.getByText("Next Stop").nextElementSibling?.textContent).toBe(direction === "forward" ? "Gamma" : "Alpha");
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[2]");
+  });
+  it.each([undefined, -1, 0.5, 3])("does not invent admin progress for published index %s", async currentStopIndex => {
+    state.routes = [{ ...route, stops: [...route.stops, { id: "c", name: "Gamma", shortName: "C", lat: 23.02, lng: 72.02 }] }];
+    state.entries = [{ ...fixtureBus("forward"), currentStopIndex } as ActiveBusEntry];
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByText("QA bus").closest("button")!);
+    expect(screen.queryByText("Next Stop")).toBeNull();
+    expect(screen.queryByText("Following Stop")).toBeNull();
+    expect(screen.queryByText("Route Progress")).toBeNull();
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[]");
+    await user.click(screen.getByRole("button", { name: "Open live details for qa-bus" }));
+    const drawer = within(screen.getByRole("dialog", { name: "Live details for qa-bus" }));
+    expect(drawer.getByText("Next stop").parentElement?.textContent).toBe("Next stop—");
+  });
   it("centers the bus glyph on its coordinate while its label stays outside the anchor box", () => {
     state.entries = [{ busId: "qa-bus", routeId: "qa-route", lat: 23, lng: 72, timestamp: Date.now(), deviceState: "online", motionState: "stopped", speed: 0 }];
     render(<DashboardPanel />);

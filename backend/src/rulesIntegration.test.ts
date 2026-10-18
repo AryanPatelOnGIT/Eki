@@ -148,7 +148,11 @@ rulesDescribe("Firebase security rules integration", () => {
     await environment.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), "users", "archive_admin"), { role: "admin" });
       await setDoc(doc(context.firestore(), "_userAuthorization", "archive_admin"), { role: "admin", version: "current" });
-      await setDoc(doc(context.firestore(), "ride_sessions", "archive_session"), { passengers: { archive_passenger: { userId: "archive_passenger" } } });
+      await setDoc(doc(context.firestore(), "users", "archive_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "users", "archive_driver"), { role: "driver" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "archive_driver"), { role: "driver", version: "current", driverId: "archive_operator", assignedBusId: "archive_bus" });
+      await setDoc(doc(context.firestore(), "drivers", "archive_operator"), { authUid: "archive_driver", assignedBusId: "archive_bus" });
+      await setDoc(doc(context.firestore(), "ride_sessions", "archive_session"), { driverId: "archive_operator", busId: "archive_bus", passengers: { archive_passenger: { userId: "archive_passenger" } } });
       await setDoc(doc(context.firestore(), "ride_sessions", "archive_session", "archivedMessages", "kept"), { text: "Retained after clear" });
     });
     const admin = environment.authenticatedContext("archive_admin", { role: "admin", admin: true, authorizationVersion: "current" });
@@ -156,6 +160,9 @@ rulesDescribe("Firebase security rules integration", () => {
     const archived = (context: ReturnType<typeof environment.authenticatedContext>) => doc(context.firestore(), "ride_sessions", "archive_session", "archivedMessages", "kept");
     await assertSucceeds(getDoc(archived(admin)));
     await assertSucceeds(getDocs(collection(admin.firestore(), "ride_sessions", "archive_session", "archivedMessages")));
+    await assertSucceeds(getDoc(archived(environment.authenticatedContext("archive_driver", { role: "driver", driverId: "archive_operator", assignedBusId: "archive_bus", authorizationVersion: "current" }))));
+    await assertFails(getDoc(archived(environment.authenticatedContext("archive_admin", { role: "admin", authorizationVersion: "old" }))));
+    await assertFails(getDoc(archived(environment.authenticatedContext("archive_driver", { role: "driver", driverId: "archive_operator", assignedBusId: "other_bus", authorizationVersion: "current" }))));
     await assertFails(getDoc(archived(passenger)));
     await assertFails(getDoc(archived(environment.unauthenticatedContext())));
     await assertFails(setDoc(archived(admin), { text: "Forged" }));

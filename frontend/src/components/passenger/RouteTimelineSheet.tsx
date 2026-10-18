@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Route as RouteIcon, Footprints } from "lucide-react";
 import { RouteData } from "@/hooks/useRoutes";
 import BottomSheet from "./ui/BottomSheet";
+import { publishedStopIndex } from "@/lib/publishedStopIndex";
 
 interface RouteTimelineSheetProps {
   route: RouteData | null;
@@ -32,6 +33,8 @@ export default function RouteTimelineSheet({
   if (!route || !route.stops || route.stops.length === 0) return null;
 
   const routeColor = route.color || "#3b82f6";
+  const nextStopIndex = !preview && !aggregateArrivals
+    ? publishedStopIndex(currentStopIndex, route.stops.length) : undefined;
 
   return (
     <BottomSheet
@@ -45,6 +48,11 @@ export default function RouteTimelineSheet({
       <div className="text-[11px] font-semibold mb-5 text-center" style={{ color: "var(--text-ghost)" }}>
         {route.name}
       </div>
+      {!preview && !aggregateArrivals && nextStopIndex === undefined && (
+        <p role="status" className="text-xs mb-4" style={{ color: "var(--text-secondary)" }}>
+          Stop progress unavailable.
+        </p>
+      )}
       {!preview && (aggregateArrivals || geometryUnavailable) && (
         <p role="status" className="text-xs mb-4" style={{ color: "var(--text-secondary)" }}>
           {aggregateArrivals && "Earliest arrival across buses. Select a bus to see its stop progress. "}
@@ -59,27 +67,15 @@ export default function RouteTimelineSheet({
           const isLast = index === route.stops.length - 1;
           const isFirst = index === 0;
 
-          // A stop is "passed" if the bus has moved beyond it.
-          // If driver hasn't pushed any index yet, fall back to ETA inference.
-          const hasEtaData = !preview && Object.keys(stopETAs).length > 0;
           const etaMinutes = preview ? undefined : stopETAs[stop.id];
-
-          let isPast: boolean;
-          if (!preview && currentStopIndex !== undefined) {
-            // Driver/ESP32 is source of truth
-            isPast = index < currentStopIndex;
-          } else {
-            // Fallback: infer from ETA engine (stop has no ETA = bus has passed it)
-            isPast = !aggregateArrivals && !geometryUnavailable && hasEtaData && etaMinutes === undefined;
-          }
+          // Missing geometry or ETA is never evidence that a stop was reached.
+          const isPast = nextStopIndex !== undefined && index < nextStopIndex;
 
           // Dim passed stops. Never dim future stops just because they're after the user's target.
           const isDimmed = isPast;
 
           // The stop the bus is currently heading towards
-          const isNextStop = !preview && currentStopIndex !== undefined
-            ? index === currentStopIndex
-            : false;
+          const isNextStop = index === nextStopIndex;
 
           return (
             <div
