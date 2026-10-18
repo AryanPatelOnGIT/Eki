@@ -114,6 +114,18 @@ The gate is reproduced using PR base
 condition is relaxed. The downstream evidence failure was caused by the stopped
 web job producing no execution artifacts.
 
+The arrival commit's first hosted run exposed a second fixture issue: the
+boundary journey passed, but the following completion journey failed in both
+viewports. The same synthetic session ID was reset with backdated sample
+offsets (20 s/25 s); fast CI could give the next journey an older timestamp
+than the engine's last processed fix. Local browser/sign-in overhead masked
+that ordering. The test-only telemetry controller now applies one uniform 20 s
+replay lag relative to capture time for travelling fixes, keeping their order
+across resets while retaining plausible elapsed travel before the live terminal
+fix. Immediate fixture reset/reuse is asserted in
+the boundary browser regression. Production ordering guards and deadlines
+remain unchanged.
+
 Node 24.19.0; Java 21; Chromium via Playwright. The authenticated app runs in a
 separate managed checkout without `.env` files. Existing user changes and
 credentials in the primary checkout are preserved. A process-local

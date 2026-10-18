@@ -450,6 +450,13 @@ test('10m stop arrival updates the real passenger timeline only after authentica
   await page.screenshot({ path: testInfo.outputPath('arrival-10m-next-stop.png'), fullPage: true });
   await testInfo.attach('arrival-boundary', { body: JSON.stringify({ outsideMeters: 11, insideMeters: 9,
     currentStopIndex: stored.live.currentStopIndex, physicalGnss: false, providers: 'synthetic' }), contentType: 'application/json' });
+  // Reuse the fixture immediately, without browser/sign-in delays masking a
+  // backwards sample clock in the next journey's telemetry controller.
+  expect((await request.post(`${control}/reset`)).ok()).toBe(true);
+  const restarted = await request.post(`${control}/telemetry/middle`);
+  expect(restarted.ok(), await restarted.text()).toBe(true);
+  expect((await restarted.json()).statuses).toEqual([202, 202]);
+  expect((await evidence(request)).live.currentStopIndex).toBe(2);
 });
 
 test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request, context }) => {

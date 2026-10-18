@@ -135,16 +135,16 @@ const control = createServer(async (req, res) => {
     if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/middle-outside', '/telemetry/middle-inside', '/telemetry/end', '/telemetry/fresh-origin'].includes(req.url)) {
       // Real authenticated device HTTP ingestion; no direct completion writes.
       const samples = ['/telemetry/middle-outside', '/telemetry/middle-inside'].includes(req.url)
-        ? [{ seq: req.url.endsWith('outside') ? 2 : 3, offset: req.url.endsWith('outside') ? 20000 : 25000,
+        ? [{ seq: req.url.endsWith('outside') ? 2 : 3,
           lat: 23.0018 - (req.url.endsWith('outside') ? 11 : 9) / 6371000 * 180 / Math.PI,
           speed: 45, motionState: 'moving' }]
         : req.url === '/telemetry/middle'
-        ? [{ seq: 2, offset: 20000, lat: 23.0018, speed: 45, motionState: 'moving' },
-          { seq: 3, offset: 25000, lat: 23.0018, speed: 45, motionState: 'moving' }]
-        : req.url === '/telemetry/end' ? [4, 5, 6].map(seq => ({ seq, offset: 0, lat: 23.0036, speed: 0, motionState: 'stopped' }))
-        : [{ seq: 7, offset: Date.now() - epoch, lat: 23, speed: 0, motionState: 'stopped' }];
+        ? [{ seq: 2, lat: 23.0018, speed: 45, motionState: 'moving' },
+          { seq: 3, lat: 23.0018, speed: 45, motionState: 'moving' }]
+        : req.url === '/telemetry/end' ? [4, 5, 6].map(seq => ({ seq, lat: 23.0036, speed: 0, motionState: 'stopped' }))
+        : [{ seq: 7, lat: 23, speed: 0, motionState: 'stopped' }];
       const statuses = [];
-      for (const { offset, ...sample } of samples) {
+      for (const sample of samples) {
         if (req.url === '/telemetry/end' && sample.seq === 5) {
           await waitForLifecycle(live => live?.terminalArrival);
           await new Promise(resolve => setTimeout(resolve, 2100));
@@ -156,7 +156,13 @@ const control = createServer(async (req, res) => {
             (await db.collection('ride_sessions').doc('qa_session').get()).data()?.status === 'completed');
           await new Promise(resolve => setTimeout(resolve, 10));
         }
-        const timestamp = req.url === '/telemetry/end' ? Date.now() : epoch + offset;
+        // One capture-relative replay lag keeps travelling fixes ordered even
+        // when the same synthetic session is reset in <5s. A reset-relative
+        // 20s/25s pair could move the next journey's clock backwards. Retain
+        // 20s of simulated travel before the live terminal fix so the real
+        // plausibility guard can accept the 200m journey without teleporting.
+        const travelling = req.url.startsWith('/telemetry/middle');
+        const timestamp = Date.now() - (travelling ? 20_000 : 0);
         const response = await fetch('http://127.0.0.1:3116/api/devices/qa_device/telemetry', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${deviceSecret}` },
           body: JSON.stringify({ ...sample, lng: 72, heading: 0, gpsHdop: 1, timestamp, deviceSentAt: Date.now() }),
@@ -172,7 +178,12 @@ const control = createServer(async (req, res) => {
             && (sample.seq !== 4 || live.terminalArrival)
             && (req.url !== '/telemetry/end' || sample.seq !== 5 ||
               (await db.collection('ride_sessions').doc('qa_session').get()).data()?.status === 'completed')) break;
-          if (Date.now() >= deadline) throw new Error('Synthetic telemetry worker deadline exceeded');
+          if (Date.now() >= deadline) throw new Error(`Synthetic telemetry worker deadline exceeded: ${JSON.stringify({
+            expectedSeq: sample.seq, sampleTimestamp: timestamp, liveSeq: live?.seq,
+            timestamp: live?.timestamp, lat: live?.lat, lng: live?.lng,
+            currentStopIndex: live?.currentStopIndex, motionState: live?.motionState,
+            tripState: live?.tripState, sessionId: live?.sessionId,
+          })}`);
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
