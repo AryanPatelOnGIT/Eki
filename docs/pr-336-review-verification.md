@@ -18,12 +18,48 @@ her subsequent GPS-radius comment, and all four CodeRabbit inline findings.
 | Missing checkpoint identifiers can fail completion | Normalize driver/session identifiers and skip the operational recovery checkpoint when either is invalid. Legacy completion still succeeds without an undefined Firestore write. |
 | Direction reset rolls the route revision backward | Retain the valid session revision while clearing direction-derived geometry/matches. A subsequent resolved route advances the revision. A retained counter alone does not cause redundant pending-state writes. |
 
-The 20 m endpoint geofence is unchanged. No disconnected replay establishes that
-a 5 m threshold is reliable for the actual GNSS receiver. Existing quality,
-freshness, stopped-state, unique-endpoint and ordered-progress guards remain.
+The arrival follow-up reduces the stop-arrival and initial direction endpoint
+circles from 20 m to **10 m**. The backend uses accepted raw GNSS coordinates,
+not the snapped/interpolated web map marker or passenger phone geolocation.
+Intermediate stops advance to the next expected index on entry or a bounded
+between-fix crossing; they do not require a stationary dwell or prove boarding.
+The authoritative index drives the passenger timeline and highlighted map leg.
+The final stop additionally requires departure, ordered progress, stopped motion,
+speed <=2.5 km/h, HDOP 0..4, fresh telemetry and distinct samples spanning the
+default 2 s confirmation. Leaving the circle resets terminal evidence.
+
+10 m is an engineering starting point for the installed NEO-M8N, pending field
+validation. Its [official data sheet](https://content.u-blox.com/sites/default/files/NEO-M8-FW3_DataSheet_UBX-15031086.pdf)
+specifies 2.5 m horizontal accuracy under its stated static CEP50 test conditions;
+this is not a worst-case moving-bus error bound. A 5 m circle would leave little
+margin for receiver error and stop-pin placement. Software replay proves the
+chosen rule, not RF accuracy or the optimal field threshold.
+
+Separate policies remain: 75 m permits parked return readiness only **after**
+the previous trip completed within 10 m and the default 30 s dwell elapsed;
+departure uses min(150 m, max(10 m, half the first-leg distance)). An automatic
+return is armed at index zero and does not depart until that departure guard.
+
+New regressions reject 11 m/15 m and accept 9 m at intermediate stops in both
+orders and at either initial endpoint, bound between-fix crossings to 10 m,
+reset terminal confirmation on exit, and verify ingestion/history/index handoff.
+The emulator browser regression sends authenticated device fixes at 11 m then
+9 m and checks the actual passenger timeline switches to the next stop.
 
 ## Verification scope
 
+- Arrival follow-up: full `npm test` passed (138 script, 1,226 backend and 650
+  frontend tests; 58 emulator-only assertions skipped by that normal command).
+  All 52 focused direction/reducer/ingestion lifecycle tests passed, as did
+  lint, backend build, frontend/maps TypeScript, exact PR-base `qa:budget`,
+  `qa:check` and all 36 QA infrastructure tests.
+- The arrival boundary and full completion/return/history browser journeys
+  passed at both mobile and desktop: four executions, no retries. Screenshots
+  show the actual passenger timeline after authenticated 9 m telemetry. This
+  local run filtered to those two journeys; its all-cases report correctly
+  stays `BLOCKED` for the unexecuted mappings (wrapper exit 1 despite four
+  passing Playwright executions). It is not a full browser acceptance claim.
+  Evidence is under `evidence/arrival-10m/` in the local audit directory below.
 - Full initial unit/script run: 1,219 backend tests, 650 frontend tests and
   138 script tests passed. The 57 emulator-only tests were skipped by that normal
   backend command, as designed. After the final pending-revision refinement,

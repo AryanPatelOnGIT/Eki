@@ -16,6 +16,18 @@ Neither is a production backend setting or authorization for provider/network
 replay. QA reports preserve the exact source SHA, observed assertions and
 partial case evidence without claiming live-motion or RF acceptance.
 
+## Stop-arrival policy
+
+The backend stop-arrival radius and initial endpoint direction radius are both
+**10 m** (source constants, not environment overrides). Intermediate stops advance
+in configured order when accepted raw GNSS reaches/crosses that circle. The
+passenger timeline and map use the published stop index. Snapped map markers and
+passenger phone location do not decide bus arrival. Final-stop completion also
+requires fresh reliable stopped telemetry and distinct samples spanning the
+default 2-second confirmation. The separate 75 m return-readiness area applies
+only after confirmed completion and the turnaround wait; it cannot complete a trip.
+10 m needs validation with the actual NEO-M8N and surveyed stop pins.
+
 ## Backend variables
 
 Store these in the ignored `backend/.env` file or inject them through the

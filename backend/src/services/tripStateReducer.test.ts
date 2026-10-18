@@ -20,6 +20,47 @@ function input(overrides: Partial<Parameters<typeof reduceTripState>[0]> = {}) {
 }
 
 describe("reduceTripState", () => {
+  it("uses a 10m arrival circle in both directions without advancing at 11m", () => {
+    const metersToLatitude = (meters: number) => meters / 6_371_000 * 180 / Math.PI;
+    const middle = about200mNorth;
+    const terminal = { lat: origin.lat + 0.004, lng: origin.lng };
+    for (const stops of [[origin, middle, terminal], [terminal, middle, origin]]) {
+      for (const [distance, expectedIndex] of [[11, 1], [15, 1], [9, 2]] as const) {
+        const result = reduceTripState(input({ stops, lat: middle.lat + metersToLatitude(distance),
+          currentStopIndex: 1, hasDepartedOrigin: true }));
+        expect(result.currentStopIndex).toBe(expectedIndex);
+        expect(result.tripState).toBe("in_service");
+      }
+    }
+  });
+
+  it("limits between-fix stop crossings to the same 10m circle", () => {
+    const middle = about200mNorth;
+    const terminal = { lat: origin.lat + 0.004, lng: origin.lng };
+    for (const [distance, expectedIndex] of [[11, 1], [9, 2]] as const) {
+      const lngOffset = distance / (111_320 * Math.cos(middle.lat * Math.PI / 180));
+      const result = reduceTripState(input({ stops: [origin, middle, terminal],
+        previousPosition: { lat: middle.lat - 0.0003, lng: middle.lng + lngOffset },
+        lat: middle.lat + 0.0003, lng: middle.lng + lngOffset,
+        currentStopIndex: 1, hasDepartedOrigin: true }));
+      expect(result.currentStopIndex).toBe(expectedIndex);
+    }
+  });
+
+  it("clears terminal confirmation outside 10m and requires fresh evidence on reentry", () => {
+    const terminal = about200mNorth;
+    const outside = reduceTripState(input({ lat: terminal.lat + 11 / 6_371_000 * 180 / Math.PI,
+      currentStopIndex: 1, hasDepartedOrigin: true }));
+    expect(outside.tripState).toBe("in_service");
+    expect(outside.terminalArrival).toBeUndefined();
+    const reentry = reduceTripState(input({ ...outside, lat: terminal.lat, timestamp: 11_000,
+      terminalArrival: outside.terminalArrival }));
+    expect(reentry.tripState).toBe("in_service");
+    expect(reentry.terminalArrival).toEqual({ startedAt: 11_000, lastSampledAt: 11_000 });
+    const confirmed = reduceTripState(input({ ...reentry, lat: terminal.lat, timestamp: 13_000 }));
+    expect(confirmed.tripState).toBe("completed");
+  });
+
   it("does not complete repeatedly when a route revisits its origin", () => {
     const stops = [origin, origin];
     const first = reduceTripState(input({ stops }));

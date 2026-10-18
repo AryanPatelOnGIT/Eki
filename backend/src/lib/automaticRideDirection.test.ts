@@ -13,6 +13,17 @@ const stops = [
 ];
 
 describe("automatic ride direction", () => {
+  it("requires a fix within 10m of either initial endpoint", () => {
+    for (const [endpoint, direction] of [[stops[0], "forward"], [stops[2], "reverse"]] as const) {
+      for (const [distance, expected] of [[9, direction], [11, null], [15, null]] as const) {
+        expect(inferRideDirectionFromTelemetry(stops, {
+          now: 100_000, timestamp: 99_000, motionState: "stopped", gpsHdop: 1,
+          position: { lat: endpoint.lat + distance / 6_371_000 * 180 / Math.PI, lng: endpoint.lng },
+        })).toBe(expected);
+      }
+    }
+  });
+
   it("infers forward at A and reverse at Z", () => {
     expect(inferRideDirectionAtEndpoint(stops, { lat: 23, lng: 72 })).toBe("forward");
     expect(inferRideDirectionAtEndpoint(stops, { lat: 23.1, lng: 72.1 })).toBe("reverse");

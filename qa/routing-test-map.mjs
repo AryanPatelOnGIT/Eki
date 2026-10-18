@@ -3,7 +3,13 @@ export const routingTestMap = [{
   caseId: 'TRIP01',
   scope: 'Endpoint classification uses a fresh stopped quality fix, not displacement. Pure classifier evidence only.',
   sourcePaths: ['backend/src/lib/automaticRideDirection.ts'],
-  tests: [{ path: 'backend/src/lib/automaticRideDirection.test.ts', name: 'automatic ride direction > resolves only a fresh, stopped, high-quality fix inside one endpoint geofence', level: 'L1', semantics: 'Classifier rejects moving, stale, poor-quality and outside-endpoint fixes and selects both unique endpoints.' }],
+  tests: [{ path: 'backend/src/lib/automaticRideDirection.test.ts', name: 'automatic ride direction > resolves only a fresh, stopped, high-quality fix inside one endpoint geofence', level: 'L1', semantics: 'Classifier rejects moving, stale, poor-quality and outside-endpoint fixes and selects both unique endpoints.' },
+    { path: 'backend/src/lib/automaticRideDirection.test.ts', name: 'automatic ride direction > requires a fix within 10m of either initial endpoint', level: 'L1', semantics: 'Initial direction accepts 9m and rejects 11m/15m at both endpoints using fresh stopped telemetry.' }],
+}, {
+  caseId: 'TRIP06',
+  scope: 'Real ingestion and trip engine with in-memory Firebase adapters preserve the next expected stop at 11m, advance at 9m, and persist one history event before the live index. Transport and physical GNSS are separate.',
+  sourcePaths: ['backend/src/services/tripStateReducer.ts', 'backend/src/services/tripStateEngine.ts'],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > publishes the next stop and its history only after entering the 10m arrival circle', level: 'L1', semantics: 'Authenticated ingestion invokes the real engine; an outside fix leaves the middle stop unreached, an inside fix records it once and publishes the terminal as next, and repeated fixes cannot duplicate history.' }],
 }, {
   caseId: 'TRIP14',
   scope: 'Real ingestion/engine/recovery with serialized in-memory Firebase adapters preserves terminal intent, unique return identity and undeparted overnight readiness. Provider and persistence transport are mocked.',

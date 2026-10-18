@@ -132,9 +132,13 @@ const control = createServer(async (req, res) => {
     if (req.method === 'POST' && /^\/providers\/(routes|places)\/(valid|rate-limit|malformed|timeout)$/.test(req.url)) {
       const segments = req.url.split('/'); providers.setMode(segments[2], segments[3]); res.end('{}'); return;
     }
-    if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/end', '/telemetry/fresh-origin'].includes(req.url)) {
+    if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/middle-outside', '/telemetry/middle-inside', '/telemetry/end', '/telemetry/fresh-origin'].includes(req.url)) {
       // Real authenticated device HTTP ingestion; no direct completion writes.
-      const samples = req.url === '/telemetry/middle'
+      const samples = ['/telemetry/middle-outside', '/telemetry/middle-inside'].includes(req.url)
+        ? [{ seq: req.url.endsWith('outside') ? 2 : 3, offset: req.url.endsWith('outside') ? 20000 : 25000,
+          lat: 23.0018 - (req.url.endsWith('outside') ? 11 : 9) / 6371000 * 180 / Math.PI,
+          speed: 45, motionState: 'moving' }]
+        : req.url === '/telemetry/middle'
         ? [{ seq: 2, offset: 20000, lat: 23.0018, speed: 45, motionState: 'moving' },
           { seq: 3, offset: 25000, lat: 23.0018, speed: 45, motionState: 'moving' }]
         : req.url === '/telemetry/end' ? [4, 5, 6].map(seq => ({ seq, offset: 0, lat: 23.0036, speed: 0, motionState: 'stopped' }))

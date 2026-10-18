@@ -158,6 +158,26 @@ async function fixture(startEngine = true, stopCount = 3) {
 }
 
 describe("routing lifecycle through actual ingestion and listeners", () => {
+  it("publishes the next stop and its history only after entering the 10m arrival circle", async () => {
+    const f = await fixture();
+    await f.send(23, 0, "stopped");
+    await f.send(23.001, 15_000);
+    const middle = f.stops[1];
+    await f.send(middle.lat - 11 / 6_371_000 * 180 / Math.PI, 30_000);
+    expect(f.live().currentStopIndex).toBe(1);
+    expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
+      .some((record: any) => record.stopId === middle.id)).toBe(false);
+    await f.send(middle.lat - 9 / 6_371_000 * 180 / Math.PI, 35_000);
+    expect(f.live().currentStopIndex).toBe(2);
+    const reached = Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached);
+    expect(reached.filter((record: any) => record.stopId === middle.id)).toHaveLength(1);
+    await f.send(middle.lat, 40_000);
+    expect(f.live().currentStopIndex).toBe(2);
+    expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
+      .filter((record: any) => record.stopId === middle.id)).toHaveLength(1);
+    expect(state.docs.get(`ride_sessions/${f.sessionId}`).status).toBe("active");
+  });
+
   it.each([2, 26])("retains all %i ordered stop records, passenger and chat identity across completion and reboot", async count => {
     const f = await fixture(true, count);
     const session = state.docs.get(`ride_sessions/${f.sessionId}`);

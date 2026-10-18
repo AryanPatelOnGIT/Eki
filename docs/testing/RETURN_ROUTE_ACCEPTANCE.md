@@ -16,6 +16,7 @@ The missing tracking improvements from audited snapshot `965d376` were restored 
 
 ## Behavior
 
+- Current arrival policy: intermediate and terminal stop circles are 10 m, as is initial endpoint direction detection. The backend uses accepted GNSS fixes and ordered stops; the webapp follows its published next-stop index. Terminal completion requires reliable stopped samples spanning the default 2 s confirmation. The 75 m parked return-readiness area applies only after completion and the separate turnaround wait below. Physical GNSS/stop-pin accuracy remains a field acceptance gate.
 - A new shift infers its direction from its own current endpoint fix. A completed or device-only direction cannot override it. Existing sessions keep their own direction.
 - Shift creation, telemetry inference, and return creation use the same endpoint-version contract. Device-only directions remain provisional and can change at the other endpoint.
 - Confirming arrival at the last required stop starts a separate 30-second turnaround wait by default. A fresh stopped terminal fix arms a new session with opposite direction, swapped endpoints, index zero, and cleared old match/reroute state. `AUTOMATIC_TURNAROUND_DWELL_MS` configures this wait (default `30000` ms; minimum `0`), independently of the terminal-arrival confirmation interval.
@@ -38,7 +39,7 @@ The missing tracking improvements from audited snapshot `965d376` were restored 
 | Firmware TCP connect / HTTP read / TLS handshake limits | 1,000 ms / 1,500 ms / 10 seconds; separate phase limits, not a total deadline |
 | Live Google calculation budget | 3,500 ms per request; long-route chunks run concurrently |
 | Reroute retry gate | 5,000 ms from previous attempt |
-| Default automatic-return delay | 0 ms; reliable stopped terminal telemetry still required |
+| Default automatic-return delay | 30,000 ms after confirmed completion; reliable stopped terminal telemetry still required |
 | Pre-auth IP ingress budget | 15 requests/device/10 seconds, configured for 100 devices/IP by default; separate maintenance pools, before replica sharding |
 | Authenticated per-device budget | Existing 90/minute policy retained |
 | Maximum configured stop count | 100 |

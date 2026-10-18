@@ -7,10 +7,10 @@ interface Coordinate {
 }
 
 /** Authoritative radius for selecting a new ride direction at an endpoint. */
-export const ENDPOINT_GEOFENCE_M = 20;
+export const ENDPOINT_GEOFENCE_M = 10;
 /** @deprecated Use ENDPOINT_GEOFENCE_M for new direction inference. */
 export const DIRECTION_INFERENCE_RADIUS_M = ENDPOINT_GEOFENCE_M;
-/** Turnaround arrival may use a broader, independently tuned arrival radius. */
+/** Parked return readiness after confirmed completion; never marks a stop arrived. */
 export const TURNAROUND_ARRIVAL_RADIUS_M = 75;
 export const TURNAROUND_TELEMETRY_MAX_AGE_MS = 60_000;
 export const DIRECTION_INFERENCE_MAX_HDOP = 4;

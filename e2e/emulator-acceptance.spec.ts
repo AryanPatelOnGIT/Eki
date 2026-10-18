@@ -432,6 +432,26 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
 });
 
+test('10m stop arrival updates the real passenger timeline only after authenticated telemetry reaches the circle', async ({ page, request }, testInfo) => {
+  await page.goto('/'); await login(page); await board(page);
+  const timeline = page.getByRole('button', { name: 'Route Timeline', exact: true });
+  await timeline.click();
+  const nextStop = page.getByText('Next Stop', { exact: true }).locator('..');
+  const outside = await request.post(`${control}/telemetry/middle-outside`);
+  expect(outside.ok()).toBe(true); expect((await outside.json()).statuses).toEqual([202]);
+  await expect(nextStop).toContainText('Synthetic middle');
+  expect((await evidence(request)).live.currentStopIndex).toBe(1);
+  const inside = await request.post(`${control}/telemetry/middle-inside`);
+  expect(inside.ok()).toBe(true); expect((await inside.json()).statuses).toEqual([202]);
+  await expect(nextStop).toContainText('Synthetic end');
+  const stored = await evidence(request);
+  expect(stored.live.currentStopIndex).toBe(2);
+  expect(stored.sessions.find((ride: { id: string }) => ride.id === 'qa_session').status).toBe('active');
+  await page.screenshot({ path: testInfo.outputPath('arrival-10m-next-stop.png'), fullPage: true });
+  await testInfo.attach('arrival-boundary', { body: JSON.stringify({ outsideMeters: 11, insideMeters: 9,
+    currentStopIndex: stored.live.currentStopIndex, physicalGnss: false, providers: 'synthetic' }), contentType: 'application/json' });
+});
+
 test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request, context }) => {
   test.setTimeout(60000);
   await page.goto('/'); await login(page); await board(page);
