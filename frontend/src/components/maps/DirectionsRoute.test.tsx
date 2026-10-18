@@ -30,7 +30,7 @@ it("keeps the whole road grey and advances only the blue leg without provider ca
     setMap(map: google.maps.Map | null) { this.map = map; }
   } } });
   const stops = [{ lat: 23, lng: 72 }, { lat: 23.01, lng: 72.01 }, { lat: 23.02, lng: 72.02 }];
-  const props = { routeId: "stored", stops, polyline: "_ekkC_omvLo}@o}@o}@o}@", polylineQuality: "HIGH_QUALITY" as const, direction: "forward" as const };
+  const props = { routeId: "stored", stops, color: "#ec4899", polyline: "_ekkC_omvLo}@o}@o}@o}@", polylineQuality: "HIGH_QUALITY" as const, direction: "forward" as const };
   const view = render(<DirectionsRoute {...props} nextStopIndices={[1]} />);
   const active = () => state.lines.filter(line => line.map && line.options.strokeColor === "#3b82f6");
   const grey = () => state.lines.filter(line => line.map && line.options.strokeColor === "#71717a");
@@ -46,7 +46,11 @@ it("keeps the whole road grey and advances only the blue leg without provider ca
   expect(active()).toHaveLength(2); // fleet view preserves both buses' own legs
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[]} />);
   expect(active()).toHaveLength(0);
-  expect(grey()).toHaveLength(1);
+  expect(grey()).toHaveLength(0);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(1);
+  view.rerender(<DirectionsRoute {...props} color="#22c55e" nextStopIndices={[]} />);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#22c55e")).toHaveLength(1);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(0);
   expect(state.request).not.toHaveBeenCalled();
   view.unmount();
   expect(state.lines.filter(line => line.map)).toHaveLength(0);

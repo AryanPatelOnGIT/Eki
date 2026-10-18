@@ -4,6 +4,7 @@ import { useApiIsLoaded, useMapsLibrary } from "@vis.gl/react-google-maps";
 import MapProviders from "@/components/MapProviders";
 import PassengerMap from "@/components/maps/PassengerMap";
 import DashboardPanel from "@/components/admin/DashboardPanel";
+import RouteManagementPanel from "@/components/admin/RouteManagementPanel";
 import { routeInRideDirection } from "@/lib/rideDirection";
 import { getDistanceMeters } from "@/lib/mapUtils";
 import { route, publish, paths, useSimulation } from "./store";
@@ -71,6 +72,7 @@ function MapsReady({ children }: { children: ReactNode }) {
 function App() {
   const state = useSimulation(), directed = routeInRideDirection(route, state.direction);
   const [playing, setPlaying] = useState(false);
+  const [editing, setEditing] = useState(false);
   const reachNextStop = () => {
     setPlaying(false);
     const reached = Math.max(1, state.bus.currentStopIndex ?? 1);
@@ -91,13 +93,14 @@ function App() {
       <button onClick={() => publish(state.direction, Math.min(state.index + 1, paths[state.direction].length - 1))}>Next fix</button>
       <button onClick={reachNextStop}>Reach next stop</button>
       <button onClick={() => { setPlaying(false); publish(state.direction, state.index, false); }}>Low-confidence fix</button>
-      <button onClick={() => publish(state.direction, Math.min(state.index + 10, paths[state.direction].length - 1), true, 1)}>Delayed old revision</button></nav>
+      <button onClick={() => publish(state.direction, Math.min(state.index + 10, paths[state.direction].length - 1), true, 1)}>Delayed old revision</button>
+      <button onClick={() => { setPlaying(false); setEditing(value => !value); }}>{editing ? "Close route editor" : "Open route editor"}</button></nav>
     <output data-testid="simulation-state">{state.direction} · fix {state.bus.seq} · route v{state.bus.routeVersion}</output>
-  </header><MapProviders><MapsReady><main className="replay-grid">
+  </header><MapProviders><MapsReady>{editing ? <section aria-label="Eki route editor" className="replay-editor"><RouteManagementPanel /></section> : <main className="replay-grid">
     <section aria-label="Eki passenger map"><h2>PassengerMap</h2><div className="replay-pane">
       <MapProviders><PassengerMap route={directed} targetStop={directed.stops.at(-1)!} selectedBusKey={`session:simulated-${state.direction}`} /></MapProviders>
     </div></section>
     <section aria-label="Eki admin map"><h2>DashboardPanel · Live Ops</h2><div className="replay-pane"><MapProviders><DashboardPanel /></MapProviders></div></section>
-  </main></MapsReady></MapProviders></>;
+  </main>}</MapsReady></MapProviders></>;
 }
 createRoot(document.getElementById("root")!).render(<App />);

@@ -427,6 +427,29 @@ describe("trip-state engine lifecycle", () => {
     await stop();
   });
 
+  it.each([undefined, null, "", "bad/id"])("completes without writing an invalid terminal driver checkpoint: %s", async driverId => {
+    allowCompletion("session-1");
+    const stop = startTripStateEngine(); armRoute();
+    const store = makeNodeRef({ tripState: "in_service", sessionId: "session-1" });
+    const snapshot = queuedSnapshot(store, "bus_1_route_2");
+    mocks.rtdbHandlers.get("child_changed")!({ ...snapshot, val: () => ({ ...snapshot.val(), driverId }) });
+    await flushMicrotasks(100);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ collectionName: "ride_sessions" }),
+      expect.objectContaining({ status: "completed" }), { merge: true });
+    expect(mocks.transactionSet.mock.calls.some(([ref, data]) => ref.collectionName === "bus_locations" && data.terminalJourney)).toBe(false);
+    await stop();
+  });
+  it("completes a legacy node without a session ID without writing a recovery checkpoint", async () => {
+    const stop = startTripStateEngine(); armRoute();
+    const store = makeNodeRef({ tripState: "in_service" });
+    const snapshot = queuedSnapshot(store, "bus_1_route_2");
+    mocks.rtdbHandlers.get("child_changed")!({ ...snapshot, val: () => ({ ...snapshot.val(), sessionId: undefined }) });
+    await flushMicrotasks(100);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ collectionName: "completed_trips" }),
+      expect.objectContaining({ sessionId: null }), { merge: true });
+    expect(mocks.transactionSet.mock.calls.some(([ref, data]) => ref.collectionName === "bus_locations" && data.terminalJourney)).toBe(false);
+    await stop();
+  });
   it("negative-caches a missing route across telemetry updates", async () => {
     mocks.reduceTripState.mockReturnValue({
       tripState: "in_service",

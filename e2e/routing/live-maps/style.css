@@ -8,5 +8,8 @@ body { margin: 0; background: #09090b; color: #ececef; font-family: system-ui, s
 .replay-toolbar button { background: #27272a; border: 1px solid #555; padding: 8px 14px; border-radius: 6px; }
 .replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 16px; padding: 16px; }
 .replay-grid h2 { font-weight: 700; padding-bottom: 8px; }
-.replay-pane { height: 720px; position: relative; overflow: hidden; border: 1px solid #444; border-radius: 10px; }
+.replay-editor { height: 720px; }
+/* Each pane represents a separate app page. Contain fixed passenger sheets so
+   a stacked mobile replay cannot intercept controls in the admin page. */
+.replay-pane { height: 720px; position: relative; overflow: hidden; transform: translateZ(0); border: 1px solid #444; border-radius: 10px; }
 @media (max-width: 900px) { .replay-grid { grid-template-columns: 1fr; } }

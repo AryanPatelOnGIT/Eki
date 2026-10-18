@@ -497,7 +497,8 @@ async function persistOfflineFleetState(
     status: "offline",
     deviceState: "offline",
   });
-  const recordSignalLoss = signalLost || data.deviceState === "offline" || Boolean(confirmMissing);
+  // Completion retirement also marks deviceState offline without losing signal.
+  const recordSignalLoss = signalLost || data.signalState === "lost" || Boolean(confirmMissing);
   const fingerprint = JSON.stringify([lifecycleFingerprint(state), recordSignalLoss ? journeyLocation(data) : null]);
   const lockRef = db.collection("_active_bus_locks").doc(busId);
   const locationRef = db.collection("bus_locations").doc(busId);
@@ -1090,10 +1091,12 @@ export function startTripStateEngine(): () => Promise<void> {
           }
           // A bounded operational checkpoint survives transient RTDB cleanup.
           // History alone must never recreate an already consumed return.
-          transaction.set(db.collection("bus_locations").doc(data.busId), {
+          const checkpointDriverId = normalizeIdentifier(data.driverId);
+          const checkpointSessionId = normalizeIdentifier(data.sessionId);
+          if (checkpointDriverId && checkpointSessionId) transaction.set(db.collection("bus_locations").doc(data.busId), {
             terminalJourney: {
-              busId: data.busId, routeId: data.routeId, driverId: data.driverId,
-              sessionId: data.sessionId, direction,
+              busId: data.busId, routeId: data.routeId, driverId: checkpointDriverId,
+              sessionId: checkpointSessionId, direction,
               directionEndpointVersion: endpointSnapshotVersion(naturalStops),
               completedAt: completionTimeMs, turnaroundEligibleAt,
               turnaroundSampledAt: Math.max(Number(data.timestamp), turnaroundEligibleAt), consumedBy: null,

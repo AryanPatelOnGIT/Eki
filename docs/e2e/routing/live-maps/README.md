@@ -38,6 +38,11 @@ The actual passenger timeline and admin live-details dialog are available. Start
 and messaging mutations are outside this replay. The dev server binds loopback
 only and receives only the existing public browser Maps key/map ID.
 
+Open route editor mounts the actual admin route editor against the preset
+fixture. Pink/green colour changes redraw its real SDK road preview; Cancel
+discards the draft. Saving is tested separately in the disposable emulator app.
+The replay has no signed-in mutation account.
+
 To run the automated check (it can start the server itself):
 
 ```powershell

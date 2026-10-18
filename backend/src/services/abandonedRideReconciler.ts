@@ -120,6 +120,7 @@ async function runReconciliationPage(options: AbandonedRideReconciliationOptions
       initialActiveRide,
       initialLiveBus,
       cutoff,
+      now,
     );
     if (!initialDecision.stale) {
       summary.protectedIds.push(sessionId);
@@ -171,6 +172,7 @@ async function runReconciliationPage(options: AbandonedRideReconciliationOptions
         currentActiveRide,
         retiredLiveRecord,
         cutoff,
+        now,
       );
       if (!decision.stale || decision.lastActivity === null) {
         return { interrupted: false, deleted: false };

@@ -21,6 +21,25 @@ describe("abandoned ride reconciliation logic", () => {
       hasDepartedOrigin: mode === "departed", updatedAt: cutoff - 60_000 }, null, cutoff).stale).toBe(true);
   });
 
+  it.each([24, 48, 168])("retires an unused automatic return after %s hours", hours => {
+    const now = cutoff + 12 * 60 * 60_000;
+    const old = now - hours * 60 * 60_000;
+    expect(reconciliationDecision("return", {
+      status: "armed", automaticTurnaround: true, armedAt: old,
+    }, { sessionId: "return", tripState: "pre_departure", hasDepartedOrigin: false, updatedAt: old },
+    null, cutoff)).toMatchObject({ stale: true, lastActivity: old, reason: "stale" });
+  });
+  it("keeps a return with recent real activity and honors a longer configured threshold", () => {
+    const now = cutoff + 12 * 60 * 60_000, old = now - 48 * 60 * 60_000;
+    const session = { status: "armed", automaticTurnaround: true, armedAt: old };
+    const active = { sessionId: "return", tripState: "pre_departure", hasDepartedOrigin: false, updatedAt: old };
+    expect(reconciliationDecision("return", session, active,
+      { sessionId: "return", tripState: "pre_departure", timestamp: now - 1000 }, cutoff, now).stale).toBe(false);
+    expect(reconciliationDecision("return", session, active, null, now - 72 * 60 * 60_000, now).stale).toBe(false);
+    expect(reconciliationDecision("return", session,
+      { ...active, updatedAt: undefined }, null, cutoff, now).reason).toBe("unknown_activity");
+  });
+
   it("normalizes legacy and Firestore timestamps", () => {
     expect(timestampMillis(1_750_000_000)).toBe(1_750_000_000_000);
     expect(timestampMillis({ seconds: 1_750_000_000, nanoseconds: 500_000_000 }))

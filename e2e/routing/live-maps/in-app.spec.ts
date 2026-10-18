@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodePolyline } from "../../../frontend/src/lib/polyline";
 const probe = JSON.parse(readFileSync("artifacts/routing-provider/result.json", "utf8"));
 test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus) await page.screenshot({ path: info.outputPath("failed-map-view.png"), fullPage: true }).catch(() => {});
   const snapshot = await page.evaluate(() => (window as any).__ekiInAppMaps?.snapshot()).catch(() => null);
   await info.attach("last-real-sdk-snapshot", { body: JSON.stringify(snapshot, null, 2), contentType: "application/json" });
 });
@@ -90,14 +91,18 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
   await expect.poll(async () => (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS") && !marker.title.includes("approximate") && !marker.title.includes("updating")).length).toBe(2);
   const target = decodePolyline(probe.directions[1].encodedPolyline)[21];
   await expect.poll(async () => (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS")).map((marker: any) => marker.position)).toEqual([target, target]);
-  const settled = (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"));
+  // DOM projection measurements can differ by subpixel rounding as a mobile
+  // pane scrolls. Compare the authoritative marker coordinates and identity.
+  const stableMarkers = (snapshot: any) => snapshot.markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"))
+    .map(({ visualOffsetPx: _visualOffsetPx, ...marker }: any) => marker);
+  const settled = stableMarkers(await sdk());
   await page.getByRole("button", { name: "Delayed old revision", exact: true }).click();
   await expect(page.getByTestId("simulation-state")).toContainText("route v1");
   // Observe across the production animation interval: an immediate equality
   // could pass before an incorrectly accepted old fix starts moving a marker.
   let stableObservations = 0;
   await expect.poll(async () => {
-    expect((await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS"))).toEqual(settled);
+    expect(stableMarkers(await sdk())).toEqual(settled);
     return ++stableObservations;
   }, { intervals: [100, 100, 100, 100] }).toBe(5);
   const trace = await page.evaluate(() => window.__ekiTelemetryTrace?.snapshot());
@@ -109,4 +114,20 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
   expect(blocked).toEqual([]);
   expect(providers.get("maps.googleapis.com")).toBeGreaterThan(0);
   await expect(page.getByText("Sorry! Something went wrong.")).toHaveCount(0);
+  // The actual editor must redraw the same real road path in the selected
+  // preview colour. Saving/persistence is covered by the emulator browser suite.
+  await page.getByRole("button", { name: "Open route editor", exact: true }).click();
+  await page.getByRole("button", { name: /^Edit route / }).click();
+  const expectedPreview = decodePolyline(probe.directions[0].encodedPolyline);
+  for (const color of ["#EC4899", "#10B981"]) {
+    const picker = page.getByRole("button", { name: `Route colour ${color}`, exact: true });
+    await picker.click(); await expect(picker).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => (await sdk()).lines.filter((line: any) => line.view === "Eki route editor" && line.color === color).map((line: any) => line.path)).toEqual([expectedPreview]);
+    expect((await sdk()).lines.filter((line: any) => line.view === "Eki route editor" && line.color === "#71717a")).toHaveLength(0);
+  }
+  await expect.poll(async () => (await sdk()).maps.some((map: any) => map.view === "Eki route editor" && map.tilesLoaded), { timeout: 30_000 }).toBe(true);
+  await page.screenshot({ path: info.outputPath("eki-route-editor-green.png"), fullPage: true });
+  await page.getByRole("button", { name: "Cancel route editing", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Routes", exact: true })).toBeVisible();
+  expect(errors).toEqual([]); expect(blocked).toEqual([]);
 });

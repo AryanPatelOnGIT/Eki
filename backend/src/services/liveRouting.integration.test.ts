@@ -49,6 +49,16 @@ beforeEach(() => {
 });
 
 describe("live routing publication", () => {
+  it("keeps a retained revision while awaiting endpoint evidence without redundant pending writes", async () => {
+    state.values.set(key, { ...assignment, sessionId: "outbound", driverId: "driver", status: "active", tripState: "pre_departure",
+      direction: null, directionState: "pending", routeVersion: 7 });
+    for (let seq = 1; seq <= 2; seq++) {
+      publish({ ...sample(seq), lat: 24, lng: 73 }); await drainTelemetryRouteProcessing();
+    }
+    expect(state.values.get(key)).toMatchObject({ sessionId: "outbound", direction: null, routeVersion: 7 });
+    expect(state.writes).toEqual([]);
+    expect(state.compute).not.toHaveBeenCalled();
+  });
   it("labels missing dynamic geometry as a new configured fallback revision", async () => {
     state.values.set(key, { ...state.values.get(key), routeSource: "dynamic-reroute", routeVersion: 7,
       routeDirection: "forward", routeSessionId: "outbound", routeGeometryVersion: 1,

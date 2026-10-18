@@ -30,7 +30,7 @@ runtime secret/configuration system.
 | `FIREBASE_DATABASE_URL` | Yes for RTDB | Firebase RTDB URL | Use the environment’s URL; no code fallback exists |
 | `GOOGLE_MAPS_API_KEY` | Route/places features | Server-side Routes/Places key | Restrict by runtime identity/IP and enabled APIs; keep it different from the browser key |
 | `BUS_STALE_MS` | No | Live bus staleness threshold; minimum `90000`, default `300000` | Align the alert/runbook threshold with the deployed value |
-| `AUTOMATIC_TURNAROUND_DWELL_MS` | No | Optional delay after completion before arming the return; minimum/default `0` | A fresh stopped terminal fix is still required. Set a positive delay only when the service schedule requires it |
+| `AUTOMATIC_TURNAROUND_DWELL_MS` | No | Delay after confirmed completion before arming the return; default `30000` ms, minimum `0` | A fresh stopped terminal fix is still required. This wait is separate from terminal-arrival confirmation |
 | `HTTPS_DEVICE_RATE_PER_MINUTE` | No | Shared accepted device requests per device per minute; default `90` | Supports 1 Hz moving telemetry with retry headroom across replicas; add an edge/WAF limit |
 | `HTTPS_DEVICE_RATE_LIMIT_MODE` | No | Authenticated device limiter mode; defaults to `distributed` | Use `local` only for an explicitly single-instance deployment with `RATE_LIMIT_SHARD_FACTOR=1` |
 | `HTTPS_DEVICE_RATE_LIMIT_LEASE_SIZE` | No | Tokens reserved per shared RTDB transaction in distributed mode; default `5`, capped at the minute limit | Larger values reduce transactions but can temporarily strand unused capacity after replica loss |
@@ -45,7 +45,7 @@ runtime secret/configuration system.
 | `AUTH_MAX_PENDING_VERIFICATIONS` | No | Maximum distinct Firebase Auth verifications in flight per backend process; default `256`, maximum `2000` | Size for expected concurrency; overflow fails with retryable HTTP 503 instead of growing memory without bound |
 | `WORKER_ENABLED` | No | Enables the Firestore-lease background worker; default `true` | Keep enabled for lifecycle recovery, abandonment and retention jobs |
 | `WORKER_INSTANCE_ID` | No | Stable diagnostic identity for a runtime instance | Do not use credentials or personal data |
-| `ABANDONED_RIDE_THRESHOLD_HOURS` | No | Age before conservative abandoned-ride reconciliation; minimum `1`, default `12` | Obtain privacy/operations approval before changing it |
+| `ABANDONED_RIDE_THRESHOLD_HOURS` | No | Inactivity before conservative abandoned-ride reconciliation; minimum `1`, default `12`. Undeparted automatic returns receive at least `24` hours for overnight recovery | The hourly sweep protects recent/unknown activity and releases expired sessions' matching locks |
 | `RETENTION_SWEEPER_ENABLED` | Required in production | Explicit `true` after trimming/case normalization; development/test remain disabled when omitted | Production refuses to start until the retention schedule is explicitly enforced |
 | `LEGACY_RTDB_RETIRED` | No | Enables retired RTDB `users`/`messages` cleanup only after migration verification; default `false` | Review [retention](operations/RTDB_RETENTION.md) and inventory with dry run first |
 | `HTTPS_INGRESS_DEVICES_PER_IP` | No | Largest expected fleet behind one public IP; default `100`, maximum `100000` | Telemetry IP pool allows 15 requests/device/10 s; diagnostics and firmware have separate 2/device/10 s pools; all are replica-sharded |

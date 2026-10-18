@@ -72,7 +72,7 @@ interface DirectionsRouteProps {
  * does not call the browser Directions service: rendering a map must not add
  * routing cost, quota pressure, or delay to the live GNSS stream.
  */
-export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, hasBuses = false, nextStopIndices, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
+export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color, hasBuses = false, nextStopIndices, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
   const map = useMap();
   const stopsKey = JSON.stringify(stops);
   const stableStops = useMemo(() => JSON.parse(stopsKey) as LatLng[], [stopsKey]);
@@ -101,6 +101,7 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
   const legs = useMemo(() => routeLegPaths(path, stableStops, firstStopIndex), [path, stableStops, firstStopIndex]);
   // Location ticks do not recreate road overlays or reproject the itinerary.
   const activeIndices = JSON.stringify([...new Set(nextStopIndices?.map(index => index === 0 ? 1 : index) ?? [])].sort((a, b) => a - b));
+  const baseColor = nextStopIndices?.length ? "#71717a" : (color ?? "#3b82f6");
 
   useEffect(() => {
     onGeometryReady?.(path);
@@ -137,7 +138,7 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
     });
     const line = new google.maps.Polyline({
       path,
-      strokeColor: "#71717a",
+      strokeColor: baseColor,
       strokeWeight: hasBuses ? 5 : 3,
       strokeOpacity: hasBuses ? 1 : 0.8,
       zIndex: 21,
@@ -153,7 +154,7 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
       line.setMap(null);
       active.forEach(leg => leg.setMap(null));
     };
-  }, [map, path, hasBuses, legs, activeIndices]);
+  }, [map, path, hasBuses, legs, activeIndices, baseColor]);
 
   return null;
 }

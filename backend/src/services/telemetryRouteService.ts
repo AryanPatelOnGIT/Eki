@@ -447,7 +447,7 @@ async function resetRefusedDirection(assignment: DeviceAssignment, live: Record<
     if (!telemetryIsCurrent(current, sample) || current.sessionId !== live.sessionId ||
         current.directionEndpointVersion !== live.directionEndpointVersion || current.direction !== live.direction ||
         current.directionFirestoreSynced !== false || current.tripState !== "pre_departure") return;
-    return { ...withoutLiveRouteContext(current), direction: null, directionState: "pending", directionEndpointVersion: null,
+    return { ...withoutLiveRouteContext(current, { preserveVersion: true }), direction: null, directionState: "pending", directionEndpointVersion: null,
       originStopId: null, destinationStopId: null, directionResolvedAt: null };
   }, undefined, false);
 }
@@ -477,10 +477,10 @@ async function resolvePendingDirection(
     if (!direction) {
       return live.direction === null &&
         live.directionState === "pending" &&
-        !hasLiveRouteContext(live)
+        !hasLiveRouteContext(live, { ignoreVersion: true })
         ? undefined
         : {
-            ...withoutLiveRouteContext(live),
+            ...withoutLiveRouteContext(live, { preserveVersion: true }),
             direction: null,
             directionState: "pending",
           };

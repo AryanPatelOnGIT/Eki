@@ -160,11 +160,17 @@ test('route creation recovers from provider quota and lost acknowledgement then 
   expect(created.providers.calls.filter((call: { provider: string; mode: string }) => call.provider === 'routes' && call.mode === 'valid')).toHaveLength(2);
   await page.getByRole('button', { name: 'Edit route Synthetic provider route', exact: true }).click();
   await page.getByLabel('Display Name', { exact: true }).fill('Synthetic renamed route');
+  await page.getByRole('button', { name: 'Route colour #EC4899', exact: true }).click();
   const update = page.waitForResponse(response => response.url() === 'http://127.0.0.1:3116/api/routes/qa_created_route' && response.request().method() === 'PUT');
   await page.getByRole('button', { name: 'Update', exact: true }).click();
   expect(await (await update).json()).toMatchObject({ saved: true, geometryReused: true, configVersion: 2, geometryVersion: 1 });
   await expect(page.getByText('Route updated!', { exact: true })).toBeVisible();
   const renamed = await evidence(request);
+  expect(renamed.routes.find((route: { id: string }) => route.id === 'qa_created_route').color).toBe('#EC4899');
+  await page.reload(); await expect(page.getByLabel('Verified fixture account')).toHaveText('qa_admin');
+  await page.getByRole('button', { name: 'Edit route Synthetic renamed route', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Route colour #EC4899', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Cancel route editing', exact: true }).click();
   expect(renamed.providers.calls).toEqual(created.providers.calls);
   expect(renamed.routes.find((route: { id: string }) => route.id === 'qa_created_route').forwardPolyline).toBe(stored.forwardPolyline);
   await page.getByRole('button', { name: 'Delete route Synthetic renamed route', exact: true }).click();

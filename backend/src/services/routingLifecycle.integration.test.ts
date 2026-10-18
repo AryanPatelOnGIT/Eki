@@ -198,7 +198,7 @@ describe("routing lifecycle through actual ingestion and listeners", () => {
     const f = await fixture();
     await f.send(23, 0, "stopped"); await f.send(23.001, 15_000);
     expect(state.docs.get(`ride_sessions/${f.sessionId}`).connectionEvents).toBeUndefined();
-    await rtdb.ref(`activeBuses/${f.key}`).set({ ...f.live(), deviceState: "offline" }); await settle();
+    await rtdb.ref(`activeBuses/${f.key}`).set({ ...f.live(), deviceState: "offline", signalState: "lost" }); await settle();
     const first = state.docs.get(`ride_sessions/${f.sessionId}`).lastKnownLocation;
     expect(first).toMatchObject({ lat: 23.001, lng: 72, sampledAt: baseTime + 15_000 });
     await f.send(23.002, 30_000);
@@ -232,6 +232,35 @@ describe("routing lifecycle through actual ingestion and listeners", () => {
     stop = startTripStateEngine();
     await f.send(23.004, 24 * 60 * 60_000, "stopped");
     expect(f.live()).toMatchObject({ sessionId: returnId, direction: "reverse", tripState: "pre_departure" });
+  });
+  it.each([false, true])("retires an unused return and releases its lock after a day (presence removed: %s)", async removed => {
+    const f = await fixture(); await f.arrive();
+    await f.send(23.004, 87_000, "stopped"); await f.send(23.004, 88_000, "stopped");
+    const returnId = f.live().sessionId;
+    await stop!(); stop = undefined;
+    state.docs.get(`active_rides/${f.key}`).updatedAt = baseTime + 88_000;
+    state.docs.get(`ride_sessions/${returnId}`).updatedAt = baseTime + 88_000;
+    if (removed) await rtdb.ref(`activeBuses/${f.key}`).set(null);
+    const now = baseTime + 88_000 + 24 * 60 * 60_000;
+    const result = await runAbandonedRideReconciliation({ firestore: db, realtimeDatabase: rtdb, now });
+    expect(result.interruptedIds).toContain(returnId);
+    expect(state.docs.get(`ride_sessions/${returnId}`)).toMatchObject({ status: "interrupted", interruptionReason: "abandoned_session_timeout" });
+    expect(state.docs.has(`_active_bus_locks/${f.busId}`)).toBe(false);
+    expect(state.docs.has(`active_rides/${f.key}`)).toBe(false);
+    expect(f.live()).toBeUndefined();
+    // Consumed terminal intent must not recreate the expired return at reboot.
+    stop = startTripStateEngine();
+    await f.send(23, now - baseTime + 1000, "stopped");
+    expect(f.live().sessionId).toBeUndefined();
+    expect(state.docs.has(`_active_bus_locks/${f.busId}`)).toBe(false);
+  });
+  it("does not record an engine retirement as signal loss", async () => {
+    const f = await fixture(); await f.arrive();
+    await rtdb.ref(`activeBuses/${f.key}`).set({ ...f.live(), deviceState: "offline" }); await settle();
+    const history = state.docs.get(`ride_sessions/${f.sessionId}`);
+    expect(history.status).toBe("completed");
+    expect(history.connectionEvents).toBeUndefined();
+    expect(history.lastSignalLostAt).toBeUndefined();
   });
   it("does not reread the terminal checkpoint on every completed-node heartbeat", async () => {
     const f = await fixture(); await f.arrive(); state.reads = [];

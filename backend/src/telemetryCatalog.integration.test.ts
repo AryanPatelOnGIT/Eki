@@ -79,12 +79,18 @@ integration("versioned telemetry catalog against actual Firebase emulators", () 
     try {
       await ref.set({ stops: changed, forwardPolyline: encodePolyline(changed), reversePolyline: encodePolyline([...changed].reverse()), version: 4, geometryVersion: 4 });
       const sample = { ...old[0], speed: 0, heading: 0, motionState: "stopped" as const, gpsHdop: 1, seq: 1, timestamp: Date.now(), deviceSentAt: Date.now() };
-      await state.realtime!.ref("activeBuses/bus_route").set({ busId: "bus", routeId: id, sessionId: "old-session", driverId: "driver", status: "active", tripState: "pre_departure", directionState: "pending", directionFirestoreSynced: false, ...sample });
+      await state.realtime!.ref("activeBuses/bus_route").set({ busId: "bus", routeId: id, sessionId: "old-session", driverId: "driver", status: "active", tripState: "pre_departure", directionState: "pending", directionFirestoreSynced: false, routeVersion: 7, ...sample });
       scheduleTelemetryRouteProcessing({ busId: "bus", routeId: id }, sample); await drainTelemetryRouteProcessing();
       expect((await state.firestore!.collection("ride_sessions").doc("old-session").get()).data()?.direction).toBeNull();
-      expect((await state.realtime!.ref("activeBuses/bus_route").get()).val()).toMatchObject({ directionState: "pending", directionFirestoreSynced: false });
+      expect((await state.realtime!.ref("activeBuses/bus_route").get()).val()).toMatchObject({ directionState: "pending", directionFirestoreSynced: false, routeVersion: 7 });
       expect((await state.realtime!.ref("activeBuses/bus_route").get()).val().direction).toBeUndefined();
     } finally { state.paused = false; for (const deliver of state.pending.splice(0)) deliver(); }
+    await vi.waitFor(() => expect(state.version).toBe(4));
+    const nextFix = { ...changed[0], speed: 0, heading: 0, motionState: "stopped" as const, gpsHdop: 1, seq: 2, timestamp: Date.now(), deviceSentAt: Date.now() };
+    const retained = (await state.realtime!.ref("activeBuses/bus_route").get()).val();
+    await state.realtime!.ref("activeBuses/bus_route").set({ ...retained, ...nextFix });
+    scheduleTelemetryRouteProcessing({ busId: "bus", routeId: id }, nextFix); await drainTelemetryRouteProcessing();
+    expect((await state.realtime!.ref("activeBuses/bus_route").get()).val()).toMatchObject({ sessionId: "old-session", direction: "forward", routeVersion: 8, directionFirestoreSynced: true, mapMatchSeq: 2 });
   }, 30000);
   it("recovers a real durable direction commit with a lost acknowledgement without rolling it back", async () => {
     const points = [{ id: "C", lat: 24, lng: 73 }, { id: "D", lat: 24.1, lng: 73.1 }];

@@ -1,4 +1,5 @@
 export const DEFAULT_ABANDONED_RIDE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+export const AUTOMATIC_RETURN_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const RECONCILABLE_RIDE_STATUSES = ["pending", "armed", "active"] as const;
 
 const SECONDS_TO_MILLISECONDS_CUTOFF = 100_000_000_000;
@@ -104,6 +105,7 @@ export function reconciliationDecision(
   activeRide: Record<string, unknown> | null,
   liveBus: Record<string, unknown> | null,
   cutoff: number,
+  now = cutoff + DEFAULT_ABANDONED_RIDE_THRESHOLD_MS,
 ): ReconciliationDecision {
   if (!RECONCILABLE_RIDE_STATUSES.includes(
     session.status as (typeof RECONCILABLE_RIDE_STATUSES)[number],
@@ -111,15 +113,12 @@ export function reconciliationDecision(
     return { stale: false, lastActivity: null, reason: "terminal" };
   }
 
-  // Automatic readiness is durable terminal intent, not an abandoned service
-  // trip. Power-off overnight must not consume its only return session. A
-  // departed or explicitly operated/interrupted session keeps the usual policy.
-  if (session.status === "armed" && session.automaticTurnaround === true && session.startTime == null &&
+  // Give an unused return one day of inactivity for overnight recovery, but
+  // eventually release its bus lock. Departed/manual rides use the usual policy.
+  const unusedAutomaticReturn = session.status === "armed" && session.automaticTurnaround === true && session.startTime == null &&
     matchingSession(activeRide, sessionId) && activeRide?.tripState === "pre_departure" &&
     activeRide.hasDepartedOrigin === false &&
-    (!matchingSession(liveBus, sessionId) || liveBus?.tripState === "pre_departure")) {
-    return { stale: false, lastActivity: latestSessionActivity(session), reason: "ready" };
-  }
+    (!matchingSession(liveBus, sessionId) || liveBus?.tripState === "pre_departure");
 
   const sessionActivity = latestSessionActivity(session);
   const matchingActiveRide = matchingSession(activeRide, sessionId);
@@ -144,7 +143,10 @@ export function reconciliationDecision(
     return { stale: false, lastActivity: null, reason: "unknown_activity" };
   }
   const lastActivity = Math.max(...activities);
-  return lastActivity <= cutoff
+  const inactivityCutoff = unusedAutomaticReturn
+    ? Math.min(cutoff, now - AUTOMATIC_RETURN_RETENTION_MS)
+    : cutoff;
+  return lastActivity <= inactivityCutoff
     ? { stale: true, lastActivity, reason: "stale" }
-    : { stale: false, lastActivity, reason: "recent" };
+    : { stale: false, lastActivity, reason: unusedAutomaticReturn ? "ready" : "recent" };
 }
