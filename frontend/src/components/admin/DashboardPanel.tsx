@@ -33,6 +33,7 @@ import { normalizeHeading, unwrapHeading } from "@/lib/markerHeading";
 import { useTelemetryRenderTrace } from "@/hooks/useTelemetryRenderTrace";
 import { useLiveBusMarkerPosition } from "@/hooks/useLiveBusMarkerPosition";
 import { useSmoothPosition } from "@/hooks/useSmoothPosition";
+import { publishedStopIndex } from "@/lib/publishedStopIndex";
 import {
   countActiveServices,
   devicePresence,
@@ -105,10 +106,12 @@ function MapCenter({ center }: { center: { lat: number; lng: number } | null }) 
 function LiveDetailsDrawer({
   entry,
   routeName,
+  nextStopIndex,
   onClose,
 }: {
   entry: ActiveBusEntry;
   routeName: string;
+  nextStopIndex: number | undefined;
   onClose: () => void;
 }) {
   const directionState = normalizeRideDirection(entry.direction);
@@ -183,10 +186,10 @@ function LiveDetailsDrawer({
               </p>
             </div>
             <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
-              <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Current stop</p>
+              <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Next stop</p>
               <p className="mt-1 text-sm font-semibold text-white">
-                {isActiveService(entry)
-                  ? Math.max(0, Number(entry.currentStopIndex ?? 0)) + 1
+                {nextStopIndex !== undefined
+                  ? nextStopIndex + 1
                   : "—"}
               </p>
             </div>
@@ -301,9 +304,9 @@ function BusMarker({
 
   if (!markerPoint) return null;
   return (
-    <AdvancedMarker position={markerPoint} onClick={() => onClick(markerPoint)}>
+    <AdvancedMarker position={markerPoint} anchorLeft="-50%" anchorTop="-50%" onClick={() => onClick(markerPoint)}>
       <div
-        style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }}
+        style={{ position: "relative", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
         title={`${entry.busId} — ${ts.label}${markerSelection.decision === "match_pending" ? " — updating route position" : markerSelection.uncertain ? " — approximate GNSS position" : ""}`}
       >
         <div style={{
@@ -327,7 +330,7 @@ function BusMarker({
           />
         </div>
         <div style={{
-          marginTop: 4, padding: "2px 6px", borderRadius: 5,
+          position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)", padding: "2px 6px", borderRadius: 5,
           background: "rgba(9,9,11,0.9)", border: "1px solid rgba(255,255,255,0.1)",
           color: "white", fontSize: 9, whiteSpace: "nowrap", fontWeight: 700,
           letterSpacing: "0.08em",
@@ -367,8 +370,11 @@ function FleetCard({
   const driver = drivers.find(d => d.id === entry.driverId);
   const ts = TRIP_STATE[rideServiceState(entry)];
   const ms = MOTION_STATE[entry.motionState ?? "uncertain"] ?? MOTION_STATE.uncertain;
-  const stopIdx = (entry.currentStopIndex ?? 0) + 1;
   const stopCount = directedRoute?.stops?.length ?? 0;
+  const nextStopIndex = isActiveService(entry)
+    ? publishedStopIndex(entry.currentStopIndex, stopCount) : undefined;
+  const nextStop = nextStopIndex !== undefined ? directedRoute?.stops[nextStopIndex] : undefined;
+  const followingStop = nextStopIndex !== undefined ? directedRoute?.stops[nextStopIndex + 1] : undefined;
   const serviceState = rideServiceState(entry);
   const canEndRide = Boolean(
     entry.sessionId && entry.driverId && entry.routeId &&
@@ -383,6 +389,7 @@ function FleetCard({
         <LiveDetailsDrawer
           entry={entry}
           routeName={route?.name ?? entry.routeId ?? "—"}
+          nextStopIndex={nextStopIndex}
           onClose={() => setDetailsOpen(false)}
         />
       )}
@@ -446,7 +453,7 @@ function FleetCard({
                 { label: "Speed", value: entry.speed != null ? `${Math.round(entry.speed)} km/h` : "—" },
                 { label: "Heading", value: headingLabel(entry.heading) },
                 { label: "Last Update", value: timeSince(entry.timestamp) },
-                { label: "Stop", value: stopCount > 0 ? `${stopIdx}/${stopCount}` : "—" },
+                { label: "Next stop", value: nextStopIndex !== undefined ? `${nextStopIndex + 1}/${stopCount}` : "—" },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-white/3 border border-white/5 rounded-lg p-2 flex flex-col gap-0.5">
                   <span className="text-[8px] font-black uppercase tracking-wider text-white/25">{label}</span>
@@ -454,26 +461,26 @@ function FleetCard({
                 </div>
               ))}
             </div>
-            {stopCount > 0 && rideServiceState(entry) === "in_service" && (
+            {nextStopIndex !== undefined && rideServiceState(entry) === "in_service" && (
               <div>
                 <div className="flex justify-between mb-1">
                   <span className="text-[8px] font-black uppercase tracking-wider text-white/25">Route Progress</span>
-                  <span className="text-[9px] text-white/30 tabular-nums">{stopIdx}/{stopCount} stops</span>
+                  <span className="text-[9px] text-white/30 tabular-nums">{nextStopIndex}/{stopCount} passed</span>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full">
-                  <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.round((stopIdx / stopCount) * 100)}%` }} />
+                  <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.round((nextStopIndex / stopCount) * 100)}%` }} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {directedRoute?.stops?.[entry.currentStopIndex ?? 0] && (
+                  {nextStop && (
                     <div>
                       <span className="text-[8px] text-white/25 uppercase font-black">Next Stop</span>
-                      <p className="text-[10px] font-semibold text-white truncate">{directedRoute.stops[entry.currentStopIndex ?? 0].name}</p>
+                      <p className="text-[10px] font-semibold text-white truncate">{nextStop.name}</p>
                     </div>
                   )}
-                  {directedRoute?.stops?.[(entry.currentStopIndex ?? 0) + 1] && (
+                  {followingStop && (
                     <div>
                       <span className="text-[8px] text-white/25 uppercase font-black">Following Stop</span>
-                      <p className="text-[10px] font-semibold text-white/60 truncate">{directedRoute.stops[(entry.currentStopIndex ?? 0) + 1].name}</p>
+                      <p className="text-[10px] font-semibold text-white/60 truncate">{followingStop.name}</p>
                     </div>
                   )}
                 </div>
@@ -587,6 +594,8 @@ export default function DashboardPanel() {
       polylineQuality?: "HIGH_QUALITY";
       direction: "forward" | "reverse";
       stops: Array<{ lat: number; lng: number }>;
+      nextStopIndices: number[];
+      firstStopIndex?: number;
     }>();
     for (const entry of activeEntries) {
       if (!entry.routeId || !isActiveService(entry) || !isRideDirection(entry.direction)) continue;
@@ -601,30 +610,34 @@ export default function DashboardPanel() {
           ? dynamicGeometries.get(entry.busId)
           : undefined;
       const hasDynamic = Boolean(geometry);
-      const overlayKey = hasDynamic
-        ? entry.activeRouteId ?? `${route.id}:${entry.routeVersion ?? 0}:${entry.busId}`
-        : `${route.id}:${direction}`;
-      if (overlays.has(overlayKey)) continue;
-      overlays.set(overlayKey, {
+      const overlayKey = `${route.id}:${direction}`;
+      const existing = overlays.get(overlayKey);
+      const naturalStops = route.stops ?? route.waypoints ?? [];
+      const nextStopIndex = publishedStopIndex(entry.currentStopIndex, naturalStops.length);
+      const indices = nextStopIndex === undefined ? [] : [nextStopIndex];
+      const orderedStops = (direction === "reverse" ? [...naturalStops].reverse() : naturalStops).map(({ lat, lng }) => ({ lat, lng }));
+      if (existing) {
+        if (entry.routeSource !== "dynamic-reroute") existing.nextStopIndices.push(...indices);
+      } else overlays.set(overlayKey, {
         key: overlayKey,
         routeId: route.id,
         color: route.color,
-        polyline: hasDynamic && geometry
-          ? geometry.polyline
-          : (direction === "reverse"
+        polyline: (direction === "reverse"
               ? route.reversePolyline
               : route.forwardPolyline ?? route.polyline),
-        polylineQuality: hasDynamic && geometry
-          ? "HIGH_QUALITY"
-          : hasDirectionalGeometry
+        polylineQuality: hasDirectionalGeometry
             ? route.polylineQuality
             : undefined,
         direction,
-        stops: (route.stops ?? route.waypoints ?? []).map(({ lat, lng }) => ({
-          lat,
-          lng,
-        })),
+        stops: orderedStops,
+        nextStopIndices: entry.routeSource === "dynamic-reroute" ? [] : [...indices],
       });
+      if (hasDynamic && geometry) {
+        const key = `${overlayKey}:${entry.busId}:${entry.routeVersion}`;
+        overlays.set(key, { key, routeId: route.id, color: route.color, polyline: geometry.polyline,
+          polylineQuality: "HIGH_QUALITY", direction, stops: orderedStops,
+          nextStopIndices: indices, firstStopIndex: geometry.firstStopIndex ?? -1 });
+      }
     }
     return [...overlays.values()];
   }, [activeEntries, routes, dynamicGeometries]);
@@ -820,6 +833,8 @@ export default function DashboardPanel() {
               polylineQuality={route.polylineQuality}
               color={route.color || "#3b82f6"}
               hasBuses
+              nextStopIndices={route.nextStopIndices}
+              firstStopIndex={route.firstStopIndex}
               direction={route.direction}
             />
           ))}

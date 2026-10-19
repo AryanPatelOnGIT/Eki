@@ -447,6 +447,7 @@ export default function PassengerWorkspace() {
           {visibleView === "tracking" && mapRoute && targetStop && (
             <PassengerTrackingMap
               targetStop={targetStop}
+              selectedDestinationStopId={effectiveDestinationStopId}
               route={mapRoute}
               resumeGeneration={resumeGeneration}
               preview={preview}

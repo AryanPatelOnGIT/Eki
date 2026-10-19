@@ -287,7 +287,9 @@ Body: `{ "busId":"bus_01", "routeId":"route_01", "driverId":"driver_01" }`. `dri
 
 Requires agreement among Auth claim, `drivers`, `buses`, route assignment and a fresh ≤60-second stopped hardware fix near exactly one route endpoint. The backend infers `forward` at endpoint A or `reverse` at endpoint Z; the client cannot choose or override direction. A Firestore bus lock prevents another route session. If already owned by the same driver/session, repairs durable records and returns 200 `{sessionId,resumed:true,direction}`. New ride returns 201 `{sessionId,resumed:false,direction}`. Returns 403 assignment mismatch, 409 active/lock/stale/moving/ambiguous-position conflict, 422 invalid route endpoints or 500.
 
-At the inferred origin, the session starts `active/in_service` and records stop 0. An active session always restores its immutable stored direction after hardware/backend interruption. After final-stop completion, a fresh stopped fix at that destination after the optional `AUTOMATIC_TURNAROUND_DWELL_MS` delay (default zero) causes the backend to atomically arm a new session in the opposite direction; stale, moving, mid-route or contested state never auto-arms.
+At the inferred origin, the session starts `active/in_service` and records stop 0. An active session always restores its immutable stored direction after hardware/backend interruption. After final-stop completion, a fresh stopped fix at that destination after the `AUTOMATIC_TURNAROUND_DWELL_MS` delay (default 30,000 ms; minimum 0) causes the backend to atomically arm a new session in the opposite direction; stale, moving, mid-route or contested state never auto-arms.
+
+An armed automatic return that has never departed survives overnight, but expires after 24 hours without session or matching lifecycle activity (or the configured abandoned-ride threshold, if longer). The hourly reconciler marks it interrupted and releases only its matching bus lock and lifecycle records, allowing a fresh shift. Unknown activity timestamps remain protected for manual inspection.
 
 ### `PATCH /api/shifts/delay` — assigned operator or admin
 

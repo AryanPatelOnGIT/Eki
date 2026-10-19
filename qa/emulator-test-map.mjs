@@ -12,6 +12,13 @@ const telemetryMappings = [
   tests: [{ path, name: `${suite} > ${title}`, level: 'L2', semantics: scope }] }));
 
 export const emulatorTestMap = [...telemetryMappings, {
+  caseId: 'TRIP14',
+  scope: 'Actual loopback Firestore/RTDB reconciliation expires an unused automatic return after one day of inactivity while preserving overnight readiness and a newer bus lock. Physical GNSS and live cloud behavior remain separate.',
+  sourcePaths: ['backend/src/services/abandonedRideReconciler.ts', 'backend/src/services/abandonedRideReconciliationLogic.ts'],
+  tests: [{ path: 'backend/src/reconciliation.integration.test.ts',
+    name: 'bounded reconciliation against actual Firebase emulators > expires an unused automatic return after a day while protecting overnight readiness and a replacement lock', level: 'L2',
+    semantics: 'Seeds armed automatic returns at 18 and 48 hours of inactivity in actual emulators; the production sweep protects the overnight session, interrupts expired returns, removes the matching live node/lock, and preserves a replacement session lock.' }],
+}, {
   caseId: 'SEC02',
   scope: 'Actual Firestore and RTDB rules reject stale/missing authorization versions, reassigned/unassigned/deleted drivers and demoted admins while preserving current operator/admin and passenger membership/public reads. Tokens are synthetic; live Auth/provider propagation is separate.',
   sourcePaths: ['firestore.rules', 'database.rules.json'],

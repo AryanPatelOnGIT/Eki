@@ -99,6 +99,11 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
 
   // ── Error state ──────────────────────────────────────────────────────────
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [operatorError, setOperatorError] = useState<string | null>(null);
+  const operatorErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (operatorError) operatorErrorRef.current?.focus();
+  }, [operatorError]);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const runSave = async (work: () => Promise<void>) => {
@@ -211,9 +216,11 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const handleAddDriver = async () => {
     const validationError = validateOperatorInput(newDriverId, newDriverName, newDriverAuthUid);
     if (validationError) {
-      setErrorMsg(validationError);
+      setOperatorError(validationError);
+      operatorErrorRef.current?.focus();
       return;
     }
+    setOperatorError(null);
     const authUid = newDriverAuthUid.trim();
     try {
       await runSave(async () => {
@@ -222,7 +229,7 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
         });
         setNewDriverId(""); setNewDriverName(""); setNewDriverAuthUid(""); setNewDriverBusId("");
       });
-    } catch (error: unknown) { setErrorMsg("Failed to add Operator: " + errorMessage(error)); }
+    } catch (error: unknown) { setOperatorError("Failed to add Operator: " + errorMessage(error)); }
   };
 
   const handleDeleteDriver = (id: string) => {
@@ -536,22 +543,30 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
           {/* Add form */}
           <div className="panel-rc p-6 flex flex-col gap-4">
             <p className="text-[9px] text-white/20 font-black uppercase tracking-[0.2em]">Register new operator</p>
+            {operatorError && (
+              <div ref={operatorErrorRef} id="operator-create-error" role="alert" tabIndex={-1} className="rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-200 focus:outline-2 focus:outline-red-300">
+                {operatorError}
+              </div>
+            )}
             <input
               value={newDriverId} onChange={(e) => setNewDriverId(e.target.value)}
               placeholder="Operator ID (e.g. drv_1)"
               aria-label="New operator ID"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <input
               value={newDriverName} onChange={(e) => setNewDriverName(e.target.value)}
               placeholder="Display Name (e.g. Ravi Kumar)"
               aria-label="New operator display name"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <input
               value={newDriverAuthUid} onChange={(e) => setNewDriverAuthUid(e.target.value)}
               placeholder="Firebase Auth UID"
               aria-label="Firebase Auth UID for new operator"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <CustomSelect

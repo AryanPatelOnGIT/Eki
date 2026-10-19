@@ -3,7 +3,7 @@ import { encodePolyline } from "../lib/polylineUtils";
 import type { TelemetryPayload } from "./telemetryPayload";
 
 const state = vi.hoisted(() => ({ values: new Map<string, Record<string, unknown>>(),
-  route: {} as Record<string, unknown>, compute: vi.fn(), beforeTransaction: null as (() => void) | null }));
+  route: {} as Record<string, unknown>, compute: vi.fn(), failure: vi.fn(), beforeTransaction: null as (() => void) | null }));
 vi.mock("../lib/firebaseAdmin", () => ({
   db: { collection: () => ({ doc: () => ({ get: async () => ({ exists: true, data: () => state.route }) }) }) },
   rtdb: { ref: (path: string) => ({
@@ -18,7 +18,7 @@ vi.mock("../lib/firebaseAdmin", () => ({
   }) },
 }));
 vi.mock("../lib/googleMaps", () => ({ computeRouteGeometry: state.compute, LIVE_REROUTE_TIMEOUT_MS: 3500 }));
-vi.mock("../lib/backgroundFailureTracker", () => ({ recordBackgroundFailure: vi.fn() }));
+vi.mock("../lib/backgroundFailureTracker", () => ({ recordBackgroundFailure: state.failure }));
 
 let service: typeof import("./telemetryRouteService");
 let now: number;
@@ -38,20 +38,57 @@ async function tick(bus = "bus", point = { lat: 24, lng: 73 }) {
   await service.drainTelemetryRouteProcessing();
 }
 beforeEach(async () => {
+  // These counters measure deviation retries. Departure traffic has its own
+  // capped replay tests and is an independently configurable feature.
+  vi.stubEnv("LIVE_DEPARTURE_ROUTES_ENABLED", "false");
   vi.resetModules(); now = 1_000_000; sequence = 0;
   vi.spyOn(Date, "now").mockImplementation(() => now);
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.spyOn(Math, "random").mockReturnValue(1);
   vi.spyOn(console, "error").mockImplementation(() => {});
-  state.values.clear(); state.beforeTransaction = null; state.compute.mockReset();
+  state.values.clear(); state.beforeTransaction = null; state.compute.mockReset(); state.failure.mockClear();
   state.compute.mockRejectedValue(new Error("provider unavailable"));
   state.route = { stops, geometryVersion: 1, forwardPolyline: encodePolyline(stops), reversePolyline: encodePolyline([...stops].reverse()) };
   service = await import("./telemetryRouteService");
   initial();
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("reroute scheduling with persisted backoff", () => {
+  it("retries a rejected result with the latest required stop after progress advances", async () => {
+    const itinerary = [stops[0], { id: "middle", lat: 23.05, lng: 72.05 }, stops[1]];
+    state.route.stops = itinerary;
+    state.route.forwardPolyline = encodePolyline(itinerary);
+    state.route.reversePolyline = encodePolyline([...itinerary].reverse());
+    state.compute.mockImplementationOnce(async (origin, destination, intermediates) => {
+      state.values.set(key(), { ...state.values.get(key()), currentStopIndex: 2 });
+      return { encodedPolyline: encodePolyline([origin, ...intermediates, destination]), distanceMeters: 1000, duration: "100s" };
+    });
+    await tick();
+    expect(state.values.get(key())).toMatchObject({ routeState: "OFF_ROUTE", rerouteRequestId: null, routeVersion: 1, currentStopIndex: 2 });
+    expect(state.failure).not.toHaveBeenCalled();
+    const retry = state.values.get(key())!.rerouteRetry as { nextAttemptAt: number };
+    now += 1000; await tick();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    state.compute.mockImplementation(async (origin, destination, intermediates) => ({
+      encodedPolyline: encodePolyline([origin, ...intermediates, destination]), distanceMeters: 1000, duration: "100s",
+    }));
+    now = retry.nextAttemptAt; await tick();
+    expect(state.compute).toHaveBeenCalledTimes(2);
+    expect(state.compute.mock.lastCall?.[2]).toEqual([]);
+    expect(state.values.get(key())).toMatchObject({ routeState: "ON_NEW_ROUTE", rerouteRequestId: null, currentStopIndex: 2 });
+    const version = state.values.get(key())!.routeVersion;
+    expect(state.values.get(`activeRouteGeometry/bus_route/${version}`)).toMatchObject({ firstStopIndex: 2 });
+  });
+
+  it("does not clear a newer request when an old successful result is rejected", async () => {
+    state.compute.mockImplementation(async () => {
+      state.values.set(key(), { ...state.values.get(key()), rerouteRequestId: "new-request" });
+      return { encodedPolyline: encodePolyline(stops), distanceMeters: 1000, duration: "100s" };
+    });
+    await tick();
+    expect(state.values.get(key())).toMatchObject({ routeState: "REROUTING", rerouteRequestId: "new-request", routeVersion: 1 });
+  });
   it("reduces a minute of persistent failures from the legacy 12 attempts to 3", async () => {
     for (let elapsed = 0; elapsed < 60_000; elapsed += 1000) { await tick(); now += 1000; }
     expect(state.compute).toHaveBeenCalledTimes(3);

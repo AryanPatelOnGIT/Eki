@@ -116,6 +116,7 @@ vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => 
 import { getTripStateQueueStatus, lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
 import { restoreDurableRide } from "./durableRideRecovery";
 import { WorkerFence } from "../lib/workerFence";
+import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
 
 async function flushMicrotasks(turns = 20): Promise<void> {
   for (let index = 0; index < turns; index += 1) await Promise.resolve();
@@ -426,6 +427,29 @@ describe("trip-state engine lifecycle", () => {
     await stop();
   });
 
+  it.each([undefined, null, "", "bad/id"])("completes without writing an invalid terminal driver checkpoint: %s", async driverId => {
+    allowCompletion("session-1");
+    const stop = startTripStateEngine(); armRoute();
+    const store = makeNodeRef({ tripState: "in_service", sessionId: "session-1" });
+    const snapshot = queuedSnapshot(store, "bus_1_route_2");
+    mocks.rtdbHandlers.get("child_changed")!({ ...snapshot, val: () => ({ ...snapshot.val(), driverId }) });
+    await flushMicrotasks(100);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ collectionName: "ride_sessions" }),
+      expect.objectContaining({ status: "completed" }), { merge: true });
+    expect(mocks.transactionSet.mock.calls.some(([ref, data]) => ref.collectionName === "bus_locations" && data.terminalJourney)).toBe(false);
+    await stop();
+  });
+  it("completes a legacy node without a session ID without writing a recovery checkpoint", async () => {
+    const stop = startTripStateEngine(); armRoute();
+    const store = makeNodeRef({ tripState: "in_service" });
+    const snapshot = queuedSnapshot(store, "bus_1_route_2");
+    mocks.rtdbHandlers.get("child_changed")!({ ...snapshot, val: () => ({ ...snapshot.val(), sessionId: undefined }) });
+    await flushMicrotasks(100);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ collectionName: "completed_trips" }),
+      expect.objectContaining({ sessionId: null }), { merge: true });
+    expect(mocks.transactionSet.mock.calls.some(([ref, data]) => ref.collectionName === "bus_locations" && data.terminalJourney)).toBe(false);
+    await stop();
+  });
   it("negative-caches a missing route across telemetry updates", async () => {
     mocks.reduceTripState.mockReturnValue({
       tripState: "in_service",
@@ -703,7 +727,8 @@ describe("trip-state engine lifecycle", () => {
 
   /** RTDB-boundary mock: update() merges, transaction() aborts on undefined. */
   const makeNodeRef = (initialValue: unknown) => {
-    let nodeValue = initialValue;
+    let nodeValue: unknown = initialValue && typeof initialValue === "object"
+      ? { gpsHdop: 1, ...initialValue } : initialValue;
     const refUpdate = vi.fn(async (patch: Record<string, unknown>) => {
       nodeValue =
         nodeValue && typeof nodeValue === "object"
@@ -760,6 +785,8 @@ describe("trip-state engine lifecycle", () => {
           exists: true,
           data: () => ({
             status: "completed",
+            terminalArrivalConfirmedAt: 190_000,
+            direction: previousDirection,
             busId: "bus_1",
             routeId: "route_2",
             driverId: "driver-1",
@@ -778,6 +805,12 @@ describe("trip-state engine lifecycle", () => {
           data: () => ({ assignedRoutes: ["route_2"] }),
         };
       }
+      if (ref.collectionName === "bus_locations") return { exists: true, data: () => ({ terminalJourney: {
+        sessionId: "session-1", consumedBy: null, direction: previousDirection,
+        directionEndpointVersion: endpointSnapshotVersion([
+          { id: "origin", lat: 23, lng: 72 }, { id: "destination", lat: 23.1, lng: 72.1 },
+        ]),
+      } }) };
       return { exists: false, data: () => undefined };
     });
     const stop = startTripStateEngine();
@@ -868,7 +901,7 @@ describe("trip-state engine lifecycle", () => {
     });
     mocks.rtdbHandlers.get("child_added")!({ key: "bus_1_route_2", val: store.nodeValue, ref: store.ref });
     await flushMicrotasks(40);
-    expect(restoreDurableRide).toHaveBeenCalledWith({ busId: "bus_1", routeId: "route_2" }, undefined, "return-session");
+    expect(restoreDurableRide).toHaveBeenCalledWith({ busId: "bus_1", routeId: "route_2" }, undefined, "return-session", false);
     expect(mocks.transactionCreate).not.toHaveBeenCalled();
     await stop();
   });

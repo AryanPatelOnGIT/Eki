@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { hasLiveRouteContext, withoutLiveRouteContext } from "./liveRouteContext";
 
 describe("withoutLiveRouteContext", () => {
+  it("retains only the revision counter for a direction reset within one session", () => {
+    expect(withoutLiveRouteContext({ sessionId: "s1", routeVersion: 7,
+      activeRoutePolyline: "old", matchedLocation: { lat: 23, lng: 72 } }, { preserveVersion: true }))
+      .toEqual({ sessionId: "s1", routeVersion: 7 });
+    expect(hasLiveRouteContext({ routeVersion: 7 }, { ignoreVersion: true })).toBe(false);
+    expect(hasLiveRouteContext({ routeVersion: 7, matchedLocation: null }, { ignoreVersion: true })).toBe(true);
+  });
+  it.each([undefined, null, 0, -1, 1.5, "7", Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "does not preserve invalid revision %s", routeVersion => {
+      expect(withoutLiveRouteContext({ sessionId: "s1", routeVersion }, { preserveVersion: true }))
+        .toEqual({ sessionId: "s1" });
+    },
+  );
   it("preserves physical telemetry and lifecycle state while removing route-session state", () => {
     const live = {
       busId: "bus_1",

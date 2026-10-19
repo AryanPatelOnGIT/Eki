@@ -13,6 +13,36 @@ vi.mock("@/lib/firebaseAuth", () => ({ auth: { currentUser: { getIdToken: async 
 beforeEach(() => { live.entries = []; vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("fleet and personnel controls", () => {
+  it("announces and focuses operator validation in the operator form", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    const error = screen.getByRole("alert");
+    expect(error.textContent).toContain("Operator ID is required.");
+    expect(error.parentElement?.textContent).toContain("Register new operator");
+    expect(document.activeElement).toBe(error);
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    expect(document.activeElement).toBe(error);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText("New operator ID"), "driver1");
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    expect(screen.getByRole("alert").textContent).toContain("Operator display name is required.");
+    expect(document.activeElement).toBe(screen.getByRole("alert"));
+  });
+
+  it("keeps a server operator error beside the form and retains the draft", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Operator already exists"}', { status: 409 })));
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.type(screen.getByLabelText("New operator ID"), "existing_driver");
+    await user.type(screen.getByLabelText("New operator display name"), "Draft driver");
+    await user.type(screen.getByLabelText("Firebase Auth UID for new operator"), "uid_1");
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    const error = await screen.findByRole("alert");
+    expect(error.textContent).toContain("Operator already exists");
+    expect(error.parentElement?.textContent).toContain("Register new operator");
+    expect(document.activeElement).toBe(error);
+    expect((screen.getByLabelText("New operator display name") as HTMLInputElement).value).toBe("Draft driver");
+  });
   it("keeps a newly received fix online between freshness ticks and still expires silence", () => {
     vi.useFakeTimers(); const start = Date.now();
     live.entries = [{ busId: "qa-bus", routeId: "qa-route", deviceState: "online", timestamp: start }];

@@ -52,6 +52,24 @@ integration("bounded reconciliation against actual Firebase emulators", () => {
     await state.realtime!.ref().set(null); state.claims.clear(); state.maximum = 0; state.authGate = null;
   });
   afterAll(async () => { await drainFleetMutations(false); await new Promise<void>(done => server.close(() => done())); await state.firestore?.terminate(); if (app) await deleteApp(app); });
+  it("expires an unused automatic return after a day while protecting overnight readiness and a replacement lock", async () => {
+    const now = Date.now();
+    for (const [id, hours] of [["overnight", 18], ["expired", 48], ["replaced", 48]] as const) {
+      const old = now - hours * 60 * 60_000;
+      await state.firestore!.collection("ride_sessions").doc(id).set({ busId: id, routeId: "route", driverId: "driver", status: "armed", automaticTurnaround: true, armedAt: old });
+      await state.firestore!.collection("active_rides").doc(`${id}_route`).set({ sessionId: id, tripState: "pre_departure", hasDepartedOrigin: false, updatedAt: old });
+      await state.firestore!.collection("_active_bus_locks").doc(id).set({ sessionId: id === "replaced" ? "new-session" : id });
+      await state.realtime!.ref(`activeBuses/${id}_route`).set({ sessionId: id, tripState: "pre_departure", timestamp: old });
+    }
+    const summary = await runAbandonedRideReconciliation({ now });
+    expect(summary.protectedIds).toEqual(["overnight"]);
+    expect(summary.interruptedIds).toEqual(["expired", "replaced"]);
+    expect((await state.firestore!.collection("_active_bus_locks").doc("expired").get()).exists).toBe(false);
+    expect((await state.firestore!.collection("_active_bus_locks").doc("overnight").get()).data()?.sessionId).toBe("overnight");
+    expect((await state.firestore!.collection("_active_bus_locks").doc("replaced").get()).data()?.sessionId).toBe("new-session");
+    expect((await state.realtime!.ref("activeBuses/expired_route").get()).exists()).toBe(false);
+    expect((await state.firestore!.collection("ride_sessions").doc("expired").get()).data()?.status).toBe("interrupted");
+  });
   it("interrupts 201 stale sessions through mutating cursors and preserves newer/unknown lifecycles", async () => {
     const now = Date.now(), old = now - 14 * 60 * 60 * 1000;
     const batch = state.firestore!.batch(); const live: Record<string, unknown> = {};

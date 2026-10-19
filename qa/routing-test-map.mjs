@@ -1,0 +1,57 @@
+// Limited regression evidence; simulated adapters do not establish road/GNSS accuracy.
+export const routingTestMap = [{
+  caseId: 'TRIP01',
+  scope: 'Endpoint classification uses a fresh stopped quality fix, not displacement. Pure classifier evidence only.',
+  sourcePaths: ['backend/src/lib/automaticRideDirection.ts'],
+  tests: [{ path: 'backend/src/lib/automaticRideDirection.test.ts', name: 'automatic ride direction > resolves only a fresh, stopped, high-quality fix inside one endpoint geofence', level: 'L1', semantics: 'Classifier rejects moving, stale, poor-quality and outside-endpoint fixes and selects both unique endpoints.' },
+    { path: 'backend/src/lib/automaticRideDirection.test.ts', name: 'automatic ride direction > requires a fix within 10m of either initial endpoint', level: 'L1', semantics: 'Initial direction accepts 9m and rejects 11m/15m at both endpoints using fresh stopped telemetry.' }],
+}, {
+  caseId: 'TRIP06',
+  scope: 'Real ingestion and trip engine with in-memory Firebase adapters preserve the next expected stop at 11m, advance at 9m, and persist one history event before the live index. Transport and physical GNSS are separate.',
+  sourcePaths: ['backend/src/services/tripStateReducer.ts', 'backend/src/services/tripStateEngine.ts'],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > publishes the next stop and its history only after entering the 10m arrival circle', level: 'L1', semantics: 'Authenticated ingestion invokes the real engine; an outside fix leaves the middle stop unreached, an inside fix records it once and publishes the terminal as next, and repeated fixes cannot duplicate history.' }],
+}, {
+  caseId: 'TRIP14',
+  scope: 'Real ingestion/engine/recovery with serialized in-memory Firebase adapters preserves terminal intent, unique return identity and undeparted overnight readiness. Provider and persistence transport are mocked.',
+  sourcePaths: ['backend/src/services/tripStateEngine.ts', 'backend/src/services/durableRideRecovery.ts', 'backend/src/services/durableRideRecoveryPolicy.ts', 'backend/src/services/abandonedRideReconciliationLogic.ts'],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > preserves an already armed return through the real abandoned-session sweep overnight', level: 'L1', semantics: 'Actual reconciliation protects the return, then node removal/restart reuses the same armed reverse session.' },
+  { path: 'backend/src/services/abandonedRideReconciliationLogic.test.ts', name: 'abandoned ride reconciliation logic > preserves an undeparted automatic return across an overnight power-off', level: 'L1', semantics: 'Pure policy distinguishes undeparted automatic readiness from an abandoned manual/departed ride.' }],
+}, {
+  caseId: 'MAP15',
+  scope: 'Directional traffic refresh publishes versioned geometry once; ordered road legs use existing geometry. SDK/provider acceptance is a separate opt-in replay.',
+  sourcePaths: ['backend/src/services/telemetryRouteService.ts', 'frontend/src/components/maps/DirectionsRoute.tsx', 'frontend/src/components/maps/PassengerMap.tsx', 'frontend/src/components/passenger/RouteTimelineSheet.tsx', 'frontend/src/components/admin/DashboardPanel.tsx', 'frontend/src/lib/publishedStopIndex.ts', 'frontend/src/lib/routeLegPaths.ts', 'frontend/src/lib/activeRouteGeometry.ts'],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > refreshes on-route geometry once, without a per-fix provider call', level: 'L1', semantics: 'Real route processing through mocked provider/storage publishes current route context and does not call the provider for every fix.' },
+  { path: 'frontend/src/components/maps/DirectionsRoute.test.tsx', name: 'keeps the whole road grey and advances only the blue leg without provider calls', level: 'L1', semantics: 'Real component with observed SDK constructor fixture renders the full grey road, only selected active legs blue, advances/retires overlays, and makes no geometry API request.' },
+  { path: 'backend/src/services/rerouteBackoff.integration.test.ts', name: 'reroute scheduling with persisted backoff > retries a rejected result with the latest required stop after progress advances', level: 'L1', semantics: 'Real matching and reroute scheduler with mocked provider/RTDB rejects old stop-context geometry, releases its matching request, preserves backoff and publishes a later itinerary beginning at the current required stop.' },
+  { path: 'frontend/src/components/maps/PassengerMap.test.tsx', name: "published passenger stop progress > accepts a corrected index and clears it when progress disappears or a session changes", level: 'L1', semantics: 'Mounted production map accepts backend corrections, clears timeline/leg progress when the index disappears, and does not reuse ETA progress for a replacement session. RTDB, ETA calculation and Maps are mocked.' },
+  { path: 'frontend/src/components/passenger/RouteTimelineSheet.test.tsx', name: 'uses the published next stop even when its ETA is unavailable', level: 'L1', semantics: 'Mounted production timeline marks only stops before the published index passed, independently of ETA availability. Does not claim physical arrival or datastore transport acceptance.' },
+  { path: 'frontend/src/components/admin/DashboardPanel.test.tsx', name: 'admin service creation > centers the bus glyph on its coordinate while its label stays outside the anchor box', level: 'L1', semantics: 'Mounted production admin marker supplies center anchors with an unchanged coordinate and keeps the label outside the square glyph box; actual pixel registration is separately measured by the real SDK replay.' },
+  { path: 'frontend/src/lib/activeRouteGeometry.test.ts', name: 'activeRouteGeometry > fetches and decodes reroute geometry once per version', level: 'L1', semantics: 'Version cache retains the immutable first required stop used to cut a dynamic path that starts at the bus.' }],
+}, {
+  caseId: 'MAP02',
+  scope: 'Pure marker selection bridges transient low confidence without claiming new lane precision.',
+  sourcePaths: ['frontend/src/lib/liveBusMarkerPosition.ts'],
+  tests: [{ path: 'frontend/src/lib/liveBusMarkerPosition.test.ts', name: 'live bus marker selection > bridges one completed low-confidence sample without jumping to the parallel road', level: 'L1', semantics: 'Selection holds the last reliable point for a bounded interval before exposing raw approximate position.' }],
+}, {
+  caseId: 'HIST01',
+  scope: 'Session history retains raw last fix on signal loss and exposes retained messages when expanded. GNSS power-off instant and unrestricted retention are not asserted.',
+  sourcePaths: ['backend/src/services/journeyLocation.ts', 'backend/src/routes/shifts.ts', 'backend/src/routes/sessions.ts', 'frontend/src/components/admin/RideHistoryPanel.tsx', 'firestore.rules'],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > archives the last raw accepted fix on each signal loss without per-fix history writes', level: 'L1', semantics: 'Two distinct signal losses save separate locations/events on the original session and fleet while ordinary fixes do not create disconnect history.' },
+  { path: 'backend/src/routes/rideSessions.test.ts', name: 'versioned session identity and lifecycle > ends a shift and releases its lock when optional RTDB location capture fails', level: 'L1', semantics: 'Mounted real manual-stop handler with mocked persistence completes durable interruption and releases only its lock when location capture rejects, preserving existing location, passenger manifest and chat.' },
+  { path: 'frontend/src/components/admin/RideHistoryPanel.test.tsx', name: 'ride-history controls > expands and collapses stored history without an API write', level: 'L1', semantics: 'Mounted history renders armed time, passenger section and a stored chat message, and collapses without an API mutation.' },
+  { path: 'backend/src/routes/rideSessions.test.ts', name: 'versioned session identity and lifecycle > captures the final raw fix before a manual early end without losing the manifest or chat', level: 'L1', semantics: 'Mounted stop handler stores the captured session raw location, interrupts the ride, preserves its manifest/message and releases its lock using mocked storage.' },
+  { path: 'backend/src/routes/sessionsMessages.test.ts', name: 'session message route v2=%s > retains retry identity and rejects changed content after live chat is archived', level: 'L1', semantics: 'Both mounted message aliases replay an archived original, reject changed text and avoid another live/rate write with mocked persistence.' },
+  { path: 'backend/src/rulesIntegration.test.ts', name: 'Firebase security rules integration > restricts cleared ride chat archives to current operators and denies client mutation', level: 'L2', semantics: 'Actual emulator Firestore rules admit a current admin archive read/query and reject passenger, unauthenticated and client write/delete attempts.' }],
+}, {
+  caseId: 'FLEET05',
+  scope: 'Mounted operator registration validation and server rejection feedback only; real claims and datastore writes remain separate acceptance tiers.',
+  sourcePaths: ['frontend/src/components/admin/FleetManagementPanel.tsx'],
+  tests: [{ path: 'frontend/src/components/admin/FleetManagementPanel.test.tsx', name: 'fleet and personnel controls > announces and focuses operator validation in the operator form', level: 'L1', semantics: 'Empty and incomplete operator registration shows and focuses a local alert near the form, including repeated submission, without an API mutation.' },
+    { path: 'frontend/src/components/admin/FleetManagementPanel.test.tsx', name: 'fleet and personnel controls > keeps a server operator error beside the form and retains the draft', level: 'L1', semantics: 'A mocked server conflict keeps the operator draft and focuses its local failure message instead of an offscreen global banner.' }],
+}, {
+  caseId: 'PAX26',
+  scope: 'Destination selection is distinct from camera fallback in pending-direction preview; real Maps and role-specific live acceptance remain separate.',
+  sourcePaths: ['frontend/src/components/passenger/PassengerWorkspace.tsx', 'frontend/src/components/maps/PassengerMap.tsx'],
+  tests: [{ path: 'frontend/src/components/passenger/PassengerWorkspace.test.tsx', name: 'device preview lifecycle > keeps the preview camera fallback separate from destination selection and clearing', level: 'L1', semantics: 'Mounted workspace preserves its camera fallback while passing empty, explicitly selected and cleared destination identities independently to the map boundary.' },
+    { path: 'frontend/src/components/maps/PassengerMap.test.tsx', name: 'published passenger stop progress > distinguishes a camera fallback from an explicitly selected or cleared destination', level: 'L1', semantics: 'Actual map and timeline components with mocked Maps/RTDB show endpoint badges until a destination is explicitly selected and remove the selected badge after clearing it.' }],
+}];

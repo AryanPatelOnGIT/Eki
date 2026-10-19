@@ -23,7 +23,7 @@ import {
   type DirectedRouteData,
 } from "@/lib/rideDirection";
 import { normalizeHeading, unwrapHeading } from "@/lib/markerHeading";
-import { sharedRerouteGeometry, busEtaPath } from "@/lib/busRouteGeometry";
+import { busEtaPath } from "@/lib/busRouteGeometry";
 import { selectLiveBusMarkerPosition, type LiveBusMarkerSelection } from "@/lib/liveBusMarkerPosition";
 import { useLiveBusMarkerPosition } from "@/hooks/useLiveBusMarkerPosition";
 import { useSmoothPosition } from "@/hooks/useSmoothPosition";
@@ -36,6 +36,7 @@ import { useDynamicRouteGeometries } from "@/hooks/useDynamicRouteGeometries";
 import { useTelemetryRenderTrace } from "@/hooks/useTelemetryRenderTrace";
 import { stopLabel } from "@/lib/stopLabel";
 import { routeDisplayPath } from "@/lib/routeDisplayPath";
+import { publishedStopIndex } from "@/lib/publishedStopIndex";
 import type { LatLng } from "@/lib/polyline";
 
 export interface PassengerMapProps {
@@ -44,6 +45,8 @@ export interface PassengerMapProps {
   resumeGeneration?: number;
   preview?: boolean;
   selectedBusKey?: string;
+  /** Explicit destination selection; targetStop may only be a camera fallback. */
+  selectedDestinationStopId?: string;
 }
 
 type IncomingBusData = PassengerMapBus;
@@ -81,7 +84,7 @@ const BusMarker = memo(function BusMarker({
 
   if (!markerPoint) return null;
   return (
-    <AdvancedMarker position={markerPoint}>
+    <AdvancedMarker position={markerPoint} anchorLeft="-50%" anchorTop="-50%">
       <div
         title={
           markerSelection.decision === "match_pending"
@@ -169,28 +172,24 @@ function PassengerMapInner({
   resumeGeneration = 0,
   preview = false,
   selectedBusKey,
+  selectedDestinationStopId,
 }: {
   targetStop: RouteStop;
   route: DirectedRouteData;
   resumeGeneration?: number;
   preview?: boolean;
   selectedBusKey?: string;
+  selectedDestinationStopId?: string;
 }) {
   const [buses, setBuses] = useState<Map<string, IncomingBusData>>(new Map<string, IncomingBusData>());
   const previousBusesRef = useRef<Map<string, IncomingBusData>>(new Map());
   const [stopETAs, setStopETAs] = useState<Record<string, number>>({});
   const [uiNow, setUiNow] = useState(() => Date.now());
-  const [activeBusStopIndex, setActiveBusStopIndex] = useState<number | undefined>(undefined);
-  const lastStopIndexRef = useRef<Record<string, number>>({});
-  // Hysteresis: tracks which stops are "inside" (entered but not yet exited via the larger exit radius)
-  const stopInsideRef = useRef<Record<string, boolean>>({}); // busId+stopId -> inside state
   const routeRef = useRef(route);
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
   useEffect(() => {
-    lastStopIndexRef.current = {};
-    stopInsideRef.current = {};
     previousBusesRef.current = new Map();
   }, [route.id, route.rideDirection, route.configVersion, route.stops, selectedBusKey]);
 
@@ -207,9 +206,7 @@ function PassengerMapInner({
   // version-keyed sibling node (`activeRouteGeometry`), so the high-frequency
   // activeBuses child never carries the full polyline.
   const dynamicGeometries = useDynamicRouteGeometries(buses);
-  // Surface a shared route overlay only when the fleet agrees on one reroute
-  // geometry. If buses carry different reroutes (or none is rerouted), fall
-  // back to the configured route so no bus's route and ETA leak to another.
+  // Each bus keeps its own geometry and next-stop progress.
   const etaMarkerSelections = useRef(new Map<string, LiveBusMarkerSelection>());
   const etaSelectionInputs = useRef(new Map<string, IncomingBusData>());
   const etaBusPositions = useRef(new Map<string, {
@@ -229,10 +226,6 @@ function PassengerMapInner({
       projections.clear();
     };
   }, [route.id, route.rideDirection, route.configVersion, route.geometryVersion]);
-  const activeRoute = useMemo(
-    () => sharedRerouteGeometry(buses, dynamicGeometries, route.rideDirection),
-    [buses, dynamicGeometries, route.rideDirection],
-  );
   // Backend active geometry is already ordered in travel direction; direction-
   // specific reversePolyline stays in Z→A order. Only legacy forward-only
   // geometry is reversed for a reverse ride (handled in mapRouteGeometry).
@@ -255,6 +248,10 @@ function PassengerMapInner({
       : roadPath.length < 2,
   );
   const aggregateArrivals = !selectedBusKey && buses.size > 1;
+  // A fleet has no single progress index. A selected/sole bus always follows
+  // its current publication, including corrections and session replacement.
+  const progressBus = !preview && buses.size === 1 ? buses.values().next().value : undefined;
+  const activeBusStopIndex = publishedStopIndex(progressBus?.currentStopIndex, route.stops.length);
 
   // ── Passenger geolocation (read-only — ESP32 is sole source for bus GPS) ──
   useEffect(() => {
@@ -279,10 +276,10 @@ function PassengerMapInner({
   }, []);
 
   const walkMinutesToTarget = useMemo(() => {
-    if (!passengerLocation) return undefined;
+    if (!passengerLocation || selectedDestinationStopId !== targetStop.id) return undefined;
     const dist = getDistanceMeters(passengerLocation, targetStop);
     return Math.ceil(dist / WALKING_M_PER_MIN);
-  }, [passengerLocation, targetStop]);
+  }, [passengerLocation, selectedDestinationStopId, targetStop]);
 
 
   // ── RTDB subscription: filtered by routeId ───────────────────────────────
@@ -298,7 +295,6 @@ function PassengerMapInner({
           arrivalTimestampsRef.current = {};
           setStopETAs({});
           setBuses(new Map());
-          setActiveBusStopIndex(undefined);
           return;
         }
 
@@ -321,72 +317,6 @@ function PassengerMapInner({
           const bus = reusePassengerMapBus(previousBusesRef.current.get(nextBus.busId), nextBus);
           activeBuses.set(bus.busId, bus);
 
-          if (preview || bus === previousBusesRef.current.get(bus.busId)) return;
-
-          if (!currentRoute.stops?.length) return;
-
-          let closestStopIndex: number;
-          if (bus.currentStopIndex !== undefined) {
-            closestStopIndex = bus.currentStopIndex;
-            lastStopIndexRef.current[bus.busId] = closestStopIndex;
-          } else {
-            const lastKnown = lastStopIndexRef.current[bus.busId] ?? 0;
-            const searchStart = Math.max(0, lastKnown - 1);
-            const searchEnd = Math.min(
-              currentRoute.stops.length - 1,
-              lastKnown + 3,
-            );
-            let minDistance = Number.POSITIVE_INFINITY;
-            closestStopIndex = lastKnown;
-            for (let index = searchStart; index <= searchEnd; index += 1) {
-              const distance = getDistanceMeters(bus, currentRoute.stops[index]);
-              if (distance < minDistance) {
-                minDistance = distance;
-                closestStopIndex = index;
-              }
-            }
-            if (minDistance > 500) {
-              currentRoute.stops.forEach((stop, index) => {
-                const distance = getDistanceMeters(bus, stop);
-                if (distance < minDistance) {
-                  minDistance = distance;
-                  closestStopIndex = index;
-                }
-              });
-            }
-            lastStopIndexRef.current[bus.busId] = closestStopIndex;
-          }
-
-          const STOP_ENTRY_RADIUS_M = 35;
-          const STOP_EXIT_RADIUS_M = 45;
-          const lastKnownIndex = lastStopIndexRef.current[bus.busId] ?? 0;
-          const sequenceStart = Math.max(0, lastKnownIndex - 1);
-          const sequenceEnd = Math.min(
-            currentRoute.stops.length - 1,
-            lastKnownIndex + 2,
-          );
-          const candidateStops = currentRoute.stops
-            .slice(sequenceStart, sequenceEnd + 1)
-            .map((stop, offset) => ({
-              stop,
-              index: sequenceStart + offset,
-            }));
-
-          for (const { stop, index } of candidateStops) {
-            const insideKey = bus.busId + ":" + stop.id;
-            const distance = getDistanceMeters(bus, stop);
-            const wasInside = stopInsideRef.current[insideKey] ?? false;
-
-            if (!wasInside && distance < STOP_ENTRY_RADIUS_M) {
-              stopInsideRef.current[insideKey] = true;
-              if (index > (lastStopIndexRef.current[bus.busId] ?? 0)) {
-                lastStopIndexRef.current[bus.busId] = index;
-              }
-            } else if (wasInside && distance > STOP_EXIT_RADIUS_M) {
-              stopInsideRef.current[insideKey] = false;
-            }
-          }
-
         });
         previousBusesRef.current = activeBuses;
         if (activeBuses.size === 0) {
@@ -396,11 +326,6 @@ function PassengerMapInner({
         setBuses((previous) => previous.size === activeBuses.size &&
           [...activeBuses].every(([id, bus]) => previous.get(id) === bus)
           ? previous : activeBuses);
-        // Progress belongs to one bus. A fleet view aggregates earliest
-        // arrivals but never borrows one bus's passed/next-stop state.
-        const firstEntry = activeBuses.values().next().value as IncomingBusData | undefined;
-        setActiveBusStopIndex(firstEntry && !preview && activeBuses.size === 1
-          ? lastStopIndexRef.current[firstEntry.busId] ?? 0 : undefined);
       }, (error) => {
         console.warn("[RTDB] activeBuses read failed:", error.message);
         setLiveReadFailed(true);
@@ -449,8 +374,9 @@ function PassengerMapInner({
 
       for (const bus of Array.from(buses.values())) {
         if (bus.deviceState !== "online" || isLiveBusSignalLost(liveBusFreshnessTimestamp(bus), now)) continue;
-        const closestStopIdx = lastStopIndexRef.current[bus.busId] ?? 0;
-        const remainingStops = route.stops.slice(closestStopIdx);
+        const nextStopIndex = publishedStopIndex(bus.currentStopIndex, route.stops.length);
+        if (nextStopIndex === undefined) continue;
+        const remainingStops = route.stops.slice(nextStopIndex);
         if (remainingStops.length === 0) continue;
         // Each bus projects its position and stops along ITS OWN path so a
         // dynamic reroute on one bus never shifts another bus's ETA. Dynamic
@@ -634,28 +560,37 @@ function PassengerMapInner({
             previewPoints={preview && !focusBus ? (routePath.length ? routePath : routeStops) : undefined}
             hasBus={Boolean(firstBusMarker.position)} />
           <DirectionsRoute
-            key={`${route.id}:${route.rideDirection}:${activeRoute?.version ?? "configured"}`}
+            key={`${route.id}:${route.rideDirection}:configured`}
             routeId={route.id}
             stops={routeStops}
-            polyline={activeRoute?.polyline ?? route.polyline}
-            polylineQuality={activeRoute ? "HIGH_QUALITY" : route.polylineQuality}
+            polyline={route.polyline}
+            polylineQuality={route.polylineQuality}
             color={route.color || "#3b82f6"}
             hasBuses={buses.size > 0}
             direction={route.rideDirection}
-            onGeometryReady={!activeRoute ? onConfiguredGeometryReady : undefined}
+            nextStopIndices={preview ? undefined : [...buses.values()].filter(bus => bus.routeSource !== "dynamic-reroute").flatMap(bus => {
+              const index = publishedStopIndex(bus.currentStopIndex, route.stops.length);
+              return index === undefined ? [] : [index];
+            })}
+            onGeometryReady={onConfiguredGeometryReady}
           />
 
-          {!activeRoute && [...dynamicGeometries.entries()].map(([busId, geometry]) => (
-            <DirectionsRoute
+          {[...dynamicGeometries.entries()].map(([busId, geometry]) => {
+            const bus = buses.get(busId);
+            if (!bus || preview) return null;
+            const index = publishedStopIndex(bus.currentStopIndex, route.stops.length);
+            return <DirectionsRoute
               key={`${busId}:${buses.get(busId)?.routeVersion}`}
               stops={routeStops}
               polyline={geometry.polyline}
               polylineQuality="HIGH_QUALITY"
               color={route.color || "#3b82f6"}
               hasBuses
+              nextStopIndices={index === undefined ? [] : [index]}
+              firstStopIndex={geometry.firstStopIndex ?? -1}
               direction={route.rideDirection}
-            />
-          ))}
+            />;
+          })}
 
           {/* Passenger location dot */}
           {passengerLocation && (
@@ -678,12 +613,10 @@ function PassengerMapInner({
 
           {/* Stop markers */}
           {route.stops?.map((stop, i) => {
-            const isTarget = stop.id === targetStop.id;
+            const isTarget = stop.id === selectedDestinationStopId;
             const dotColor = "var(--accent)"; // FORCED ORANGE
             
-            // Get the current stop index — reactive state from RTDB (driver/ESP32 source of truth)
-            const currentStopIndex = activeBusStopIndex ?? 0;
-            const isPast = i < currentStopIndex;
+            const isPast = activeBusStopIndex !== undefined && i < activeBusStopIndex;
             
             // Native halo text style (White text, thick black halo)
             const labelStyle: React.CSSProperties = {
@@ -760,7 +693,7 @@ function PassengerMapInner({
       <RouteTimelineSheet
         route={route}
         preview={preview}
-        targetStopId={targetStop.id}
+        targetStopId={selectedDestinationStopId ?? ""}
         activeBusId={null}
         stopETAs={stopETAs}
         walkMinutesToTarget={walkMinutesToTarget}
@@ -785,6 +718,7 @@ export default function PassengerMap(props: PassengerMapProps) {
         resumeGeneration={props.resumeGeneration}
         preview={props.preview}
         selectedBusKey={props.selectedBusKey}
+        selectedDestinationStopId={props.selectedDestinationStopId}
       />
     </div>
   );

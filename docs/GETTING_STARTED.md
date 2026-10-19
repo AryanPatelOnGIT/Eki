@@ -169,7 +169,7 @@ The durable state machine is:
 - The final ordered stop completes the ride and releases its bus lock. Ending
   early records `interrupted`; it never creates a completed ride.
 - Fresh stopped telemetry at the destination can arm a new opposite-direction
-  session after `AUTOMATIC_TURNAROUND_DWELL_MS` (default zero). An interrupted
+  session after `AUTOMATIC_TURNAROUND_DWELL_MS` (default 30,000 ms; minimum 0). An interrupted
   ride is not eligible for this automatic turnaround.
 
 See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
@@ -17,17 +17,17 @@ const state = vi.hoisted(() => ({
 const map = { panTo: state.panTo, setZoom: state.setZoom, fitBounds: state.fitBounds };
 vi.mock("@vis.gl/react-google-maps", () => ({
   Map: ({ children }: { children: ReactNode }) => <div aria-label="Map">{children}</div>,
-  AdvancedMarker: ({ children, position }: { children: ReactNode; position: unknown }) => {
+  AdvancedMarker: ({ children, position, anchorLeft, anchorTop }: { children: ReactNode; position: unknown; anchorLeft?: string; anchorTop?: string }) => {
     const key = JSON.stringify(position);
     state.markerRenders.set(key, (state.markerRenders.get(key) ?? 0) + 1);
-    return <div data-marker={key}>{children}</div>;
+    return <div data-marker={key} data-anchor={JSON.stringify([anchorLeft, anchorTop])}>{children}</div>;
   },
   useMap: () => map,
 }));
 vi.mock("@/lib/liveBusStore", () => ({ subscribeLiveBusesByRoute: (_routeId: string, listener: typeof state.listener, onReadError?: typeof state.onReadError) => {
   state.listener = listener; state.onReadError = onReadError; listener?.(state.snapshot); return state.unsubscribe;
 } }));
-vi.mock("@/components/maps/DirectionsRoute", () => ({ default: () => <div>Configured road geometry</div> }));
+vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices, firstStopIndex }: ComponentProps<typeof import("./DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} data-first={firstStopIndex}>Configured road geometry</div> }));
 vi.mock("@/hooks/useDynamicRouteGeometries", () => ({ useDynamicRouteGeometries: () => state.geometries }));
 // Animation has its own real RAF suite; this test isolates map/session routing.
 vi.mock("@/hooks/useSmoothPosition", () => ({ useSmoothPosition: (position: unknown) => position }));
@@ -36,10 +36,146 @@ vi.mock("@/lib/busEta", async (importOriginal) => ({
   busStopArrivalTimestamps: state.arrivals,
 }));
 beforeEach(() => {
-  vi.clearAllMocks(); state.listener = undefined; state.onReadError = undefined;
+  vi.clearAllMocks(); state.listener = undefined; state.onReadError = undefined; state.geometries.clear();
   state.markerRenders.clear();
-  state.snapshot = { bus: fixtureBus("forward") };
+  state.snapshot = { bus: { ...fixtureBus("forward"), currentStopIndex: 0 } };
   state.arrivals.mockReturnValue({ b: Date.now() + 60_000 });
+});
+
+describe("published passenger stop progress", () => {
+  it("distinguishes a camera fallback from an explicitly selected or cleared destination", async () => {
+    const props = { route: directed, targetStop: route.stops[1], preview: true };
+    const view = render(<PassengerMap {...props} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Configured route" }));
+    expect(screen.queryByText("Selected stop")).toBeNull();
+    expect(screen.getAllByText("Route endpoint")).toHaveLength(2);
+    view.rerender(<PassengerMap {...props} selectedDestinationStopId="b" />);
+    expect(screen.getByText("Selected stop").parentElement?.parentElement?.textContent).toContain("Beta");
+    view.rerender(<PassengerMap {...props} selectedDestinationStopId="" />);
+    expect(screen.queryByText("Selected stop")).toBeNull();
+    expect(screen.getAllByText("Route endpoint")).toHaveLength(2);
+  });
+  const stops = ["Alpha", "Beta", "Gamma", "Delta"].map((name, index) => ({
+    id: name.toLowerCase(), name, shortName: name[0], lat: 23 + index * 0.01, lng: 72 + index * 0.01,
+  }));
+  const tripRoute = { ...route, stops };
+  const road = { polyline: "_ekkC_omvLo}@o}@o}@o}@o}@o}@", polylineQuality: "HIGH_QUALITY" as const };
+  const row = (name: string) => screen.getByText(name).parentElement!.parentElement!;
+  const next = () => screen.queryByText("Next Stop")?.parentElement?.textContent;
+  const openTimeline = () => userEvent.setup().click(screen.getByRole("button", { name: "Route Timeline" }));
+
+  it.each(["forward", "reverse"] as const)("keeps timeline, labels, ETA and active leg on published progress in %s travel", async direction => {
+    const directedRoute = { ...routeInRideDirection(tripRoute, direction), ...road };
+    const downstream = directedRoute.stops[2];
+    const bus = { ...fixtureBus(direction), lat: downstream.lat + 25 / 111_320, lng: downstream.lng, currentStopIndex: 1 };
+    state.snapshot = { bus };
+    const view = render(<PassengerMap route={directedRoute} targetStop={directedRoute.stops[3]} />);
+    await openTimeline();
+    const expected = directedRoute.stops[1];
+    expect(next()).toContain(expected.name);
+    expect(row(expected.name).className).toContain("opacity-100");
+    const marker = view.container.querySelector(`[data-marker='${JSON.stringify({ lat: expected.lat, lng: expected.lng })}']`);
+    expect((marker?.firstElementChild as HTMLElement).style.opacity).not.toBe("0.6");
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[1]");
+    expect(state.arrivals.mock.lastCall?.[0].remainingStops.map((stop: { id: string }) => stop.id)).toEqual(directedRoute.stops.slice(1).map(stop => stop.id));
+    // A repeated snapshot and more fixes inside/outside the old hysteresis
+    // must not borrow downstream proximity as proof of ordered arrival.
+    for (const offset of [25, 24, 50, 25]) {
+      act(() => state.listener?.({ bus: { ...bus, lat: downstream.lat + offset / 111_320, seq: offset } }));
+      expect(next()).toContain(expected.name);
+      expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[1]");
+    }
+    act(() => state.listener?.({ bus: { ...bus, currentStopIndex: 2, seq: 100 } }));
+    expect(next()).toContain(downstream.name);
+    expect(row(expected.name).className).toContain("opacity-25");
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[2]");
+    expect(state.arrivals.mock.lastCall?.[0].remainingStops.map((stop: { id: string }) => stop.id)).toEqual(directedRoute.stops.slice(2).map(stop => stop.id));
+  });
+
+  it("accepts a corrected index and clears it when progress disappears or a session changes", async () => {
+    const directedRoute = { ...routeInRideDirection(tripRoute, "forward"), ...road };
+    const bus = { ...fixtureBus("forward"), lat: stops[1].lat, lng: stops[1].lng, currentStopIndex: 2 };
+    state.snapshot = { bus };
+    render(<PassengerMap route={directedRoute} targetStop={stops[3]} />);
+    await openTimeline();
+    expect(next()).toContain("Gamma");
+    act(() => state.listener?.({ bus: { ...bus, currentStopIndex: 1 } }));
+    expect(next()).toContain("Beta");
+    const etaCalls = state.arrivals.mock.calls.length;
+    act(() => state.listener?.({ bus: { ...bus, currentStopIndex: undefined } }));
+    expect(next()).toBeUndefined();
+    expect(state.arrivals).toHaveBeenCalledTimes(etaCalls);
+    expect(screen.getByText("Stop progress unavailable.")).toBeTruthy();
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[]");
+    for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
+    state.arrivals.mockClear();
+    act(() => state.listener?.({ bus: { ...bus, sessionId: "replacement-session", currentStopIndex: undefined } }));
+    expect(next()).toBeUndefined();
+    expect(state.arrivals).not.toHaveBeenCalled();
+  });
+
+  it("does not skip nearby stops or a colocated terminus before published departure", async () => {
+    const loopStops = [stops[0], { ...stops[1], lat: stops[0].lat + 20 / 111_320, lng: stops[0].lng }, stops[2], { ...stops[3], lat: stops[0].lat, lng: stops[0].lng }];
+    state.snapshot = { bus: { ...fixtureBus("forward"), currentStopIndex: 0, tripState: "pre_departure" } };
+    render(<PassengerMap route={{ ...routeInRideDirection({ ...tripRoute, stops: loopStops }, "forward"), ...road }} targetStop={loopStops[3]} />);
+    await openTimeline();
+    expect(next()).toContain("Alpha");
+    for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
+    expect(state.arrivals.mock.lastCall?.[0].remainingStops.map((stop: { id: string }) => stop.id)).toEqual(loopStops.map(stop => stop.id));
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[0]");
+  });
+
+  it("uses only the replacement session's progress on reverse turnaround and removal", async () => {
+    const bus = { ...fixtureBus("forward"), currentStopIndex: 3 };
+    state.snapshot = { bus };
+    const view = render(<PassengerMap route={{ ...routeInRideDirection(tripRoute, "forward"), ...road }} targetStop={stops[3]} selectedBusKey="session:qa-session" />);
+    await openTimeline(); expect(next()).toContain("Delta");
+    state.snapshot = { bus: { ...bus, sessionId: "reverse-session", direction: "reverse", currentStopIndex: 0, tripState: "pre_departure" } };
+    view.rerender(<PassengerMap route={{ ...routeInRideDirection(tripRoute, "reverse"), ...road }} targetStop={stops[0]} selectedBusKey="session:reverse-session" />);
+    await openTimeline(); expect(next()).toContain("Delta");
+    for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
+    act(() => state.listener?.({}));
+    expect(next()).toBeUndefined();
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[]");
+  });
+
+  it.each([undefined, "2", -1, 1.5, 4, Number.MAX_SAFE_INTEGER])("does not infer stop progress or ETA from an invalid published index %s", async currentStopIndex => {
+    state.snapshot = { bus: { ...fixtureBus("forward"), ...stops[2], currentStopIndex } };
+    render(<PassengerMap route={{ ...routeInRideDirection(tripRoute, "forward"), ...road }} targetStop={stops[3]} />);
+    await openTimeline();
+    expect(next()).toBeUndefined();
+    for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
+    expect(state.arrivals).not.toHaveBeenCalled();
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBe("[]");
+  });
+
+  it("keeps each bus's ETA progress and dynamic leg separate from fleet timeline progress", async () => {
+    state.snapshot = {
+      first: { ...fixtureBus("forward"), currentStopIndex: 1 },
+      second: { ...fixtureBus("forward", "second-session", "second-bus"), currentStopIndex: 2, routeSource: "dynamic-reroute", routeVersion: 2 },
+    };
+    state.geometries.set("second-bus", { ...road, firstStopIndex: 2 });
+    const directedRoute = { ...routeInRideDirection(tripRoute, "forward"), ...road };
+    const view = render(<PassengerMap route={directedRoute} targetStop={stops[3]} />);
+    await openTimeline();
+    expect(next()).toBeUndefined();
+    for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
+    expect(screen.getAllByTestId("road").map(node => node.getAttribute("data-next"))).toEqual(["[1]", "[2]"]);
+    expect(state.arrivals.mock.calls.map(call => call[0].remainingStops[0].id)).toEqual(expect.arrayContaining([stops[1].id, stops[2].id]));
+    view.rerender(<PassengerMap route={directedRoute} targetStop={stops[3]} selectedBusKey="session:second-session" />);
+    await openTimeline();
+    expect(next()).toContain("Gamma");
+    expect(screen.getAllByTestId("road").map(node => node.getAttribute("data-next"))).toEqual(["[]", "[2]"]);
+  });
+
+  it("keeps a configured preview separate from cached dynamic geometry and live progress", () => {
+    state.snapshot = { bus: { ...fixtureBus("forward"), currentStopIndex: 2, routeSource: "dynamic-reroute", routeVersion: 2 } };
+    state.geometries.set("qa-bus", { ...road, firstStopIndex: 1 });
+    render(<PassengerMap route={{ ...routeInRideDirection(tripRoute, "forward"), ...road }} targetStop={stops[3]} preview />);
+    expect(screen.getAllByTestId("road")).toHaveLength(1);
+    expect(screen.getByTestId("road").getAttribute("data-next")).toBeNull();
+    expect(state.arrivals).not.toHaveBeenCalled();
+  });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const directed = { ...routeInRideDirection(route, "forward"), polyline: "_ekkC_omvLo}@o}@", polylineQuality: "HIGH_QUALITY" as const };
@@ -56,6 +192,7 @@ describe("passenger map device and ride contexts", () => {
     const second = { ...fixtureBus("forward", "qa-session-2", "qa-bus-2"), lat: 23.005, lng: 72.005 };
     state.snapshot = { first, second };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    expect(screen.getByTitle(/^qa-bus(?: —.*)?$/).closest("[data-marker]")?.getAttribute("data-anchor")).toBe('["-50%","-50%"]');
     const secondPosition = JSON.stringify({ lat: second.lat, lng: second.lng });
     const before = state.markerRenders.get(secondPosition) ?? 0;
     expect(before).toBeGreaterThan(0);
