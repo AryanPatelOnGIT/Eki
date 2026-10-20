@@ -23,12 +23,15 @@ vi.mock("firebase/auth", () => ({
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const user = (uid: string): TestUser => ({ uid, getIdTokenResult: async () => { await mocks.claims(); return { claims: { role: "admin", admin: true } }; } });
 beforeEach(() => {
+  // Profile-only scenarios must not inherit a developer/build backend URL.
+  // Bootstrap scenarios opt in below and keep HTTP transport mocked.
+  vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "");
   beginAuthVerification(); vi.clearAllMocks(); mocks.callback = null; mocks.auth.currentUser = null;
   mocks.claims.mockResolvedValue(undefined); mocks.observe.mockImplementation((_auth, callback) => { mocks.callback = callback; return () => {}; });
   mocks.profile.mockResolvedValue({ exists: () => false }); mocks.bootstrap.mockResolvedValue({ role: "passenger" });
   localStorage.clear(); vi.spyOn(console, "warn").mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 async function mount() { const hook = renderHook(() => useAuth(), { wrapper: AuthProvider }); await waitFor(() => expect(mocks.callback).not.toBeNull()); return hook; }
 describe("verified auth publication", () => {
   it.each(["admin", "driver"])("never grants %s access from a Firestore profile without matching trusted claims", async role => {
@@ -39,6 +42,29 @@ describe("verified auth publication", () => {
     await act(async () => { await mocks.callback!(account); });
     expect(hook.result.current.user).toBeNull();
     expect(hook.result.current.roleError).toContain("trusted Auth claim synchronization");
+  });
+  it.each(["admin", "driver"])("never grants %s access from a bootstrap response without matching trusted claims", async role => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://auth-fixture.example.invalid");
+    mocks.profile.mockResolvedValue({ exists: () => true, data: () => ({ role: "passenger" }) });
+    mocks.bootstrap.mockResolvedValue({ role });
+    const hook = await mount();
+    const account = { uid: "bootstrap-profile", getIdToken: async () => "synthetic", getIdTokenResult: async () => ({ claims: { role: "" } }) };
+    mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    expect(mocks.bootstrap).toHaveBeenCalledOnce();
+    expect(hook.result.current.user).toBeNull();
+    expect(hook.result.current.roleError).toContain("trusted Auth claim synchronization");
+  });
+  it.each(["admin", "driver"])("accepts authoritative Passenger bootstrap instead of a legacy %s profile", async role => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://auth-fixture.example.invalid");
+    mocks.profile.mockResolvedValue({ exists: () => true, data: () => ({ role }) });
+    const hook = await mount();
+    const account = { uid: "bootstrap-passenger", getIdToken: async () => "synthetic", getIdTokenResult: async () => ({ claims: { role: "" } }) };
+    mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    expect(mocks.bootstrap).toHaveBeenCalledOnce();
+    expect(hook.result.current.user?.role).toBe("passenger");
+    expect(hook.result.current.roleError).toBeNull();
   });
   it("observes a revoked admin role during manual access refresh", async () => {
     const hook = await mount(); const getIdTokenResult = vi.fn().mockResolvedValue({ claims: { role: "admin", admin: true } });
