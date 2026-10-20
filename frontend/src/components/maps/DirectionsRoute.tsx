@@ -8,6 +8,7 @@ import { apiRequest } from "@/lib/apiClient";
 import { routeDisplayPath } from "@/lib/routeDisplayPath";
 import { routeLegPaths } from "@/lib/routeLegPaths";
 import { publishedStopIndex } from "@/lib/publishedStopIndex";
+import { routeProgressPaths } from "@/lib/routeProgressPaths";
 
 const geometryRequests = new Map<string, Promise<string>>();
 
@@ -62,6 +63,10 @@ interface DirectionsRouteProps {
   hasBuses?: boolean;
   /** Backend indices in travel order. Omit for a colored preview; [] is a live road with no known active leg. */
   nextStopIndices?: readonly number[];
+  /** Current accepted, confident match on this exact path; never an animated marker projection. */
+  progressDistanceM?: number;
+  /** Keep the confirmed configured prefix when this bus follows a separate reroute. */
+  completedStopIndex?: number;
   /** First required stop in a dynamic path that starts at the bus. */
   firstStopIndex?: number;
   direction: "forward" | "reverse";
@@ -73,7 +78,7 @@ interface DirectionsRouteProps {
  * does not call the browser Directions service: rendering a map must not add
  * routing cost, quota pressure, or delay to the live GNSS stream.
  */
-export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color, hasBuses = false, nextStopIndices, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
+export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color, hasBuses = false, nextStopIndices, progressDistanceM, completedStopIndex, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
   const map = useMap();
   const stopsKey = JSON.stringify(stops);
   const stableStops = useMemo(() => JSON.parse(stopsKey) as LatLng[], [stopsKey]);
@@ -105,7 +110,9 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
     const index = publishedStopIndex(value, stableStops.length);
     return index === undefined ? [] : [index === 0 ? 1 : index];
   }) ?? [])].sort((a, b) => a - b));
-  const baseColor = nextStopIndices !== undefined ? "#71717a" : (color ?? "#3b82f6");
+  const baseColor = nextStopIndices !== undefined ? "#22c55e" : (color ?? "#22c55e");
+  const singleProgress = (JSON.parse(activeIndices) as number[]).length === 1;
+  const completedIndex = publishedStopIndex(completedStopIndex, stableStops.length);
 
   useEffect(() => {
     onGeometryReady?.(path);
@@ -148,17 +155,34 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
       zIndex: 21,
       map,
     });
-    const active = (JSON.parse(activeIndices) as number[]).flatMap(index => {
-      const leg = legs.get(index);
-      return leg ? [new google.maps.Polyline({ path: leg, strokeColor: "#3b82f6", strokeWeight: hasBuses ? 5 : 3, strokeOpacity: 1, zIndex: 23, map })] : [];
-    });
-
     return () => {
       outline.setMap(null);
       line.setMap(null);
-      active.forEach(leg => leg.setMap(null));
     };
-  }, [map, path, hasBuses, legs, activeIndices, baseColor]);
+  }, [map, path, hasBuses, baseColor]);
+
+  useEffect(() => {
+    if (!map || path.length < 2) return;
+    const overlays: google.maps.Polyline[] = [];
+    const add = (section: LatLng[], strokeColor: string, zIndex: number) => {
+      if (section.length >= 2) overlays.push(new google.maps.Polyline({ path: section, strokeColor,
+        strokeWeight: hasBuses ? 5 : 3, strokeOpacity: 1, zIndex, map }));
+    };
+    if (completedIndex !== undefined && completedIndex > 0) {
+      add(routeProgressPaths(path, legs, completedIndex).completed, "#71717a", 22);
+    }
+    for (const index of JSON.parse(activeIndices) as number[]) {
+      if (singleProgress) {
+        const sections = routeProgressPaths(path, legs, index, progressDistanceM);
+        add(sections.completed, "#71717a", 22);
+        add(sections.active, "#3b82f6", 23);
+      } else {
+        // A fleet has no shared completed distance. Preserve each active leg.
+        add(legs.get(index) ?? [], "#3b82f6", 23);
+      }
+    }
+    return () => overlays.forEach(line => line.setMap(null));
+  }, [map, path, hasBuses, legs, activeIndices, singleProgress, progressDistanceM, completedIndex]);
 
   return null;
 }

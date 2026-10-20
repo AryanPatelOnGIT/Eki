@@ -13,6 +13,20 @@ function Picker() {
 }
 
 describe("passenger in-app selector", () => {
+  it("renders ETA beside the name with an accessible description and updates the selected label", async () => {
+    const props = { name: "station", ariaLabel: "Destination station", value: "b", onChange: vi.fn(),
+      options: [{ value: "a", label: "Alpha", detail: "Passed", completed: true }, { value: "b", label: "Beta", detail: "3 min" }] };
+    const view = render(<InAppSelect {...props} />);
+    const user = userEvent.setup();
+    expect(screen.getByRole("combobox").textContent).toContain("Beta3 min");
+    await user.click(screen.getByRole("combobox"));
+    const option = screen.getByRole("option", { name: "Beta" });
+    expect(document.getElementById(option.getAttribute("aria-describedby")!)?.textContent).toBe("3 min");
+    expect(screen.getByRole("option", { name: "Alpha" }).textContent).toContain("Passed");
+    view.rerender(<InAppSelect {...props} options={[{ value: "b", label: "Beta", detail: "Signal delayed" }]} />);
+    expect(screen.getByRole("combobox").textContent).toContain("Signal delayed");
+    expect(screen.queryByText("3 min")).toBeNull();
+  });
   it("opens page options, selects with a pointer and keeps focus on the trigger", async () => {
     const { container } = render(<Picker />); const user = userEvent.setup();
     const trigger = screen.getByRole("combobox", { name: "Destination station" });

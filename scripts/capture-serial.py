@@ -1,14 +1,17 @@
 """Capture serial evidence without sending device commands or asserting DTR/RTS."""
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
 def capture(port, baud, duration, output, *, stop_file=None, serial_module=None,
             clock=time, retry_seconds=1):
     """Retain exact bytes, monotonic chunk times and disconnects without resets."""
-    if duration <= 0 or baud <= 0 or not 0 < retry_seconds <= 5:
-        raise ValueError("Duration, baud and retry delay must be positive.")
+    if not math.isfinite(duration) or duration < 0 or baud <= 0 or not 0 < retry_seconds <= 5:
+        raise ValueError("Duration must be finite and nonnegative; baud and retry delay must be positive.")
+    if duration == 0 and not stop_file:
+        raise ValueError("Duration zero requires --stop-file for END-controlled capture.")
     if serial_module is None:
         import serial as serial_module
     output = Path(output)
@@ -18,7 +21,7 @@ def capture(port, baud, duration, output, *, stop_file=None, serial_module=None,
         if file.exists():
             raise FileExistsError(str(file))
     output.parent.mkdir(parents=True, exist_ok=True)
-    deadline = clock.monotonic() + duration
+    deadline = clock.monotonic() + duration if duration else math.inf
     line_count = byte_count = errors = 0
     pending = bytearray()
     device = serial_module.Serial(port=None, baudrate=baud, timeout=0.25)
@@ -89,7 +92,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True)
     parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--duration", type=int, required=True)
+    parser.add_argument("--duration", type=int, required=True,
+                        help="Seconds; zero records until --stop-file exists.")
     parser.add_argument("--out", required=True)
     parser.add_argument("--stop-file", help="Stop gracefully when this file exists.")
     args = parser.parse_args()

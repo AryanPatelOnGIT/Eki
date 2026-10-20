@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-20 22:33 IST (UTC+05:30).
+Last updated: 2026-10-21 03:19 IST (UTC+05:30).
 
 The [deterministic acceptance catalog](../../qa/README.md) imports the full
 A-Z requirements and current source census, preserves historical evidence
@@ -15,6 +15,9 @@ separate synthetic/emulator results from provider, deployment and hardware gates
 
 ## Start with the current gates
 
+- [21 October ride evidence and issue follow-up](MOVING_GNSS_CAPTURE_2026_10_21.md):
+  verified private archive, recorder status-file failure, discontinuous recovery,
+  missing profiling exports and all 64 remaining acceptance requirements.
 - [20 October ride lifecycle and telemetry validation](RIDE_LIFECYCLE_VALIDATION_2026_10_20.md):
   manual-end versus device presence, automatic-arrival conditions, shared delayed
   telemetry presentation and continued-ingestion/recovery regressions for PR #344.

@@ -49,13 +49,14 @@ beforeEach(() => {
 });
 
 describe("live routing publication", () => {
-  it("keeps a retained revision while awaiting endpoint evidence without redundant pending writes", async () => {
+  it.each([null, undefined])("keeps a retained revision with pending direction %s without redundant pending writes", async direction => {
     state.values.set(key, { ...assignment, sessionId: "outbound", driverId: "driver", status: "active", tripState: "pre_departure",
-      direction: null, directionState: "pending", routeVersion: 7 });
+      direction, directionState: "pending", routeVersion: 7 });
     for (let seq = 1; seq <= 2; seq++) {
       publish({ ...sample(seq), lat: 24, lng: 73 }); await drainTelemetryRouteProcessing();
     }
-    expect(state.values.get(key)).toMatchObject({ sessionId: "outbound", direction: null, routeVersion: 7 });
+    expect(state.values.get(key)).toMatchObject({ sessionId: "outbound", routeVersion: 7 });
+    expect(state.values.get(key)?.direction ?? null).toBeNull();
     expect(state.writes).toEqual([]);
     expect(state.compute).not.toHaveBeenCalled();
   });
