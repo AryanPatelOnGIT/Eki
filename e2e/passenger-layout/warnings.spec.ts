@@ -1,5 +1,20 @@
 import { expect, test } from "@playwright/test";
 
+test("destination dropdown stays above notices in the map pane", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Track QA route", exact: true }).click();
+  await page.getByRole("combobox", { name: "Destination station" }).click();
+  for (const name of ["Alpha", "Beta"]) {
+    const option = page.getByRole("option", { name, exact: true });
+    await expect(option).toBeVisible();
+    expect(await option.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return top === element || element.contains(top);
+    })).toBe(true);
+  }
+});
+
 test("location delay stays below variable ride controls and clears on recovery", async ({ page }, info) => {
   await page.clock.install();
   await page.goto("/");

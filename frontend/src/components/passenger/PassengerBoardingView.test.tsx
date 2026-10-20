@@ -29,6 +29,18 @@ async function prepare() {
   return { user, joined };
 }
 describe("passenger boarding workflow", () => {
+  it("shows live ETA beside every stop and replaces it when telemetry is delayed", async () => {
+    const estimates = { context: "session", minutes: { alpha: 1, beta: 3 }, nextStopIndex: 1 };
+    const props = { sessionId: "qa-session", route, tripState: "in_service" as const };
+    const view = render(<PassengerBoardingView {...props} stopEstimates={estimates} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Destination station" }));
+    expect(screen.getByRole("option", { name: "Beta" }).textContent).toContain("3 min");
+    expect(screen.getByRole("option", { name: "Alpha" }).textContent).toContain("Passed");
+    view.rerender(<PassengerBoardingView {...props} stopEstimates={{ ...estimates, unavailable: "Signal delayed" }} />);
+    expect(screen.getByRole("option", { name: "Beta" }).textContent).toContain("Signal delayed");
+    expect(screen.queryByText("3 min")).toBeNull();
+  });
   it("accepts the full pasted driver code with separators and explains normalization", async () => {
     render(<PassengerBoardingView sessionId="qa-session" route={route} tripState="in_service" />);
     const user = userEvent.setup();

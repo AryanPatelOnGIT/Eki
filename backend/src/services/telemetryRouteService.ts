@@ -17,6 +17,7 @@ import {
   stopsInRideDirection,
 } from "../lib/rideDirection";
 import { inferRideDirectionFromTelemetry } from "../lib/automaticRideDirection";
+import { departureSamples, inferDepartureDirection } from "./departureDirection";
 import {
   adaptiveGnssErrorMeters,
   GNSS_HDOP_MAX,
@@ -400,6 +401,7 @@ async function persistResolvedSessionDirection(
       direction,
       directionState: "resolved",
       directionEndpointVersion: route.endpointVersion,
+      ...(typeof live.directionResolutionSource === "string" ? { directionResolutionSource: live.directionResolutionSource } : {}),
       originStopId: origin.id,
       destinationStopId: destination.id,
       ...(sessionData?.directionResolvedAt == null
@@ -467,22 +469,37 @@ async function resolvePendingDirection(
     const existingDirection = resolvedDirection(live.direction);
     if (existingDirection && typeof live.sessionId === "string") return;
     if (!directionResolutionIsEligible(live, assignment)) return;
-    const direction = inferRideDirectionFromTelemetry(route.stops, {
+    const reliableMoving = live.motionState === "moving" && typeof live.gpsHdop === "number" && Number.isFinite(live.gpsHdop) &&
+      live.gpsHdop >= 0 && live.gpsHdop <= 4 && now - Number(live.timestamp) <= 60_000 && Number(live.timestamp) <= now + 10_000;
+    const point = { lat: Number(live.lat), lng: Number(live.lng) };
+    const nearRoad = reliableMoving && [route.forwardCoordinates, route.reverseCoordinates].some(path => {
+      const match = matchRoutePosition(point, path);
+      return match && !match.isAmbiguous && match.distanceToRouteM <= 15;
+    });
+    const pendingDeparture = departureSamples(live.pendingDeparture,
+      JSON.stringify([assignment.busId, assignment.routeId, live.sessionId ?? null, route.configVersion, route.geometrySignature]),
+      { ...point, timestamp: Number(live.timestamp) }, Boolean(nearRoad));
+    const endpointDirection = inferRideDirectionFromTelemetry(route.stops, {
       now,
       timestamp: Number(live.timestamp),
       motionState: live.motionState,
       gpsHdop: live.gpsHdop,
       position: { lat: Number(live.lat), lng: Number(live.lng) },
     });
+    const direction = endpointDirection ?? inferDepartureDirection({ samples: pendingDeparture.samples, stops: route.stops,
+      forwardPath: route.forwardCoordinates, reversePath: route.reverseCoordinates, now });
+    const pendingDepartureValue = pendingDeparture.samples.length ? pendingDeparture : null;
     if (!direction) {
-      return live.direction === null &&
+      return (live.direction === null || live.direction === undefined) &&
         live.directionState === "pending" &&
         !hasLiveRouteContext(live, { ignoreVersion: true })
+        && JSON.stringify(live.pendingDeparture ?? null) === JSON.stringify(pendingDepartureValue)
         ? undefined
         : {
             ...withoutLiveRouteContext(live, { preserveVersion: true }),
             direction: null,
             directionState: "pending",
+            pendingDeparture: pendingDepartureValue,
           };
     }
     if (direction === existingDirection && live.directionEndpointVersion === route.endpointVersion) return;
@@ -494,6 +511,8 @@ async function resolvePendingDirection(
       ...live,
       direction,
       directionState: "resolved",
+      pendingDeparture: null,
+      directionResolutionSource: endpointDirection ? "endpoint_fix" : "departure_trajectory",
       directionEndpointVersion: route.endpointVersion,
       originStopId: origin.id,
       destinationStopId: destination.id,

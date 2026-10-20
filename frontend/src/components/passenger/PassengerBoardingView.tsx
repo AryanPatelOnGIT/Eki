@@ -8,12 +8,14 @@ import { auth } from "@/lib/firebaseAuth";
 import { ApiError, apiRequest } from "@/lib/apiClient";
 import { withTimeout } from "@/lib/promiseTimeout";
 import { getAuthVerificationGeneration } from "@/lib/authState";
+import { stopEstimateLabel, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 
 interface Props {
   sessionId: string;
   route: RouteData;
   tripState: "pre_departure" | "in_service";
   destinationStopId?: string;
+  stopEstimates?: PassengerStopEstimates;
   restoredBoarding?: { boardingStopId: string; alightingStopId: string | null };
   onDestinationStopChange?: (stopId: string) => void;
   onJoined?: () => void;
@@ -77,6 +79,7 @@ export default function PassengerBoardingView({
   route,
   tripState,
   destinationStopId,
+  stopEstimates,
   restoredBoarding,
   onDestinationStopChange,
   onJoined,
@@ -123,9 +126,11 @@ export default function PassengerBoardingView({
     return () => { current = false; };
   }, [restoredBoarding, sessionId]);
 
-  const stopOptions = (route.stops ?? []).map((stop) => ({
+  const stopOptions = (route.stops ?? []).map((stop, index) => ({
     value: stop.id,
     label: formatStopName(stop.name),
+    detail: stopEstimateLabel(stopEstimates, stop.id, index),
+    completed: stopEstimates?.nextStopIndex !== undefined && index < stopEstimates.nextStopIndex,
   }));
 
   const joinRide = async () => {

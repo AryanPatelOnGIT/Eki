@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoutes } from "@/hooks/useRoutes";
@@ -40,6 +40,7 @@ import {
 } from "@/lib/rideDirection";
 import InAppSelect from "@/components/ui/InAppSelect";
 import { isLiveChatDeviceOnline } from "@/lib/activeBusEntries";
+import { stopEstimateContext, stopEstimateLabel, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 import {
   passengerBusAvailabilities,
   type PassengerBusAvailability,
@@ -83,6 +84,12 @@ export default function PassengerWorkspace() {
   const { catalog: routeCatalog, projectionReady, catalogReady, error: catalogError, retry: retryCatalog } = useLiveRouteCatalog(`${connectionGeneration}:${resumeGeneration}`);
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [selectedDestinationStopId, setSelectedDestinationStopId] = useState("");
+  const [mapEstimates, setMapEstimates] = useState<PassengerStopEstimates>();
+  const updateStopEstimates = useCallback((next: PassengerStopEstimates) => {
+    setMapEstimates(current => current?.context === next.context && current.nextStopIndex === next.nextStopIndex &&
+      current.unavailable === next.unavailable && Object.keys(current.minutes).length === Object.keys(next.minutes).length &&
+      Object.entries(next.minutes).every(([id, minutes]) => current.minutes[id] === minutes) ? current : next);
+  }, []);
   const [selectedLiveBusKey, setSelectedLiveBusKey] = useState("");
   const [selectedBusId, setSelectedBusId] = useState("");
   const [activeBuses, setActiveBuses] = useState<ActiveBusData[]>([]);
@@ -300,10 +307,12 @@ export default function PassengerWorkspace() {
   const activeSessionId = activeBusOnRoute?.sessionId;
   const rideDirectionState = activeBusOnRoute?.directionState === "pending"
     ? "pending" : normalizeRideDirection(activeBusOnRoute?.direction);
-  const directedRoute = routeInRideDirectionState(activeRoute, rideDirectionState);
+  const directedRoute = useMemo(() => routeInRideDirectionState(activeRoute, rideDirectionState), [activeRoute, rideDirectionState]);
   // Forward order is only the configured preview, never a resolved direction.
   const preview = !directedRoute;
-  const mapRoute = directedRoute ?? (activeRoute ? routeInRideDirection(activeRoute, "forward") : undefined);
+  const mapRoute = useMemo(() => directedRoute ?? (activeRoute ? routeInRideDirection(activeRoute, "forward") : undefined), [directedRoute, activeRoute]);
+  const stopEstimates = mapRoute && mapEstimates?.context === stopEstimateContext(mapRoute,
+    activeBusOnRoute ? passengerLiveBusSelectionKey(activeBusOnRoute) : undefined, activeBusOnRoute?.routeVersion) ? mapEstimates : undefined;
   const effectiveDestinationStopId =
     mapRoute?.stops?.some((stop) => stop.id === selectedDestinationStopId)
       ? selectedDestinationStopId
@@ -575,6 +584,7 @@ export default function PassengerWorkspace() {
                           key={activeBusOnRoute.sessionId}
                           sessionId={activeBusOnRoute.sessionId}
                           route={directedRoute}
+                          stopEstimates={stopEstimates}
                           tripState={activeBusOnRoute.tripState === "in_service" ? "in_service" : "pre_departure"}
                           destinationStopId={effectiveDestinationStopId}
                           restoredBoarding={restoredBoarding && restoredBoarding.uid === user?.uid && restoredBoarding.sessionId === activeBusOnRoute.sessionId ? restoredBoarding : undefined}
@@ -614,9 +624,10 @@ export default function PassengerWorkspace() {
                           onChange={setSelectedDestinationStopId}
                           options={[
                             { value: "", label: "Choose destination station…" },
-                            ...(mapRoute.stops ?? []).map((stop) => ({
+                            ...(mapRoute.stops ?? []).map((stop, index) => ({
                               value: stop.id,
                               label: stop.name,
+                              detail: stopEstimateLabel(stopEstimates ?? { context: "", minutes: {}, unavailable: hasSessionId(activeBusOnRoute) ? "Direction pending" : "Service not started" }, stop.id, index),
                             })),
                           ]}
                           style={{
@@ -665,11 +676,12 @@ export default function PassengerWorkspace() {
               </div>
 
               {/* Reserve the actual header height so map notices cannot sit behind ride controls. */}
-              <div className="relative min-h-0 flex-1 pointer-events-auto">
+              <div className="relative z-0 min-h-0 flex-1 pointer-events-auto">
                 {visibleView === "tracking" && (
                   <PassengerTrackingMap
                     targetStop={targetStop}
                     selectedDestinationStopId={effectiveDestinationStopId}
+                    onStopEstimatesChange={updateStopEstimates}
                     route={mapRoute}
                     resumeGeneration={resumeGeneration}
                     preview={preview}

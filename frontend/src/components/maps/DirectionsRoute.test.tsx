@@ -22,7 +22,7 @@ it("reports unavailable geometry, then publishes authenticated repaired road geo
   }));
 });
 
-it("keeps the whole road grey and advances only the blue leg without provider calls", () => {
+it("keeps future road green and paints only covered road grey and the active leg blue", () => {
   state.map = {};
   vi.stubGlobal("google", { maps: { Polyline: class {
     options: google.maps.PolylineOptions; map: google.maps.Map | null | undefined;
@@ -34,20 +34,26 @@ it("keeps the whole road grey and advances only the blue leg without provider ca
   const view = render(<DirectionsRoute {...props} nextStopIndices={[1]} />);
   const active = () => state.lines.filter(line => line.map && line.options.strokeColor === "#3b82f6");
   const grey = () => state.lines.filter(line => line.map && line.options.strokeColor === "#71717a");
-  expect(grey()[0].options.path).toEqual(stops);
+  expect(grey()).toHaveLength(0);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#22c55e")[0].options.path).toEqual(stops);
   expect(active()[0].options.path).toEqual(stops.slice(0, 2));
   const count = state.lines.length;
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[1, 1]} />);
   expect(state.lines).toHaveLength(count); // ordinary telemetry ticks do no Maps work
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[2]} />);
+  expect(grey()[0].options.path).toEqual(stops.slice(0, 2));
   expect(active()).toHaveLength(1);
   expect(active()[0].options.path).toEqual(stops.slice(1));
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[1, 2]} />);
   expect(active()).toHaveLength(2); // fleet view preserves both buses' own legs
+  expect(grey()).toHaveLength(0); // there is no single fleet-wide completed distance
   view.rerender(<DirectionsRoute {...props} nextStopIndices={[]} />);
   expect(active()).toHaveLength(0);
-  expect(grey()).toHaveLength(1);
+  expect(grey()).toHaveLength(0);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(0);
+  view.rerender(<DirectionsRoute {...props} nextStopIndices={[]} completedStopIndex={2} />);
+  expect(grey()[0].options.path).toEqual(stops.slice(0, 2));
+  expect(active()).toHaveLength(0); // active road belongs to the separately rendered dynamic geometry
   view.rerender(<DirectionsRoute {...props} />);
   expect(grey()).toHaveLength(0);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === props.color)).toHaveLength(1);
@@ -60,14 +66,15 @@ it("keeps the whole road grey and advances only the blue leg without provider ca
   vi.unstubAllGlobals();
 });
 
-it.each([[], [-1], [1.5], [3], [Number.MAX_SAFE_INTEGER]].map(indices => ({ indices })))("keeps a live road grey without inventing an active leg for $indices", ({ indices: nextStopIndices }) => {
+it.each([[], [-1], [1.5], [3], [Number.MAX_SAFE_INTEGER]].map(indices => ({ indices })))("does not claim covered road or an active leg without valid progress for $indices", ({ indices: nextStopIndices }) => {
   state.map = {};
   vi.stubGlobal("google", { maps: { Polyline: class {
     constructor(options: google.maps.PolylineOptions) { Object.assign(this, { options, map: options.map }); state.lines.push(this as unknown as ObservedLine); }
     setMap(map: google.maps.Map | null) { Object.assign(this, { map }); }
   } } });
   render(<DirectionsRoute stops={[{ lat: 23, lng: 72 }, { lat: 23.01, lng: 72.01 }, { lat: 23.02, lng: 72.02 }]} polyline="_ekkC_omvLo}@o}@o}@o}@" direction="forward" color="#3b82f6" nextStopIndices={nextStopIndices} hasBuses />);
-  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#71717a")).toHaveLength(1);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#71717a")).toHaveLength(0);
+  expect(state.lines.filter(line => line.map && line.options.strokeColor === "#22c55e")).toHaveLength(1);
   expect(state.lines.filter(line => line.map && line.options.strokeColor === "#3b82f6")).toHaveLength(0);
   expect(state.request).not.toHaveBeenCalled();
   cleanup(); vi.unstubAllGlobals();
