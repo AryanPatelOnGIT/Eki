@@ -12,7 +12,7 @@ import { useLiveRouteCatalog } from "@/hooks/useLiveRouteCatalog";
 import { subscribeLiveBusesByRoute } from "@/lib/liveBusStore";
 import { passengerTripStates } from "@/lib/passengerLiveBus";
 import { passengerBusAvailabilities } from "@/lib/passengerBusAvailability";
-import { approveVerification, publishPreview, publishAutomaticReturn, rejectVerification, reverifyAccount, switchAccount, signOut, tokenWaiting, subscribeTokenWaiting, socketStats, subscribeSocketStats } from "./firebase";
+import { approveVerification, publishPreview, publishAutomaticReturn, rejectVerification, rejectNetworkVerification, reverifyAccount, switchAccount, signOut, tokenWaiting, subscribeTokenWaiting, socketStats, subscribeSocketStats } from "./firebase";
 import "../../frontend/src/app/globals.css";
 function Metadata() {
   const buses = useCollection<{ name: string }>("buses");
@@ -56,11 +56,12 @@ function Fixture() {
   <aside aria-label="Synthetic verification controls" style={{ position: "fixed", top: 0, zIndex: 2000, background: "white", color: "black", padding: 8 }}>
     <button disabled={!waiting} onClick={approveVerification}>Approve verification</button>{" "}
     <button disabled={!waiting} onClick={rejectVerification}>Reject verification</button>{" "}
+    {new URLSearchParams(location.search).has("recovery") && <button disabled={!waiting} onClick={rejectNetworkVerification}>Reject network verification</button>}{" "}
     <button onClick={switchAccount}>Switch account</button>{" "}
     <button onClick={reverifyAccount}>Reverify account</button>{" "}
     <button onClick={() => void signOut()}>Synthetic sign out</button>
   </aside>
-  <AuthProvider><TelemetryTraceControls />{new URLSearchParams(location.search).has("traceExport") ? <main style={{ paddingTop: 65 }}><h1>Local trace fixture</h1></main> : <RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: 65, ...(new URLSearchParams(location.search).has("dashboard") ? { height: "100dvh", boxSizing: "border-box" as const } : {}) }}>
+  <AuthProvider><TelemetryTraceControls />{new URLSearchParams(location.search).has("traceExport") ? <main style={{ paddingTop: 65 }}><h1>Local trace fixture</h1></main> : <RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: new URLSearchParams(location.search).has("recovery") ? 110 : 65, ...(new URLSearchParams(location.search).has("dashboard") ? { height: "100dvh", boxSizing: "border-box" as const } : {}) }}>
     {new URLSearchParams(location.search).has("dashboard") ? <DashboardPanel /> : new URLSearchParams(location.search).has("projection") ? <RouteProjection /> : new URLSearchParams(location.search).has("resume") ? <Resume /> : new URLSearchParams(location.search).has("metadata") ? <Metadata /> : <FeedbackPanel embedded={new URLSearchParams(location.search).has("embedded")} />}
   </div></RoleGuard>}</AuthProvider>
 </>;

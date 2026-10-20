@@ -34,6 +34,112 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 async function mount() { const hook = renderHook(() => useAuth(), { wrapper: AuthProvider }); await waitFor(() => expect(mocks.callback).not.toBeNull()); return hook; }
 describe("verified auth publication", () => {
+  it("recovers transient access with bounded backoff and current trusted claims without relogin", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    const account = { uid: "recovering", getIdTokenResult: vi.fn()
+      .mockRejectedValueOnce({ code: "auth/network-request-failed" })
+      .mockResolvedValue({ claims: { role: "passenger" } }) };
+    mocks.auth.currentUser = account;
+    const opened = vi.fn(); void waitForAuth().then(opened);
+    await act(async () => { await mocks.callback!(account); });
+    expect(hook.result.current.user).toBeNull(); expect(opened).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+    expect(account.getIdTokenResult).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(hook.result.current.user?.role).toBe("passenger");
+    expect(hook.result.current.roleError).toBeNull(); expect(opened).toHaveBeenCalledOnce();
+    expect(account.getIdTokenResult).toHaveBeenLastCalledWith(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000); window.dispatchEvent(new Event("online")); });
+    expect(account.getIdTokenResult).toHaveBeenCalledTimes(2);
+  });
+  it.each(["permission-denied", "auth/user-disabled", "auth/user-token-expired"])("does not automatically retry %s or reopen access", async code => {
+    const hook = await mount(); vi.useFakeTimers();
+    mocks.claims.mockRejectedValue({ code }); const account = user("denied"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); await vi.advanceTimersByTimeAsync(600_000);
+      window.dispatchEvent(new Event("online")); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(mocks.claims).toHaveBeenCalledOnce(); expect(hook.result.current.user).toBeNull();
+    expect(hook.result.current.roleError).toBeTruthy();
+  });
+  it("pauses a transient retry offline and coalesces online, visible and manual recovery", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    const connection = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    mocks.claims.mockRejectedValueOnce({ code: "auth/network-request-failed" });
+    const account = user("offline"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); await vi.advanceTimersByTimeAsync(600_000); });
+    expect(mocks.claims).toHaveBeenCalledOnce(); expect(hook.result.current.user).toBeNull();
+    const pending = deferred(); mocks.claims.mockReturnValue(pending.promise); connection.mockReturnValue(true);
+    let manual!: Promise<void>;
+    await act(async () => {
+      window.dispatchEvent(new Event("online")); document.dispatchEvent(new Event("visibilitychange"));
+      manual = hook.result.current.refreshAccess();
+    });
+    expect(mocks.claims).toHaveBeenCalledTimes(2); expect(hook.result.current.user).toBeNull();
+    await act(async () => { pending.resolve(); await manual; });
+    expect(hook.result.current.user?.uid).toBe("offline");
+  });
+  it("bounds a failed retry burst then resumes after ten minutes offline", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    mocks.claims.mockRejectedValue({ code: "unavailable" }); const account = user("long-outage"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); await vi.advanceTimersByTimeAsync(600_000); });
+    expect(mocks.claims).toHaveBeenCalledTimes(7); expect(hook.result.current.user).toBeNull();
+    mocks.claims.mockResolvedValue(undefined);
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    expect(hook.result.current.user?.uid).toBe("long-outage"); expect(mocks.claims).toHaveBeenCalledTimes(8);
+  });
+  it("stops automatic recovery if the next trusted request reveals revoked access", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    mocks.claims.mockRejectedValueOnce({ code: "auth/network-request-failed" })
+      .mockRejectedValue({ code: "auth/user-token-expired" });
+    const account = user("revoked-after-outage"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); await vi.advanceTimersByTimeAsync(600_000);
+      window.dispatchEvent(new Event("online")); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(mocks.claims).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.roleError).toBeTruthy();
+  });
+  it("pauses retries while hidden and recovers only on visible resume", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    mocks.claims.mockRejectedValueOnce({ code: "deadline-exceeded" }); const account = user("hidden"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); await vi.advanceTimersByTimeAsync(60_000); window.dispatchEvent(new Event("online")); });
+    expect(mocks.claims).toHaveBeenCalledOnce();
+    visibility.mockReturnValue("visible");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(hook.result.current.user?.uid).toBe("hidden");
+  });
+  it("discards a timed-out verification after a successful retry", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    let resolveOld!: (value: { claims: { role: string; admin?: boolean } }) => void;
+    const account = { uid: "timeout", getIdTokenResult: vi.fn()
+      .mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }))
+      .mockResolvedValue({ claims: { role: "passenger" } }) };
+    mocks.auth.currentUser = account;
+    let verifying!: Promise<void>;
+    await act(async () => { verifying = mocks.callback!(account); await vi.advanceTimersByTimeAsync(10_000); await verifying; });
+    expect(hook.result.current.user).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(hook.result.current.user?.role).toBe("passenger");
+    await act(async () => { resolveOld({ claims: { role: "admin", admin: true } }); });
+    expect(hook.result.current.user?.role).toBe("passenger");
+  });
+  it("cancels queued automatic recovery on sign-out, account change and unmount", async () => {
+    const hook = await mount(); vi.useFakeTimers();
+    mocks.claims.mockRejectedValue({ code: "unavailable" });
+    const first = user("first"); mocks.auth.currentUser = first;
+    await act(async () => { await mocks.callback!(first); });
+    mocks.auth.currentUser = null;
+    await act(async () => { await mocks.callback!(null); await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mocks.claims).toHaveBeenCalledOnce(); expect(hook.result.current.user).toBeNull();
+    const second = user("second"); mocks.auth.currentUser = second;
+    await act(async () => { await mocks.callback!(second); });
+    mocks.claims.mockResolvedValue(undefined); const third = user("third"); mocks.auth.currentUser = third;
+    await act(async () => { await mocks.callback!(third); await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mocks.claims).toHaveBeenCalledTimes(3); expect(hook.result.current.user?.uid).toBe("third");
+    mocks.claims.mockRejectedValue({ code: "unavailable" });
+    await act(async () => { await hook.result.current.refreshAccess(); });
+    hook.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); window.dispatchEvent(new Event("online")); });
+    expect(mocks.claims).toHaveBeenCalledTimes(4);
+  });
   it.each(["admin", "driver"])("never grants %s access from a Firestore profile without matching trusted claims", async role => {
     mocks.profile.mockResolvedValue({ exists: () => true, data: () => ({ role }) });
     const hook = await mount();

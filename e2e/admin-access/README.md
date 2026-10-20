@@ -1,6 +1,6 @@
 # Admin access browser regression checks
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-21 04:47 IST (UTC+05:30).
 
 Run `npx playwright test --config playwright.admin-access.config.ts` from the repository root. Install the matching Chromium with `npx playwright install chromium` if necessary.
 
@@ -12,8 +12,15 @@ The `?resume` scenario additionally runs the actual RTDB resume hook,
 active-bus hook and shared fleet store using synthetic SDK transport and
 controlled browser time/visibility. A healthy short tab switch retains fleet
 data and read/handshake counts; a 31-second suspension produces one delayed
-handshake and a fresh snapshot. The complete suite has 22 mobile/desktop cases.
+handshake and a fresh snapshot. The complete suite has 32 mobile/desktop cases.
 Actual network/PWA throttling and measured reconnect storms remain #245.
+
+The `?recovery` scenario rejects trusted verification with a synthetic network
+error. It uses browser offline/online events and ten minutes of virtual time
+to verify automatic recovery without reload or sign-in. Protected HTTP reads
+remain absent until a new trusted role result is approved. This runs the actual
+AuthProvider/RoleGuard, with synthetic Firebase and intercepted feedback HTTP;
+it does not simulate a real Firebase provider outage.
 
 The `?dashboard` scenario runs the actual DashboardPanel and CSS with a
 synthetic map surface and fleet transport. At 390 × 844 and desktop sizes,
