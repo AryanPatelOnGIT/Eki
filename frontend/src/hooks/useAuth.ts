@@ -15,6 +15,14 @@ import { withTimeout } from "@/lib/promiseTimeout";
 import { apiRequest } from "@/lib/apiClient";
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 10_000;
+const ACCESS_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+
+function transientAccessFailure(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "auth/network-request-failed" || code === "unavailable" ||
+    code === "deadline-exceeded" ||
+    (error instanceof Error && error.message === "Role verification timed out.");
+}
 
 export type UserRole = "passenger" | "driver" | "admin" | null;
 
@@ -88,12 +96,29 @@ function useAuthState(): AuthContextValue {
   const [loginLoading, setLoginLoading] = useState(false);
   const loginDependencies = useRef<FirebaseLoginDependencies | null>(null);
   const refreshVerification = useRef<null | (() => Promise<void>)>(null);
-  const refreshFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     let generation = 0;
     let disposed = false;
     let unsubscribe = () => {};
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryAttempt = 0;
+    let recoverAccess: (() => void) | null = null;
+    const clearRecovery = () => {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+      recoverAccess = null;
+    };
+    // Only a failed transient verification may trigger recovery. Healthy tab
+    // switches never revoke access or force another token/network request.
+    const resumeAccess = () => {
+      if (navigator.onLine !== false && document.visibilityState !== "hidden") {
+        retryAttempt = 0;
+        recoverAccess?.();
+      }
+    };
+    window.addEventListener("online", resumeAccess);
+    document.addEventListener("visibilitychange", resumeAccess);
     const authTimeout = window.setTimeout(() => {
       if (!disposed) {
         console.warn("Firebase auth restoration timed out.");
@@ -123,6 +148,7 @@ function useAuthState(): AuthContextValue {
         if (disposed) return;
 
         const verifyUser = async (firebaseUser: import("firebase/auth").User | null) => {
+          clearRecovery();
           clearTimeout(authTimeout);
           const currentGen = ++generation;
           beginAuthVerification();
@@ -260,6 +286,17 @@ function useAuthState(): AuthContextValue {
                 console.error("Firebase role verification failed:", err);
               }
               if (!isCurrentAuth()) return;
+              if (transientAccessFailure(err)) {
+                recoverAccess = () => {
+                  if (!isCurrentAuth() || navigator.onLine === false || document.visibilityState === "hidden") return;
+                  void runVerification(firebaseUser);
+                };
+                const delay = ACCESS_RETRY_DELAYS_MS[retryAttempt++];
+                // A bounded retry burst also bounds outstanding SDK work after
+                // timeouts (the Firebase promises themselves are not cancelable).
+                // Online/visible or an explicit retry starts a fresh burst.
+                if (delay !== undefined) retryTimer = setTimeout(() => recoverAccess?.(), delay);
+              }
               setRoleError(
                 code === "permission-denied"
                   ? "Your account is not permitted to verify this workspace."
@@ -277,8 +314,23 @@ function useAuthState(): AuthContextValue {
             notifyAuthReady();
           }
         };
-        refreshVerification.current = () => verifyUser(auth.currentUser);
-        unsubscribe = authModule.onAuthStateChanged(auth, firebaseUser => verifyUser(firebaseUser));
+        let flight: { user: import("firebase/auth").User | null; generation: number; promise: Promise<void> } | null = null;
+        const runVerification = (firebaseUser: import("firebase/auth").User | null): Promise<void> => {
+          if (flight?.user === firebaseUser && flight.generation === getAuthVerificationGeneration()) return flight.promise;
+          const promise = verifyUser(firebaseUser).finally(() => {
+            if (flight?.promise === promise) flight = null;
+          });
+          flight = { user: firebaseUser, generation: getAuthVerificationGeneration(), promise };
+          return promise;
+        };
+        refreshVerification.current = () => {
+          retryAttempt = 0;
+          return runVerification(auth.currentUser);
+        };
+        unsubscribe = authModule.onAuthStateChanged(auth, firebaseUser => {
+          retryAttempt = 0;
+          return runVerification(firebaseUser);
+        });
         setLoginReady(true);
 
         // Complete a full-page OAuth fallback if the prior page redirected here.
@@ -309,6 +361,9 @@ function useAuthState(): AuthContextValue {
 
     return () => {
       disposed = true;
+      clearRecovery();
+      window.removeEventListener("online", resumeAccess);
+      document.removeEventListener("visibilitychange", resumeAccess);
       refreshVerification.current = null;
       clearTimeout(authTimeout);
       unsubscribe();
@@ -316,16 +371,11 @@ function useAuthState(): AuthContextValue {
   }, []);
 
   const refreshAccess = useCallback((): Promise<void> => {
-    if (refreshFlight.current) return refreshFlight.current;
     if (!refreshVerification.current) {
       setRoleError("Sign-in has not initialized. Reload the page and try again.");
       return Promise.resolve();
     }
-    const flight = refreshVerification.current().finally(() => {
-      if (refreshFlight.current === flight) refreshFlight.current = null;
-    });
-    refreshFlight.current = flight;
-    return flight;
+    return refreshVerification.current();
   }, []);
 
   const loginWithGoogle = useCallback(async () => {

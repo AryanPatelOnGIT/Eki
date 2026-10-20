@@ -164,6 +164,31 @@ test("Role verification errors show recovery controls without mounting feedback"
   await page.getByRole("button", { name: "Try again" }).click(); await expect(page.getByText("Signing you in…")).toBeVisible();
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
 });
+
+test("ten-minute offline access failure recovers on browser online without reload or protected reads before verification", async ({ page, context }, testInfo) => {
+  await page.clock.install();
+  const requests: string[] = [];
+  page.on("request", request => { if (request.url().includes("/api/v2/feedback")) requests.push(request.url()); });
+  await page.goto("/?recovery");
+  await expect(page.getByRole("button", { name: "Reject network verification" })).toBeEnabled();
+  try {
+    await context.setOffline(true);
+    await page.getByRole("button", { name: "Reject network verification" }).click();
+    await expect(page.getByRole("alert")).toContainText("We could not verify your access");
+    await page.clock.runFor(600_000);
+    await expect(page.getByRole("button", { name: "Approve verification" })).toBeDisabled();
+    expect(requests).toEqual([]);
+  } finally {
+    await context.setOffline(false);
+  }
+  await expect(page.getByRole("button", { name: "Approve verification" })).toBeEnabled();
+  await expect(page.getByText("Signing you in…")).toBeVisible();
+  expect(requests).toEqual([]);
+  await page.getByRole("button", { name: "Approve verification" }).click();
+  await expect(page.getByText("Browser Passenger")).toBeVisible();
+  expect(requests).toHaveLength(1);
+  await page.screenshot({ path: testInfo.outputPath("access-recovered-online.png") });
+});
 test("embedded feedback retries GET denial and rejects a failed PATCH", async ({ page }) => {
   let calls = 0;
   await page.route("**/api/v2/feedback**", async route => {

@@ -18,8 +18,15 @@ const rows = [
   ['AUTH12', 'Mounted auth provider discards old-account completion; workspace refuses another UID local hint and aborts delayed previous-account recovery. Map/boarding children and status transport are mocked; all private listener/cache isolation remains separate.', [...authSources, 'frontend/src/components/passenger/PassengerWorkspace.tsx', 'frontend/src/lib/joinedRidePointer.ts'], [
     auth('discards old-account completion during a switch'), restore("does not query another account's local ride hint"), restore('ignores a delayed previous-account response')]],
   ['AUTH13', 'Manual access refresh publishes current mocked passenger claims after admin revocation and forces token refresh; actual deployed revocation and operator assignment propagation remain separate.', authSources, [auth('observes a revoked admin role during manual access refresh')]],
-  ['AUTH18', 'Mounted auth provider coalesces retries, closes the old gate and forces security verification before publishing refreshed claims; HTTP retry identity/listener reconnect/live role verification remain separate.', authSources, [
-    auth('coalesces simultaneous access retries, closes the old data gate and forces new security verification'), auth('refreshes a persisted passenger token to the current trusted admin claims before publishing access')]],
+  ['AUTH18', 'Mounted auth provider coalesces manual/online/visible recovery, retries only transient failures with a bounded burst and keeps trusted access closed through timeout/offline recovery. SDK transport is mocked; deployed revocation and provider recovery remain separate.', authSources, [
+    auth('coalesces simultaneous access retries, closes the old data gate and forces new security verification'), auth('refreshes a persisted passenger token to the current trusted admin claims before publishing access'),
+    auth('recovers transient access with bounded backoff and current trusted claims without relogin'),
+    auth('pauses a transient retry offline and coalesces online, visible and manual recovery'),
+    auth('bounds a failed retry burst then resumes after ten minutes offline'),
+    auth('stops automatic recovery if the next trusted request reveals revoked access'),
+    auth('pauses retries while hidden and recovers only on visible resume'),
+    auth('discards a timed-out verification after a successful retry'),
+    auth('cancels queued automatic recovery on sign-out, account change and unmount')]],
   ['BOARD01', 'Actual boarding component sends selected code/stops and mocked GPS once, announces only a joined acknowledgement. Server UID manifest/proximity/transaction acceptance remains separate.', boardingSources, [boarding('submits code, chosen stops and GPS once and only announces a confirmed join')]],
   ['BOARD02', 'Actual boarding component resets destination when boarding stop changes and disables incomplete boarding. Full 0/7/8/9 code-length UI partition remains separate.', boardingSources, [boarding('keeps boarding and destination stops distinct')]],
   ['BOARD04', 'Actual boarding component displays permission denial without an API/join and bounds a never-settling GPS callback at ten seconds with late completion ignored. GPS/browser permissions are mocked; server manifest and retry partitions remain separate.', boardingSources, [

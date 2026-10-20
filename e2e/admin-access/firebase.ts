@@ -39,6 +39,10 @@ export function approveVerification() {
   notifyWaiting(false);
 }
 export function rejectVerification() { deny?.(new Error("Synthetic role verification failure")); notifyWaiting(false); }
+export function rejectNetworkVerification() {
+  deny?.(Object.assign(new Error("Synthetic network interruption"), { code: "auth/network-request-failed" }));
+  notifyWaiting(false);
+}
 
 // Only the synthetic SDK transport is replaced; the production collection hook,
 // auth gate and retry logic run unchanged in this fixture.

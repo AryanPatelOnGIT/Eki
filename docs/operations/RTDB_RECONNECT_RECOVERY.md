@@ -1,6 +1,6 @@
 # RTDB browser reconnect gates and retry jitter
 
-Last updated: 2026-10-06 00:35 IST (UTC+05:30).
+Last updated: 2026-10-21 04:44 IST (UTC+05:30).
 
 R15 controls manual browser recovery without changing telemetry cadence,
 authorization or ride state. The Firebase SDK retains its automatic persistent
@@ -49,6 +49,35 @@ online state and whether recovery is still needed before issuing a handshake.
 
 ## Regression evidence and remaining acceptance
 
+### Access verification after an outage
+
+`AuthProvider` separately recovers a signed-in account whose trusted role
+verification failed because of `auth/network-request-failed`, Firestore
+`unavailable`/`deadline-exceeded`, or the ten-second role-verification deadline.
+The failed verification keeps the identity and data-readiness gate closed.
+It retries after 1, 2, 4, 8, 16 and 30 seconds, at most six automatic retries
+per burst. Browser timers can delay these intervals. Retries pause while the
+browser is offline or the document is hidden. A subsequent online or visible
+event resumes a failed transient verification with a fresh retry budget;
+healthy access does not reverify on these events. The explicit **Try again**
+action remains available.
+
+Manual and automatic recovery share the current verification flight. Recovery
+always forces fresh trusted claims; it cannot authorize a driver/admin from a
+cached role, Firestore profile or bootstrap response alone. Permission denial,
+disabled/expired accounts and missing privileged claims do not schedule
+automatic retries. Account changes, sign-out and unmount fence queued and late
+work. A late result from a timed-out request cannot restore an older role.
+The timeout cannot cancel Firebase SDK promises; the finite retry budget
+bounds automatic requests while an underlying operation remains unresolved.
+
+The mounted Auth suite has 27 passing cases. The 32 mobile/desktop synthetic
+browser cases include a ten-minute virtual-clock offline interval, the actual
+browser offline/online transition, no protected reads before fresh role
+approval, and recovery without navigation or sign-in. Firebase is a synthetic
+adapter in those browser cases; real provider outages, deployed revocation,
+phone suspension and field latency remain separate acceptance requirements.
+
 Three failing baseline cases reproduced the healthy short-tab reconnect,
 unnecessary online-event reconnect and immediate un-debounced resume. The
 focused hook/state/retry/store suite passes 25 cases, including natural SDK
@@ -60,7 +89,8 @@ The actual resume hook, active-bus hook and shared fleet store also run in the
 mobile/desktop browser suite against synthetic SDK transport. A short tab
 switch keeps visible fleet data with unchanged read/handshake counts. A long
 suspension issues one delayed handshake and receives a fresh fleet snapshot.
-All 16 browser cases pass, including the existing admin permission recovery.
+At the original R15 change, all 16 browser cases passed, including admin
+permission recovery; the expanded suite is reported above.
 
 #245 retains real-network/PWA/long-suspension acceptance and same-window
 connection/byte/latency measurements. Browser checks can be run stationary
