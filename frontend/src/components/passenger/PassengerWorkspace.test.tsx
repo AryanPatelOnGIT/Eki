@@ -7,6 +7,7 @@ import PassengerWorkspace from "./PassengerWorkspace";
 import { BUS_EXPIRY_MS } from "@/lib/liveBusFreshness";
 import { setScenario } from "../../../../e2e/fixtures/state";
 import type { PassengerMapProps } from "@/components/maps/PassengerMap";
+import { stopEstimateContext, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 configure({ asyncUtilTimeout: 5_000 });
 vi.mock("@/hooks/useAuth", async () => import("../../../../e2e/fixtures/state"));
 vi.mock("@/hooks/useLiveRouteCatalog", async () => import("../../../../e2e/fixtures/state"));
@@ -20,14 +21,25 @@ vi.mock("next/dynamic", () => ({ default: (loader: () => Promise<{ default: Comp
   const Loaded = lazy(loader);
   return function TestDynamic(props: Record<string, unknown>) { return <Suspense><Loaded {...props} /></Suspense>; };
 } }));
-vi.mock("@/components/maps/PassengerTrackingMap", () => ({ default: ({ targetStop, selectedDestinationStopId }: PassengerMapProps) => <div data-testid="tracking-map" data-target={targetStop.id} data-selected={selectedDestinationStopId ?? ""}>QA map</div> }));
-vi.mock("@/components/passenger/PassengerBoardingView", () => ({ default: ({ sessionId }: { sessionId: string }) => <div>Boarding {sessionId}</div> }));
+vi.mock("@/components/maps/PassengerTrackingMap", () => ({ default: ({ targetStop, selectedDestinationStopId, route, selectedBusKey, onStopEstimatesChange }: PassengerMapProps) => <div data-testid="tracking-map" data-target={targetStop.id} data-selected={selectedDestinationStopId ?? ""}>QA map<button onClick={() => route && onStopEstimatesChange?.({ context: stopEstimateContext(route, selectedBusKey), minutes: { b: 3 } })}>Publish estimates</button></div> }));
+vi.mock("@/components/passenger/PassengerBoardingView", () => ({ default: ({ sessionId, stopEstimates }: { sessionId: string; stopEstimates?: PassengerStopEstimates }) => <><div>Boarding {sessionId}</div><span data-testid="boarding-eta">{stopEstimates?.minutes.b ?? "unknown"}</span></> }));
 vi.mock("@/components/passenger/AccountTab", () => ({ default: () => <button>QA account control</button> }));
 vi.mock("@/components/shared/MessagingPanel", () => ({ default: () => <div>QA chat</div> }));
 vi.mock("@/components/shared/FeedbackModal", () => ({ default: () => <div>QA feedback</div> }));
 beforeEach(() => setScenario("pending"));
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("passenger workspace navigation", () => {
+  it("shares map estimates with boarding and immediately invalidates them when the selected bus changes", async () => {
+    setScenario("multiple"); render(<PassengerWorkspace />); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Track QA route" }));
+    await screen.findByText("Boarding qa-session");
+    await user.click(await screen.findByRole("button", { name: "Publish estimates" }));
+    expect(screen.getByTestId("boarding-eta").textContent).toBe("3");
+    await user.click(screen.getByRole("combobox", { name: "Live bus" }));
+    await user.click(screen.getByRole("option", { name: "Bus qa-bus-2 · B → A" }));
+    await screen.findByText("Boarding qa-session-2");
+    expect(screen.getByTestId("boarding-eta").textContent).toBe("unknown");
+  });
   it("keeps Routes on the list when tapped repeatedly", async () => {
     render(<PassengerWorkspace />); const user = userEvent.setup();
     await screen.findByRole("button", { name: "Track QA route" });

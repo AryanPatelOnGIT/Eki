@@ -33,6 +33,34 @@ integration("versioned telemetry catalog against actual Firebase emulators", () 
   });
   afterEach(async () => { stop?.(); stop = undefined; await drainTelemetryRouteProcessing(); vi.unstubAllEnvs(); });
   afterAll(async () => { await state.firestore?.terminate(); if (app) await deleteApp(app); });
+  it("resolves a pending departure and synchronizes its durable direction using actual SDK transactions", async () => {
+    const stops = [{ id: "A", lat: 23, lng: 72 }, { id: "B", lat: 23.002, lng: 72 }, { id: "C", lat: 23.004, lng: 72 }];
+    await state.firestore!.collection("routes").doc("departure").set({ stops, configVersion: 1, geometryVersion: 1,
+      forwardPolyline: encodePolyline(stops), reversePolyline: encodePolyline([...stops].reverse()) });
+    await state.firestore!.collection("ride_sessions").doc("pending-departure").set({ busId: "bus", routeId: "departure",
+      driverId: "driver", status: "pending", direction: null });
+    await state.firestore!.collection("_active_bus_locks").doc("bus").set({ sessionId: "pending-departure", direction: null });
+    stop = startTelemetryRouteWatcher(); await vi.waitFor(() => expect(state.version).toBe(1));
+    const ref = state.realtime!.ref("activeBuses/bus_departure");
+    await ref.set({ busId: "bus", routeId: "departure", driverId: "driver", sessionId: "pending-departure",
+      status: "active", tripState: "pre_departure", direction: null, directionState: "pending", currentStopIndex: 0 });
+    const base = Date.now() - 12_000;
+    for (let index = 0; index < 3; index++) {
+      const sample = { lat: 23.0002 + index * 0.0002, lng: 72, speed: 20, heading: 0, motionState: "moving" as const,
+        gpsHdop: 1, seq: index + 1, timestamp: base + index * 4_000, deviceSentAt: base + index * 4_000 };
+      await ref.update(sample);
+      scheduleTelemetryRouteProcessing({ busId: "bus", routeId: "departure" }, sample);
+      await drainTelemetryRouteProcessing();
+      if (index < 2) expect((await ref.get()).val().direction ?? null).toBeNull();
+    }
+    expect((await ref.get()).val()).toMatchObject({ direction: "forward", directionState: "resolved",
+      directionFirestoreSynced: true, directionResolutionSource: "departure_trajectory", currentStopIndex: 0 });
+    expect((await ref.get()).val().pendingDeparture).toBeUndefined();
+    expect((await state.firestore!.collection("ride_sessions").doc("pending-departure").get()).data())
+      .toMatchObject({ direction: "forward", directionState: "resolved", directionResolutionSource: "departure_trajectory" });
+    expect((await state.firestore!.collection("_active_bus_locks").doc("bus").get()).data()?.direction).toBe("forward");
+    expect(state.compute).not.toHaveBeenCalled();
+  }, 60_000);
   it("coalesces passenger document reads and invalidates them on actual streamed edits/deletions", async () => {
     const ref = state.firestore!.collection("routes").doc("route"); await ref.set({ geometryVersion: 1 });
     stop = startTelemetryRouteWatcher(); await vi.waitFor(() => expect(state.version).toBe(1));

@@ -43,6 +43,38 @@ beforeEach(() => {
 });
 
 describe("published passenger stop progress", () => {
+  it("keeps computable fleet arrivals when another bus's reroute geometry is unavailable", () => {
+    state.snapshot = { first: { ...fixtureBus("forward"), currentStopIndex: 1 },
+      second: { ...fixtureBus("forward", "second-session", "second-bus"), currentStopIndex: 1, routeSource: "dynamic-reroute", routeVersion: 2 } };
+    const changed = vi.fn();
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} onStopEstimatesChange={changed} />);
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: { b: 1 }, unavailable: undefined }));
+  });
+  it("publishes ETA, authoritative passage and delayed state to the destination picker", async () => {
+    vi.useFakeTimers();
+    const bus = { ...fixtureBus("forward"), currentStopIndex: 1 };
+    state.snapshot = { bus };
+    const changed = vi.fn();
+    const view = render(<PassengerMap route={directed} targetStop={route.stops[1]} onStopEstimatesChange={changed} />);
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: { b: 1 }, nextStopIndex: 1, unavailable: undefined }));
+    expect(view.container.querySelector('[aria-label="Alpha — passed"]')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(SIGNAL_LOST_MS + 15_001); });
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: {}, unavailable: "Signal delayed" }));
+    expect(screen.getByTitle("qa-bus — last known location")).toBeTruthy();
+    act(() => state.listener?.({ bus: { ...bus, timestamp: Date.now(), backendReceivedAt: Date.now() } }));
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ unavailable: undefined }));
+  });
+  it("renders one bus arrow with no status dot or passenger-location marker", () => {
+    const watchPosition = vi.fn(success => { success({ coords: { latitude: 24, longitude: 73 } }); return 1; });
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: { watchPosition, clearWatch: vi.fn() } });
+    const view = render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    const marker = screen.getByTitle(/^qa-bus(?: —.*)?$/);
+    expect(marker.children).toHaveLength(1);
+    expect(view.container.querySelector('[data-marker=\'{"lat":24,"lng":73}\']')).toBeNull();
+    expect(view.container.querySelectorAll("[data-marker]")).toHaveLength(route.stops.length + 1);
+    view.unmount();
+    delete (navigator as unknown as { geolocation?: unknown }).geolocation;
+  });
   it("distinguishes a camera fallback from an explicitly selected or cleared destination", async () => {
     const props = { route: directed, targetStop: route.stops[1], preview: true };
     const view = render(<PassengerMap {...props} />);
