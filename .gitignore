@@ -49,6 +49,7 @@ service-account.json
 !firebase.json
 !database.rules.json
 !firestore.indexes.json
+!docs/testing/MOVING_GNSS_CAPTURE_2026_10_21.json
 
 # Misc
 .DS_Store

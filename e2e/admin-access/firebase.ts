@@ -31,7 +31,13 @@ function verifyRole(forceRefresh: boolean) {
   window.dispatchEvent(new CustomEvent("qa-verification", { detail: { forceRefresh } }));
   return new Promise<{ claims: { role: string; admin: boolean } }>((resolve, reject) => { approve = resolve; deny = reject; notifyWaiting(true); });
 }
-export function approveVerification() { approve?.({ claims: { role: "admin", admin: true } }); notifyWaiting(false); }
+export function approveVerification() {
+  const query = new URLSearchParams(location.search);
+  const requested = query.get("traceRole");
+  const role = query.has("traceExport") && (requested === "passenger" || requested === "driver") ? requested : "admin";
+  approve?.({ claims: { role, admin: role === "admin" } });
+  notifyWaiting(false);
+}
 export function rejectVerification() { deny?.(new Error("Synthetic role verification failure")); notifyWaiting(false); }
 
 // Only the synthetic SDK transport is replaced; the production collection hook,

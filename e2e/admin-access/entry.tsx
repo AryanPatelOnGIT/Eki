@@ -5,6 +5,7 @@ import { useCollection } from "@/hooks/useCollection";
 import { useRTDBResume } from "@/hooks/useRTDBResume";
 import { useActiveBuses } from "@/hooks/useActiveBuses";
 import RoleGuard from "@/components/shared/RoleGuard";
+import TelemetryTraceControls from "@/components/TelemetryTraceControls";
 import FeedbackPanel from "@/components/admin/FeedbackPanel";
 import DashboardPanel from "@/components/admin/DashboardPanel";
 import { useLiveRouteCatalog } from "@/hooks/useLiveRouteCatalog";
@@ -59,9 +60,9 @@ function Fixture() {
     <button onClick={reverifyAccount}>Reverify account</button>{" "}
     <button onClick={() => void signOut()}>Synthetic sign out</button>
   </aside>
-  <AuthProvider><RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: 65, ...(new URLSearchParams(location.search).has("dashboard") ? { height: "100dvh", boxSizing: "border-box" as const } : {}) }}>
+  <AuthProvider><TelemetryTraceControls />{new URLSearchParams(location.search).has("traceExport") ? <main style={{ paddingTop: 65 }}><h1>Local trace fixture</h1></main> : <RoleGuard allowedRoles={["admin"]}><div style={{ paddingTop: 65, ...(new URLSearchParams(location.search).has("dashboard") ? { height: "100dvh", boxSizing: "border-box" as const } : {}) }}>
     {new URLSearchParams(location.search).has("dashboard") ? <DashboardPanel /> : new URLSearchParams(location.search).has("projection") ? <RouteProjection /> : new URLSearchParams(location.search).has("resume") ? <Resume /> : new URLSearchParams(location.search).has("metadata") ? <Metadata /> : <FeedbackPanel embedded={new URLSearchParams(location.search).has("embedded")} />}
-  </div></RoleGuard></AuthProvider>
+  </div></RoleGuard>}</AuthProvider>
 </>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

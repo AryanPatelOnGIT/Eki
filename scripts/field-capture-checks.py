@@ -3,6 +3,9 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import sys
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -16,6 +19,7 @@ def module(name):
 
 serial_capture = module("capture-serial")
 archive = module("archive-field-evidence")
+supervisor = module("supervise-field-capture")
 
 class Clock:
     value = 0
@@ -64,6 +68,31 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(events[-1]['event'], 'capture_end')
             self.assertFalse(device.is_open)
             self.assertEqual(result['lines'], 3)
+
+    def test_until_end_survives_reconnect_beyond_any_default_duration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            clock = Clock()
+            stop = p/'STOP'
+            device = Device(clock, [b'before\n', SerialError(), b'after\n'])
+            read = device.read
+            def read_and_stop(size):
+                chunk = read(size)
+                clock.value += 3600
+                if chunk == b'after\n': stop.touch()
+                return chunk
+            device.read = read_and_stop
+            result = serial_capture.capture('fake', 115200, 0, p/'serial.log', stop_file=stop,
+                clock=clock, serial_module=SimpleNamespace(Serial=lambda **kw: device, SerialException=SerialError))
+            self.assertGreater(clock.value, 7200)
+            self.assertEqual(Path(result['raw']).read_bytes(), b'before\nafter\n')
+            self.assertEqual(device.opens, 2)
+            self.assertFalse(device.is_open)
+
+    def test_unbounded_capture_requires_explicit_stop_and_valid_duration(self):
+        for duration in (0, -1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                serial_capture.capture('fake', 115200, duration, 'unused')
 
     def test_disconnect_does_not_join_partial_lines_across_reconnect(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,6 +159,129 @@ class CaptureTests(unittest.TestCase):
             result, _ = self.capture(p, [b'x' * 65536, b'end'])
             self.assertEqual(Path(result['raw']).stat().st_size, 65539)
             self.assertIn('line_limit', Path(result['events']).read_text())
+
+class SupervisorTests(unittest.TestCase):
+    def test_real_children_exit_on_end_despite_persistent_status_locks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            run = root/'run'
+            worker = root/'worker.py'
+            worker.write_text('import sys, time\nfrom pathlib import Path\n'
+                'Path(sys.argv[1]).write_text("started")\n'
+                'while not Path(sys.argv[2]).exists(): time.sleep(.01)\n')
+            failures = []
+            def end_when_ready():
+                try:
+                    deadline = time.monotonic() + 15
+                    while not (run/'segments/serial/0001/ready').exists():
+                        if time.monotonic() >= deadline: raise AssertionError('Worker did not start')
+                        time.sleep(.01)
+                    (run/'STOP').touch()
+                except Exception as error:
+                    failures.append(error)
+                    if run.exists(): (run/'STOP').touch()
+            end = threading.Thread(target=end_when_ready)
+            end.start()
+            try:
+                with patch.object(Path, 'replace', side_effect=PermissionError()):
+                    result = supervisor.supervise(dict(run=str(run), cwd=str(root), graceSeconds=2,
+                        workers={'serial': [sys.executable, str(worker), '{segment}/ready', '{stop_file}']}))
+                self.assertEqual(result, 0)
+            finally:
+                end.join(timeout=20)
+            self.assertFalse(end.is_alive())
+            self.assertEqual(failures, [])
+            events = [json.loads(line) for line in (run/'supervisor-events.jsonl').read_text().splitlines()]
+            self.assertTrue(any(item['event'] == 'status_publish_deferred' for item in events))
+            self.assertEqual(events[-1]['event'], 'status_publish_deferred')
+            self.assertEqual(sum(item['event'] == 'worker_started' for item in events), 1)
+            self.assertFalse(any(item['event'] == 'forced_worker_termination' for item in events))
+
+    def test_locked_status_preserves_previous_then_recovers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'status.json'
+            path.write_text('{"prior": true}')
+            with patch.object(Path, 'replace', side_effect=PermissionError()):
+                self.assertFalse(supervisor.publish_status(path, {'new': True}, clock=Clock()))
+            self.assertEqual(json.loads(path.read_text()), {'prior': True})
+            self.assertTrue(supervisor.publish_status(path, {'new': True}))
+            self.assertEqual(json.loads(path.read_text()), {'new': True})
+
+    def test_transient_sharing_error_retries_and_disk_full_propagates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'status.json'
+            replace = Path.replace
+            calls = []
+            def locked_once(file, target):
+                calls.append(1)
+                if len(calls) == 1: raise PermissionError()
+                return replace(file, target)
+            with patch.object(Path, 'replace', locked_once):
+                self.assertTrue(supervisor.publish_status(path, {'ok': 1}, clock=Clock()))
+            self.assertEqual(len(calls), 2)
+            with patch.object(Path, 'write_text', side_effect=OSError('disk full')):
+                with self.assertRaisesRegex(OSError, 'disk full'):
+                    supervisor.publish_status(path, {})
+
+    def exercise(self, directory, *, critical=False, hung=False):
+        clock = Clock()
+        root = Path(directory).resolve()
+        run = root/'run'
+        commands = []
+        class Process:
+            pid = 999
+            returncode = None
+            def __init__(self, first): self.first = first
+            def poll(self):
+                if self.returncode is None:
+                    if self.first: self.returncode = 7
+                    elif (run/'STOP').exists() and not hung: self.returncode = 0
+                return self.returncode
+            def terminate(self): self.returncode = -15
+            def wait(self, **kw): return self.returncode
+        def launch(argv, **kw):
+            commands.append(argv)
+            return Process(len(commands) == 1 and not critical and not hung)
+        publications = []
+        def publish(path, data, **kw):
+            publications.append(json.loads(json.dumps(data)))
+            if clock.value > 65 and not hung: (run/'STOP').touch()
+            if hung and clock.value > 1: (run/'STOP').touch()
+            # Persistent metadata lock throughout the run must not stop workers.
+            return False
+        config = dict(run=str(run), cwd=str(root), workers={'serial': ['python', '{segment}', '{stop_file}']}, graceSeconds=1)
+        result = supervisor.supervise(config, clock=clock, popen=launch, publisher=publish,
+            disk_usage=lambda _: SimpleNamespace(free=0 if critical else 10*1024**3))
+        return result, commands, publications, run
+
+    def test_status_locks_do_not_stop_workers_or_hide_restart_segments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, commands, publications, run = self.exercise(directory)
+            self.assertEqual(result, 0)
+            self.assertEqual(len(commands), 2)
+            self.assertTrue(commands[0][1].endswith('0001'))
+            self.assertTrue(commands[1][1].endswith('0002'))
+            self.assertEqual(commands[0][2], str(run/'STOP'))
+            self.assertGreater(publications[-1]['elapsedSeconds'], 65)
+            self.assertEqual(publications[-1]['workers']['serial']['history'][0]['exitCode'], 7)
+            self.assertTrue(publications[-1]['ended'])
+            self.assertIn('status_publish_deferred', (run/'supervisor-events.jsonl').read_text())
+
+    def test_storage_and_unresponsive_worker_stop_are_distinct_failures(self):
+        for kwargs, reason in ((dict(critical=True), 'CRITICAL_STORAGE'), (dict(hung=True), 'END/STOP')):
+            with tempfile.TemporaryDirectory() as directory:
+                result, commands, publications, run = self.exercise(directory, **kwargs)
+                self.assertEqual(result, 1)
+                self.assertEqual(publications[-1]['stopReason'], reason)
+                self.assertTrue((run/'STOP').exists())
+                self.assertEqual(bool(publications[-1]['forcedTerminations']), kwargs.get('hung', False))
+
+    def test_existing_run_and_unsafe_worker_names_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = dict(run=directory, cwd=directory, workers={'serial': ['python']})
+            with self.assertRaises(FileExistsError): supervisor.supervise(config)
+            config['workers'] = {'../escape': ['python']}
+            with self.assertRaises(ValueError): supervisor.supervise(config)
 
 class ArchiveTests(unittest.TestCase):
     def test_nested_files_verified_and_explicit_exclusions_recorded(self):
