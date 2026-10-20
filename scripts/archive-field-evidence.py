@@ -16,12 +16,14 @@ def sha256(file):
 def archive_evidence(source, destination, *, exclude=()):
     source, destination = Path(source).resolve(), Path(destination).resolve()
     partial = Path(str(destination) + ".partial")
+    checksum = Path(str(destination) + ".sha256")
     if not source.is_dir():
         raise ValueError("Evidence source must be a directory.")
     if destination.is_relative_to(source):
         raise ValueError("Archive must be outside the evidence directory.")
-    if destination.exists() or partial.exists():
-        raise FileExistsError(str(destination))
+    for output in (destination, partial, checksum):
+        if output.exists() or output.is_symlink():
+            raise FileExistsError(str(output))
     excluded = set(exclude)
     files = []
     for file in sorted(source.rglob("*")):
@@ -60,7 +62,10 @@ def archive_evidence(source, destination, *, exclude=()):
         verifiedFiles=len(manifest), crcVerified=True,
         everyEvidenceSha256Verified=True, excluded=sorted(excluded),
         independentOffDeviceBackup=False)
-    Path(str(destination) + ".sha256").write_text(result["sha256"] + "  " + destination.name + "\n")
+    # Exclusive creation also protects a checksum created after preflight.
+    # If publication races, keep the verified ZIP and propagate the error.
+    with checksum.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(result["sha256"] + "  " + destination.name + "\n")
     return result
 
 def main():

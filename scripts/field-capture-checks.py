@@ -128,6 +128,31 @@ class ArchiveTests(unittest.TestCase):
             self.assertFalse(p.joinpath('capture.zip.partial').exists())
             with self.assertRaises(FileExistsError): archive.archive_evidence(source, p/'capture.zip')
 
+    def test_existing_checksum_is_preserved_without_publishing_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory); source = p/'evidence'; source.mkdir()
+            (source/'raw').write_bytes(b'evidence')
+            checksum = p/'capture.zip.sha256'; checksum.write_text('prior evidence checksum')
+            with self.assertRaises(FileExistsError): archive.archive_evidence(source, p/'capture.zip')
+            self.assertEqual(checksum.read_text(), 'prior evidence checksum')
+            self.assertFalse(p.joinpath('capture.zip').exists())
+            self.assertFalse(p.joinpath('capture.zip.partial').exists())
+
+    def test_checksum_created_during_publication_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory); source = p/'evidence'; source.mkdir()
+            (source/'raw').write_bytes(b'evidence')
+            original = archive.os.link
+            def publish(*args, **kwargs):
+                (p/'capture.zip.sha256').write_text('concurrent evidence checksum')
+                return original(*args, **kwargs)
+            with patch.object(archive.os, 'link', publish), self.assertRaises(FileExistsError):
+                archive.archive_evidence(source, p/'capture.zip')
+            self.assertEqual(p.joinpath('capture.zip.sha256').read_text(), 'concurrent evidence checksum')
+            with zipfile.ZipFile(p/'capture.zip') as bundle:
+                self.assertIsNone(bundle.testzip())
+                self.assertEqual(bundle.read('raw'), b'evidence')
+
     def test_archive_inside_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             p = Path(directory); (p/'raw').write_text('evidence')
