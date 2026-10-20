@@ -57,9 +57,11 @@ export const routingTestMap = [{
 }, {
   caseId: 'OBS05',
   scope: 'Trace context and lifecycle recording with synthetic browser events only; OS suspension, actual display paint and real role/network acceptance remain separate.',
-  sourcePaths: ['frontend/src/lib/telemetryTrace.ts'],
+  sourcePaths: ['frontend/src/lib/telemetryTrace.ts', 'frontend/src/components/TelemetryTraceControls.tsx'],
   tests: [{ path: 'frontend/src/lib/telemetryTrace.test.ts', name: 'browser telemetry trace activation > records visibility, network hints and page lifecycle without retaining page content', level: 'L1', semantics: 'Synthetic visible/hidden, offline, persisted pagehide/pageshow and clear events retain current trace context, reduced-motion preference, timestamps and sequence identity without page content.' },
     { path: 'frontend/src/lib/telemetryTrace.test.ts', name: 'browser telemetry trace activation > leaves unavailable browser context explicit and installs no observers when disabled', level: 'L1', semantics: 'No lifecycle observer is installed while tracing is disabled; absent visibility, network and reduced-motion APIs export explicit unknown/null context after activation.' },
+    { path: 'frontend/src/components/TelemetryTraceControls.test.tsx', name: 'opt-in tab trace export > hides the local download after logout or while role verification is unresolved', level: 'L1', semantics: 'Mounted production control removes the download when the synthetic auth context loses its verified role or logs out. Does not prove live Auth claims or browser download behavior.' },
+    { path: 'e2e/admin-access.spec.ts', name: 'opt-in passenger downloads its own tab trace without protected health', level: 'L3', semantics: 'Chromium exports real JSON through the production trace control and AuthProvider with synthetic SDK Passenger claims; run identity survives download, no health request occurs, and logout hides the control. Does not certify a deployed genuine role.' },
     { path: 'e2e/admin-access.spec.ts', name: 'opt-in traces retain actual browser online and reduced-motion context', level: 'L3', semantics: 'Chromium toggles real offline/online state and emulated reduced motion in the synthetic app fixture; the opt-in export retains the corresponding context without certifying OS suspension or live provider reachability.' }],
 }, {
   caseId: 'PAX15',

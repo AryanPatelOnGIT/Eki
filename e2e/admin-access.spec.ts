@@ -1,4 +1,30 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+
+async function verifyLocalExport(page: Page, testInfo: TestInfo, role: "passenger" | "driver" | "admin") {
+    const healthRequests: string[] = [];
+    page.on("request", request => { if (new URL(request.url()).pathname.includes("health")) healthRequests.push(request.url()); });
+    await page.goto(`/?traceExport&traceRole=${role}&telemetryTrace=1`);
+    const button = page.getByRole("button", { name: "Download telemetry trace" });
+    await expect(button).toHaveCount(0);
+    await page.getByRole("button", { name: "Approve verification" }).click();
+    await expect(button).toBeVisible();
+    const before = await page.evaluate(() => window.__ekiTelemetryTrace!.snapshot());
+    const downloading = page.waitForEvent("download");
+    await button.click();
+    const download = await downloading;
+    const exported = JSON.parse(await readFile((await download.path())!, "utf8"));
+    expect(exported.runId).toBe(before.runId);
+    expect(exported.version).toBe(1);
+    expect(Array.isArray(exported.records)).toBe(true);
+    expect(healthRequests).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`${role}-trace-export.png`) });
+    await page.getByRole("button", { name: "Synthetic sign out" }).click();
+    await expect(button).toHaveCount(0);
+}
+test("opt-in passenger downloads its own tab trace without protected health", async ({ page }, testInfo) => verifyLocalExport(page, testInfo, "passenger"));
+test("opt-in driver downloads its own tab trace without protected health", async ({ page }, testInfo) => verifyLocalExport(page, testInfo, "driver"));
+test("opt-in admin downloads its own tab trace without protected health", async ({ page }, testInfo) => verifyLocalExport(page, testInfo, "admin"));
 test("opt-in traces retain actual browser online and reduced-motion context", async ({ page, context }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?telemetryTrace=1");
