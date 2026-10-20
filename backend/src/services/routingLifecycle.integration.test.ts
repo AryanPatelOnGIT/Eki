@@ -158,6 +158,23 @@ async function fixture(startEngine = true, stopCount = 3) {
 }
 
 describe("routing lifecycle through actual ingestion and listeners", () => {
+  it("recovers an armed pending ride from credible departure fixes and records ordered passage", async () => {
+    const f = await fixture();
+    Object.assign(state.docs.get(`ride_sessions/${f.sessionId}`), { status: "pending", direction: null, directionState: "pending" });
+    Object.assign(f.live(), { direction: null, directionState: "pending", tripState: "pre_departure" });
+    await f.send(23.0002, 0);
+    await f.send(23.0004, 5_000);
+    expect(f.live()).toMatchObject({ direction: null, currentStopIndex: 0 });
+    await f.send(23.0006, 10_000);
+    expect(f.live()).toMatchObject({ direction: "forward", directionResolutionSource: "departure_trajectory", sessionId: f.sessionId });
+    expect(state.docs.get(`ride_sessions/${f.sessionId}`)).toMatchObject({ direction: "forward", directionState: "resolved" });
+    await f.send(23.0012, 15_000);
+    expect(f.live()).toMatchObject({ tripState: "in_service", currentStopIndex: 1 });
+    await f.send(23.00195, 25_000);
+    expect(f.live()).toMatchObject({ tripState: "in_service", currentStopIndex: 2 });
+    expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
+      .filter((record: any) => record.stopId === f.stops[1].id)).toHaveLength(1);
+  });
   it("publishes the next stop and its history only after entering the 10m arrival circle", async () => {
     const f = await fixture();
     await f.send(23, 0, "stopped");
