@@ -82,10 +82,14 @@ python scripts/archive-field-evidence.py --source temp/field-run --out artifacts
 ```
 
 The tool hashes each original, compresses into a partial archive, checks ZIP CRC
-and every archived SHA-256, and publishes without overwriting an existing ZIP.
+and every archived SHA-256. It refuses to replace existing ZIPs, partial files
+or checksum sidecars. If a checksum appears during publication, the command
+fails and preserves both the verified ZIP and the existing checksum.
 The embedded `SHA256SUMS.json` lists files and explicit exclusions; a sidecar
-contains the ZIP digest. An error preserves the partial archive for inspection
-without presenting it as verified. Source files and previous ZIPs are never removed. Failed partial archives are
+contains the ZIP digest on successful completion. A failure before publication
+retains the partial archive for inspection without marking it verified. Use a
+new output name after investigating a conflict; preserve the earlier evidence.
+Source files and previous ZIPs are never removed. Failed partial archives are
 retained for inspection. If an independent supervisor still owns a log handle,
 stop it or explicitly exclude that relative path with `--exclude`; preserve the
 omitted log separately and disclose the omission. Do not include the archiver's

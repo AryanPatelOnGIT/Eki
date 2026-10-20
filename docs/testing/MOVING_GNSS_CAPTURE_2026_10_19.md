@@ -85,27 +85,24 @@ The private evidence index retains the ZIP path and digest; its SHA256SUMS.json 
 
 The previously recorded operator-form validation and false Selected stop defects were repaired in source commit 3a1486b, merged by PR #336 into testing at 8297c4f before this follow-up. This PR does not repeat those fixes or claim a new deployed retest. Archived-message permission denial and earlier degraded health remain live-environment investigations.
 
-This PR preserves the field results, hardens the serial recorder with exact byte/chunk evidence and reconnect handling, repairs parsing of concatenated trace objects, explicitly reports location-only samples, and adds verified archival and the [preflight/runbook](../operations/FIELD_CAPTURE.md). The first parser regression failed before repair; eight disposable Python fault cases exercise capture/reconnect/archival without hardware. Transport deadlines and firmware policy are unchanged: a timeout cause was not established by this run.
+This PR preserves the field results, hardens the serial recorder with exact byte/chunk evidence and reconnect handling, repairs parsing of concatenated trace objects, explicitly reports location-only samples, and adds verified archival and the [preflight/runbook](../operations/FIELD_CAPTURE.md). The first parser regression failed before repair; eleven disposable Python fault cases exercise capture/reconnect/archival without hardware. Transport deadlines and firmware policy are unchanged: a timeout cause was not established by this run.
 
 The source and validation in this PR are separate from the older firmware/browser artifacts used during the drive. PR merge and physical/deployed acceptance are still owner-controlled and pending.
 
 ## Follow-up validation — 20 October 2026
 
-The branch is based on testing 8297c4f. Final local checks passed: frontend and
-backend lint, 143 repository script tests (including eight disposable Python
-capture/archive fault cases), 1,229 backend tests with 58 emulator-only skips,
-688 frontend tests using two workers, 22 synthetic mobile/desktop admin browser
-checks, OpenAPI/UI contracts, QA configuration/catalog/coverage budget, strict
-production export plus service worker/CSP generation with CI placeholders, and
-runtime dependency audit with zero vulnerabilities. The QA catalog still reports
-NOT_RELEASE_READY. Raw-capture replay preserved the 286 classified requests,
-10 transport failures and missing correlation counts.
+The [expanded re-verification record](REVERIFICATION_2026_10_20.md) supersedes the
+initial tooling-only validation scope. It records 143 root script tests (11
+Python capture/archive fault cases), 1,229 backend unit tests, 690 frontend
+tests, 58 Firebase integration cases, 84 native host assertions, 97 browser
+scenarios, the API authorization sweep, GNSS/property/reviewed-unit sub-oracles,
+selective mutation, bounded admission soak, strict packaging and dependency
+audits. Three defects were repaired: checksum overwrite, reverted-settings
+dirty state, and incomplete raw-file writes. All evidence tiers and tested
+commits are explicit in that record.
 
-The initial aggregate verify command stopped on frontend host-load timeouts;
-the full frontend suite subsequently passed with two workers. The history
-pagination test retains its 100-to-101 row assertions while avoiding repeated
-expensive accessibility scans; deletion/focus/keyboard cases remain unchanged.
-No test timeout or production UI behavior was relaxed. No firmware or Firebase
-rules changed; native firmware and live/emulator deployment gates were not
-rerun as part of this tooling change. The successful placeholder build is a
-software packaging check, not a deployment or validation of live credentials.
+The six required local QA families pass on their recorded clean software
+commit. The official catalog still reports NOT_RELEASE_READY; exhaustive
+control/state mapping, real providers, deployed acceptance and physical gates
+remain pending. The original drive still has no armed session. No firmware
+flash, cloud/rules deployment or new physical acceptance is claimed.
