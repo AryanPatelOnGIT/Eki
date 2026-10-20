@@ -7,6 +7,30 @@ import {
   parseDeviceRecords,
 } from "./analyze-telemetry-trace.mjs";
 
+test("recovers independently framed records from interleaved and concatenated serial output", () => {
+  const capture = { event: "device_capture", seq: 1, note: "escaped \\\" brace } [TelemetryTrace] marker" };
+  const http = { event: "device_http", seq: 1, httpStatus: 202 };
+  const records = parseDeviceRecords(`[TelemetryTrace] ${JSON.stringify(capture)}[TelemetryTrace] ${JSON.stringify(http)} trailing text\n`);
+  assert.deepEqual(records, [capture, http]);
+});
+
+test("retains malformed fragments without losing the next intact serial record", () => {
+  const complete = { event: "device_http", seq: 2, httpStatus: -11 };
+  const records = parseDeviceRecords(`[TelemetryTrace] {"event":"device_cap\n[TelemetryTrace] ${JSON.stringify(complete)}\n`);
+  assert.deepEqual(records, [{ event: "malformed_trace" }, complete]);
+});
+
+test("reports location-only browser samples separately from armed ride evidence", () => {
+  const listener = { event: "browser_listener", runId: "tab", nodeKey: "bus_route", seq: 1, sampledAtDeviceMs: 100 };
+  const result = analyzeTelemetryTraces([], [listener, listener, { ...listener, seq: 2, sessionId: "ride" }]);
+  assert.equal(result.counters.browserSamplesWithoutSession, 1);
+});
+
+test("does not interpret network-looking JSON string content as a second event", () => {
+  const record = { event: "device_capture", note: "[NetworkTiming] dnsMs=1 tlsConnectMs=20 timeoutMs=3000 handshakeMs=8000 result=1" };
+  assert.deepEqual(parseDeviceRecords(`[TelemetryTrace] ${JSON.stringify(record)}`), [record]);
+});
+
 test("accepts configured handshake limits and legacy labels without reporting them as measured duration", () => {
   for (const label of ["handshakeMs", "configuredHandshakeTimeoutMs"]) {
     const records = parseDeviceRecords(`[NetworkTiming] dnsMs=1 tlsConnectMs=20 timeoutMs=3000 ${label}=8000 result=1 channel=telemetry preparationMs=5`);

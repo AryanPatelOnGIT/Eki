@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RideHistoryPanel from "./RideHistoryPanel";
 const state = vi.hoisted(() => ({ sessions: [{ id: "qa-session", busId: "qa-bus", driverId: "qa-driver", routeId: "qa-route", status: "completed", armedAt: 1_750_000_000_000, startTime: 1_750_000_001_000, endTime: 1_750_000_600_000, passengers: [] as {userId: string; userName: string; boardingStopId: string; alightingStopId: string | null; joinedAt: number}[], stopsReached: [] }], error: null as string | null, retry: vi.fn() }));
@@ -22,11 +22,13 @@ describe("ride-history controls", () => {
     const original = state.sessions;
     try {
       state.sessions = Array.from({ length: 101 }, (_, i) => ({ ...original[0], id: `ride-${i}` }));
-      render(<RideHistoryPanel />);
-      expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(100);
-      await userEvent.setup().click(screen.getByRole("button", { name: "Load older rides" }));
-      expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(101);
-      expect(screen.queryByRole("button", { name: "Load older rides" })).toBeNull();
+      const { container } = render(<RideHistoryPanel />);
+      // This case measures pagination, not pointer/focus behavior. Avoid three
+      // accessibility scans of a hundred rows under the parallel suite's load.
+      expect(container.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(100);
+      fireEvent.click(screen.getByText("Load older rides"));
+      expect(container.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(101);
+      expect(screen.queryByText("Load older rides")).toBeNull();
     } finally { state.sessions = original; }
   });
   it("shows both persisted stop choices without inventing arrival time", async () => {
