@@ -1,6 +1,6 @@
 # Recording a physical GNSS test
 
-Last updated: 2026-10-21 03:19 IST (UTC+05:30).
+Last updated: 2026-10-21 04:20 IST (UTC+05:30).
 
 Prepare the recorder before boarding. Device presence, location delivery and an
 armed service are separate checks. A moving location trace without a ride session
@@ -15,9 +15,12 @@ can measure delivery but cannot verify stops, boarding, completion or return.
    success message and session ID. The card must leave **Ride Not Armed** for
    **Direction Pending**, **Awaiting Stop 1** or **In Service**. Do not treat an
    online marker or moving speed alone as a started ride.
-3. Direction is inferred from fresh stopped hardware at a configured endpoint;
-   do not replace it with invented coordinates or manually force direction.
-   At the configured origin, verify the intended direction and service activation.
+3. Prefer a fresh stopped fix at the configured origin to resolve direction.
+   If that endpoint fix was missed, recovery requires at least three fresh,
+   credible moving fixes spanning 30 metres on one unambiguous first route leg.
+   Ambiguous geometry or a start beyond an unobserved intermediate stop remains
+   pending. Verify the published direction and service activation; do not invent
+   coordinates, force direction or manufacture missed-stop history.
 4. Open the existing authenticated Admin, Passenger and available Driver pages with
    `?telemetryTrace=1`. Keep the tabs open without refresh. Export each tab's
    **Download telemetry trace** before and after the run. Browser background
