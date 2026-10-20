@@ -41,6 +41,13 @@ describe("deterministic GNSS software properties", () => {
     }
     for (const offset of [-60001, 10001]) expect(parseTelemetryValue({ ...valid, timestamp: epoch + offset }, epoch))
       .toEqual({ ok: false, reason: "stale_or_invalid_timestamp" });
+    for (const timestamp of [epoch - 0.5, epoch + 0.5, NaN, Infinity, -Infinity, null, String(epoch), [], {}]) {
+      expect(parseTelemetryValue({ ...valid, timestamp }, epoch)).toEqual({ ok: false, reason: "stale_or_invalid_timestamp" });
+    }
+    for (const timestamp of [epoch - 0.5, epoch + 0.5]) {
+      expect(parseTelemetryPayload(encode({ ...valid, timestamp }), epoch))
+        .toEqual({ ok: false, reason: "stale_or_invalid_timestamp" });
+    }
     for (const deviceSentAt of [epoch - 1, epoch + 10001, epoch + 0.5, "1800000000000", null]) {
       expect(parseTelemetryValue({ ...valid, deviceSentAt }, epoch)).toEqual({ ok: false, reason: "invalid_device_sent_at" });
     }

@@ -49,7 +49,10 @@ export default function SettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDirty = Object.keys(overrides).length > 0;
+  const changedFields = Object.fromEntries(Object.entries(overrides).filter(
+    ([key, value]) => value !== settings[key as keyof GlobalSettings],
+  )) as Partial<GlobalSettings>;
+  const isDirty = Object.keys(changedFields).length > 0;
 
   useEffect(() => {
     return () => {
@@ -68,7 +71,7 @@ export default function SettingsPanel() {
     }
     setSaving(true);
     try {
-      await saveSettings(overrides);
+      await saveSettings(changedFields);
       setOverrides({});
       setSaved(true);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);

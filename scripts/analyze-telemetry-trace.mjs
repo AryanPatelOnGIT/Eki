@@ -213,6 +213,9 @@ export function analyzeTelemetryTraces(deviceRecords, browserRecords) {
   return {
     counters: {
       requests: requests.length,
+      browserSamplesWithoutSession: new Set(browserRecords.filter(record =>
+        record.event === "browser_listener" && !record.sessionId)
+        .map(record => browserPhaseKey(record)).filter(Boolean)).size,
       malformedTraceLines: deviceRecords.filter(record => record.event === "malformed_trace").length,
       httpFailures: requests.filter(record => ![200, 202].includes(record.httpStatus)).length,
       retries: requests.filter(record => record.attempt > 1).length,
@@ -310,6 +313,7 @@ export function formatTelemetryReport(analysis, healthSnapshots = []) {
     "",
     "Clock offset uses the four HTTP timestamps. The uncertainty column is half of the network-only round trip; cross-clock latency values should be read with that bound.",
     "Use one device per input. Capture gaps describe accepted samples, not the underlying GNSS sampling cadence. Missing or malformed records limit gap and failure counts.",
+    `Browser samples without a recorded ride session: ${analysis.counters.browserSamplesWithoutSession}. Location-only samples cannot establish boarding, stop progression, completion or automatic return.`,
     "Version 2 firmware records retain receiver UTC, RMC first-byte/checksum arrival, evaluation/enqueue, request send, response headers and completed body drain separately. Monotonic phases handle one rollover and reject impossible intervals. Missing phases remain unavailable, including RTC/checkpoint recovery. Receiver UTC comparisons include clock disagreement and UART buffering; they are not pure network latency. HTTP round trip remains the header phase used for clock estimation; the complete device cycle includes body drain.",
     "",
     "## Correlation coverage",
@@ -383,18 +387,48 @@ function parseArguments(argv) {
 }
 
 export function parseDeviceRecords(text) {
-  return text.split(/\r?\n/).flatMap((line) => {
-    const start = line.indexOf(DEVICE_TRACE_PREFIX);
-    if (start < 0) {
-      const match = line.match(/\[NetworkTiming\] dnsMs=(\d+) tlsConnectMs=(\d+) timeoutMs=(\d+) (?:handshakeMs|configuredHandshakeTimeoutMs)=(\d+) result=(\d+)(?: channel=(\w+) preparationMs=(\d+))?/);
-      return match ? [{ event: "network_connect", dnsMs: Number(match[1]), tlsConnectMs: Number(match[2]), result: Number(match[5]), channel: match[6] ?? "unknown", preparationMs: match[7] ? Number(match[7]) : null }] : [];
+  const records = [];
+  const jsonSpans = [];
+  const networkPattern = /\[NetworkTiming\] dnsMs=(\d+) tlsConnectMs=(\d+) timeoutMs=(\d+) (?:handshakeMs|configuredHandshakeTimeoutMs)=(\d+) result=(\d+)(?: channel=(\w+) preparationMs=(\d+))?/g;
+  // Concurrent firmware tasks can concatenate lines or append other output.
+  // Parse the framed JSON object, respecting quoted braces/escaped quotes.
+  // A damaged fragment is retained and scanning resumes at the next prefix.
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf(DEVICE_TRACE_PREFIX, cursor);
+    if (start < 0) break;
+    const jsonStart = start + DEVICE_TRACE_PREFIX.length;
+    let depth = 0, quoted = false, escaped = false, end = -1;
+    if (text[jsonStart] === "{") for (let index = jsonStart; index < Math.min(text.length, jsonStart + 65_536); index++) {
+      const character = text[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quoted = false;
+        // An unescaped newline cannot occur inside a valid JSON string.
+        else if (character === "\n" || character === "\r") break;
+      } else if (character === '"') quoted = true;
+      else if (character === "{") depth++;
+      else if (character === "}" && --depth === 0) { end = index + 1; break; }
+      else if (text.startsWith(DEVICE_TRACE_PREFIX, index)) break;
     }
     try {
-      return [JSON.parse(line.slice(start + DEVICE_TRACE_PREFIX.length))];
+      if (end < 0) throw new Error("Incomplete serial record");
+      records.push(JSON.parse(text.slice(jsonStart, end)));
+      jsonSpans.push([jsonStart, end]);
+      cursor = end;
     } catch {
-      return [{ event: "malformed_trace" }];
+      records.push({ event: "malformed_trace" });
+      cursor = jsonStart;
     }
-  });
+  }
+  let span = 0;
+  for (const match of text.matchAll(networkPattern)) {
+    while (span < jsonSpans.length && jsonSpans[span][1] <= match.index) span++;
+    if (span < jsonSpans.length && match.index >= jsonSpans[span][0]) continue;
+    records.push({ event: "network_connect", dnsMs: Number(match[1]), tlsConnectMs: Number(match[2]), result: Number(match[5]), channel: match[6] ?? "unknown", preparationMs: match[7] ? Number(match[7]) : null });
+  }
+  return records;
 }
 
 async function readDeviceRecords(filename) {

@@ -10,6 +10,25 @@ vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ settings: mocks.se
 beforeEach(() => { mocks.save.mockReset(); });
 afterEach(cleanup);
 describe("admin settings editing", () => {
+  it("returns to unchanged after reverting text and toggling an announcement twice", async () => {
+    render(<SettingsPanel />); const user = userEvent.setup();
+    const field = screen.getByLabelText("Service Start Time");
+    await user.clear(field); await user.type(field, "7:30 am");
+    await user.clear(field); await user.type(field, "8:00 am");
+    expect((screen.getByRole("button", { name: "No changes" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("switch")); await user.click(screen.getByRole("switch"));
+    expect((screen.getByRole("button", { name: "No changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it("omits a reverted field when saving another edited field", async () => {
+    mocks.save.mockResolvedValue(undefined); render(<SettingsPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("switch")); await user.click(screen.getByRole("switch"));
+    await user.clear(screen.getByLabelText("Service Start Time"));
+    await user.type(screen.getByLabelText("Service Start Time"), "7:30 am");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Settings saved");
+    expect(mocks.save).toHaveBeenCalledWith({ serviceStartTime: "7:30 am" });
+  });
   it("saves only edited fields even when persisted settings include audit metadata", async () => {
     Object.assign(mocks.settings, { updatedAt: { seconds: 123 }, updatedBy: "admin" });
     try {

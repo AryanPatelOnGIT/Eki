@@ -5,7 +5,7 @@ A-Z requirements and current source census, preserves historical evidence
 separately, and defines the PR coverage-budget/safety checks. Its static report
 does not certify application, provider or physical acceptance.
 
-Last updated: 2026-10-14 (Asia/Kolkata).
+Last updated: 2026-10-20 13:19 IST (UTC+05:30).
 
 The [Antigravity browser testing skill](EKI_Antigravity_Webapp_Testing_Skill.md)
 provides a standalone playbook for PR #323 and current Eki checkouts. Its
@@ -15,6 +15,12 @@ separate synthetic/emulator results from provider, deployment and hardware gates
 
 ## Start with the current gates
 
+- [19 October short moving GNSS capture](MOVING_GNSS_CAPTURE_2026_10_19.md):
+  299 raw fixes, 202 accepted serial moving samples, role-specific browser timing,
+  actual transport timeouts and owner-confirmed final power-off. No service was
+  armed, so lifecycle/full-route acceptance remains pending. The
+  [field recording guide](../operations/FIELD_CAPTURE.md) includes the required
+  service-start check, exact serial evidence and verified archival.
 - [11 October stationary GNSS and hotspot recovery](STATIONARY_GNSS_HOTSPOT_2026_10_11.md):
   three captured phone-hotspot outages, receiver-backed stationary fixes,
   redacted cloud/browser correlation, and a serial control-line capture fix.
@@ -157,3 +163,5 @@ need suitable staging evidence. No physical GNSS or production mutation occurs.
 [The telemetry route catalog](../operations/ROUTE_CATALOG.md) documents watcher-populated bounded state, shared freshness reads and edit/deletion fencing. Actual Firestore/RTDB cases process sixty unchanged pending fixes without explicit route point reads, preserve armed direction binding, refuse delayed-watcher stale direction and recover a real committed direction after injected acknowledgement loss. Coordinates/Google are synthetic; live/moving/replica acceptance remains open.
 
 Passenger geometry reads are cached and read-only; explicit versioned admin saves perform legacy repair through bounded computation. See [geometry read/repair contract](../operations/ROUTE_GEOMETRY_READS.md) for fixed bounds, independent quotas and staging limits.
+
+- [20 October expanded re-verification](REVERIFICATION_2026_10_20.md) — observed checks, repaired defects and remaining release gates.
