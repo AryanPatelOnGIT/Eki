@@ -64,7 +64,8 @@ def capture(port, baud, duration, output, *, stop_file=None, serial_module=None,
                 if not chunk:
                     continue
                 offset = raw.tell()
-                raw.write(chunk)
+                if raw.write(chunk) != len(chunk):
+                    raise OSError("Incomplete raw evidence write")
                 event("chunk", offset=offset, length=len(chunk))
                 byte_count += len(chunk)
                 pending.extend(chunk)

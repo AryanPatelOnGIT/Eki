@@ -105,6 +105,25 @@ class CaptureTests(unittest.TestCase):
             events = p.joinpath('capture.log.events.jsonl').read_text()
             self.assertNotIn('serial_error', events)
 
+    def test_short_raw_write_fails_without_claiming_a_complete_chunk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            original_open = Path.open
+            class ShortStorage:
+                def __init__(self, stream): self.stream = stream
+                def __enter__(self): return self
+                def __exit__(self, *args): self.stream.close()
+                def tell(self): return self.stream.tell()
+                def write(self, chunk): return self.stream.write(chunk[:1])
+            def opened(file, *args, **kwargs):
+                stream = original_open(file, *args, **kwargs)
+                return ShortStorage(stream) if file.name.endswith('.raw.bin') else stream
+            with patch.object(Path, 'open', opened), self.assertRaisesRegex(OSError, 'Incomplete raw evidence write'):
+                self.capture(p, [b'original bytes'])
+            events = [json.loads(line) for line in p.joinpath('capture.log.events.jsonl').read_text().splitlines()]
+            self.assertFalse(any(event['event'] in ('chunk', 'serial_error') for event in events))
+            self.assertEqual(p.joinpath('capture.log.raw.bin').read_bytes(), b'o')
+
     def test_damaged_no_newline_stream_is_retained_and_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             p = Path(directory)
