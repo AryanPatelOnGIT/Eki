@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/lib/firebaseAuth";
-import { apiRequest, isApiRecord } from "@/lib/apiClient";
 import { getAuthVerificationGeneration } from "@/lib/authState";
 import { useBuses } from "@/hooks/useBuses";
 import { useAuth } from "@/hooks/useAuth";
-import { isFeedbackList, type FeedbackEntry } from "@/lib/feedback";
+import { type FeedbackEntry } from "@/lib/feedback";
+import { feedbackErrorMessage, loadFeedback, updateFeedbackStatus } from "@/lib/feedbackStore";
 import { useDrivers } from "@/hooks/useDrivers";
 import {
   Star,
@@ -233,7 +233,7 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
   const authGeneration = getAuthVerificationGeneration();
   const adminUid = user?.role === "admin" && !authLoading ? user.uid : null;
   const scope = adminUid ? `${adminUid}:${authGeneration}` : null;
-  const pendingUpdate = useRef<{ scope: string; controller: AbortController } | null>(null);
+  const pendingUpdate = useRef<{ scope: string } | null>(null);
   const [mutation, setMutation] = useState<{ scope: string; updatingId: string | null; error: string } | null>(null);
   const updatingId = scope && mutation?.scope === scope ? mutation.updatingId : null;
   const statusError = scope && mutation?.scope === scope ? mutation.error : "";
@@ -248,7 +248,6 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
 
   useEffect(() => () => {
     if (pendingUpdate.current?.scope === scope) {
-      pendingUpdate.current.controller.abort();
       pendingUpdate.current = null;
     }
   }, [scope]);
@@ -256,28 +255,19 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
   useEffect(() => {
     if (!scope) return;
     let active = true;
-    const controller = new AbortController();
     setList({ scope, entries: [], loading: true, error: null });
     void (async () => {
       try {
         const firebaseUser = auth.currentUser;
         if (firebaseUser?.uid !== adminUid || getAuthVerificationGeneration() !== authGeneration) throw new Error("Authentication changed. Try again.");
-        const token = await firebaseUser.getIdToken();
-        if (!active) return;
-        if (auth.currentUser?.uid !== adminUid || getAuthVerificationGeneration() !== authGeneration) throw new Error("Authentication changed. Try again.");
-        const result = await apiRequest<{ feedbacks: FeedbackEntry[] }>("/api/v2/feedback", {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-          validateResponse: isFeedbackList,
-          fallbackError: "Unable to load feedback.",
-        });
-        if (active && getAuthVerificationGeneration() === authGeneration && auth.currentUser?.uid === adminUid) setList({ scope, entries: result.feedbacks, loading: false, error: null });
+        const entries = await loadFeedback();
+        if (active && getAuthVerificationGeneration() === authGeneration && auth.currentUser?.uid === adminUid) setList({ scope, entries, loading: false, error: null });
       } catch (error) {
         if (active && getAuthVerificationGeneration() === authGeneration && auth.currentUser?.uid === adminUid) setList({ scope, entries: [], loading: false,
-          error: error instanceof Error ? error.message : "Unable to load feedback." });
+          error: feedbackErrorMessage(error, "Unable to load feedback.") });
       }
     })();
-    return () => { active = false; controller.abort(); };
+    return () => { active = false; };
   }, [scope, adminUid, authGeneration, retryGeneration]);
   const { buses } = useBuses();
   const { drivers } = useDrivers();
@@ -313,34 +303,21 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
     status: FeedbackEntry["status"]
   ) => {
     if (!scope || pendingUpdate.current?.scope === scope) return;
-    const operation = { scope, controller: new AbortController() };
+    const operation = { scope };
     pendingUpdate.current = operation;
     setMutation({ scope, updatingId: id, error: "" });
     const isCurrentSession = () => pendingUpdate.current === operation &&
       getAuthVerificationGeneration() === authGeneration && auth.currentUser?.uid === adminUid;
     try {
       if (!isCurrentSession()) throw new Error("Authentication changed. Try again.");
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error("Feedback admin service is unavailable.");
-      if (!isCurrentSession()) return;
-      await apiRequest(`/api/v2/feedback/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ status }),
-        signal: operation.controller.signal,
-        fallbackError: "Unable to update feedback status.",
-        validateResponse: value => isApiRecord(value) && typeof value.updated === "boolean" && value.status === status,
-      });
+      await updateFeedbackStatus(adminUid!, id, status);
       if (!isCurrentSession()) return;
       setList(current => current.scope === scope ? {
         ...current, entries: current.entries.map(entry => entry.id === id ? { ...entry, status } : entry),
       } : current);
     } catch (e) {
       console.error("Status update failed:", e);
-      if (isCurrentSession()) setMutation({ scope, updatingId: null, error: e instanceof Error ? e.message : "Unable to update feedback status." });
+      if (isCurrentSession()) setMutation({ scope, updatingId: null, error: feedbackErrorMessage(e, "Unable to update feedback status.") });
     } finally {
       if (pendingUpdate.current === operation) {
         pendingUpdate.current = null;

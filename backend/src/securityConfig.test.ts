@@ -179,7 +179,7 @@ describe("production security configuration", () => {
     expect(helper).toContain("isAuthenticated() &&");
   });
 
-  it("bounds session reads to four distinct documents and keeps writes backend-only", () => {
+  it("bounds session reads and keeps chat writes backend-only while pairing feedback writes", () => {
     const rules = workspaceFile("firestore.rules");
     const feedback = ruleBlock(rules, "match /feedbacks/{feedbackId}");
     const messages = ruleBlock(rules, "match /messages/{messageId}");
@@ -188,23 +188,21 @@ describe("production security configuration", () => {
     const operator = ruleBlock(rules, "function isSessionOperator");
     const sessionHelper = ruleBlock(rules, "function canReadSession");
 
-    // Privileged reads consult current authorization, profile and registry in
-    // addition to the session. Repeated identical paths are cached by rules.
-    // Writes stay backend-only; reads remain under the ten-document limit.
-    const code = rules.replace(/\/\/.*$/gm, "");
-    const paths = [...code.matchAll(/get\(([^\n]+)\)\.data/g)].map(match => match[1]);
-    expect(new Set(paths).size).toBe(3);
-    expect(code.match(/get\(/g) ?? []).toHaveLength(8);
-    expect(code).not.toContain("getAfter(");
-
-    // Session lookups share one cached document; writes never call them.
+    // Session reads reuse one cached session, plus current authorization,
+    // profile and driver registry. Feedback adds its own paired atomic writes.
     expect(sessionHelper).toContain("sessionDoc(sessionId)");
-    expect(rules.match(/sessionDoc\(/g) ?? []).toHaveLength(9);
     expect(operator.split("sessionDoc(").length - 1).toBe(2);
+    expect(sessionHelper.split("sessionDoc(").length - 1).toBeLessThanOrEqual(6);
+    expect(operator).not.toContain("getAfter(");
+    expect(sessionHelper).not.toContain("getAfter(");
     expect(feedback).not.toContain("sessionDoc(");
     expect(messages).not.toContain("sessionDoc(");
     expect(rateLimits).not.toContain("sessionDoc(");
     expect(cooldowns).not.toContain("sessionDoc(");
+    expect(messages).toContain("allow create, update, delete: if false;");
+    expect(feedback).toContain("validFeedback(request.resource.data)");
+    expect(feedback).toContain("getAfter(");
+    expect(cooldowns).toContain("getAfter(");
 
     // Rate-limit reads short-circuit the cheap ownership check before paying
     // for the session fetch, so a non-owner read costs zero get()s.
@@ -240,10 +238,12 @@ describe("production security configuration", () => {
     expect(sessionsRoute).toContain('router.post("/:sessionId/messages", requireAuth');
     expect(sessionsRoute).toContain("evaluateChatRate");
     expect(sessionsRoute).toContain("moderateChatText");
-    expect(feedback).toContain("allow create: if false;");
-    expect(feedback).toContain("allow update: if false;");
-    // Ride-eligibility and cooldown enforcement now live in the feedback
-    // endpoint and its service.
+    expect(feedback).toContain("allow list: if isAdmin();");
+    expect(feedback).toContain("allow update: if isAdmin() &&");
+    expect(feedback).toContain("affectedKeys().hasOnly(['status', 'reviewedAt', 'reviewedBy'])");
+    expect(feedback).toContain("feedbackCooldownReady(request.auth.uid)");
+    expect(ruleBlock(rules, "function validFeedback")).toContain("eligibleFeedbackRide(data)");
+    // API compatibility retains the same ride and cooldown policy.
     const feedbackRoute = workspaceFile("backend/src/routes/feedback.ts");
     const feedbackService = workspaceFile("backend/src/services/feedbackService.ts");
     expect(feedbackRoute).toContain('router.post("/", requireAuth');
@@ -259,9 +259,9 @@ describe("production security configuration", () => {
     expect(messagingPanel).toContain("limitToLast(200)");
     expect(messagingPanel).toContain("requestId: pending.requestId");
     expect(messagingPanel).not.toContain("currentUserName");
-    expect(feedbackPage).toContain("/api/v2/feedback/${encodeURIComponent(id)}");
-    expect(feedbackPage).toContain("apiRequest(");
-    expect(feedbackPage).not.toContain("updateDoc(");
+    expect(feedbackPage).toContain("loadFeedback()");
+    expect(feedbackPage).toContain("updateFeedbackStatus(");
+    expect(feedbackPage).not.toContain("apiRequest(");
   });
 
   it("gates post-ride feedback on a successful join scoped to the current session", () => {

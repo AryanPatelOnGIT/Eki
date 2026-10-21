@@ -7,7 +7,7 @@ const restore = title => ({ path: 'frontend/src/components/passenger/PassengerWo
 const feedback = title => ({ path: 'frontend/src/components/shared/FeedbackModal.test.tsx', name: `passenger feedback workflow > ${title}`, level: 'L1' });
 const authSources = ['frontend/src/hooks/useAuth.ts', 'frontend/src/lib/authState.ts', 'frontend/src/lib/firebaseAppCheck.ts'];
 const boardingSources = ['frontend/src/components/passenger/PassengerBoardingView.tsx'];
-const feedbackSources = ['frontend/src/components/shared/FeedbackModal.tsx'];
+const feedbackSources = ['frontend/src/components/shared/FeedbackModal.tsx', 'frontend/src/lib/feedbackStore.ts'];
 const rows = [
   ['AUTH07', 'Mounted auth provider keeps readiness closed after the eight-second restoration guard and before mocked role verification resolves; actual ten-second role-fetch/browser recovery remains separate.', authSources, [
     auth('does not mark an auth restoration timeout ready'), auth('does not publish cached/admin identity or open readiness before trusted role verification')]],
@@ -41,8 +41,8 @@ const rows = [
     restore('restores tracking and stops only after membership verification'), restore('clears a forged pointer after membership denial'), restore('does not restore an ended ride as on board'), boarding('shows verified restored choices without replaying boarding or caching a code')]],
   ['FEED05', 'Mounted feedback modal displays mocked server cooldown without claiming storage; exact 24-hour transactional concurrency/account isolation remain separate.', feedbackSources, [feedback('honors the server cooldown without claiming the feedback was stored')]],
   ['FEED06', 'Mounted feedback modal preserves request ID across an ambiguous mocked network failure and retry. Durable replay and changed-payload conflict remain separate.', feedbackSources, [feedback('reuses the request ID after an ambiguous failure and retries the same feedback')]],
-  ['FEED07', 'Mounted feedback modal refuses HTTP 200 HTML proxy success/cooldown and accepts explicit submitted acknowledgement with auth/proxy headers; 204, draft editing and durable backend outcomes remain separate.', feedbackSources, [
-    feedback('never reports success for an HTTP 200 HTML proxy page'), feedback('submits through ngrok with the shared proxy header and preserves auth')]],
+  ['FEED07', 'Mounted feedback modal submits without a backend URL or tunnel and refuses Firestore connection failures without a success or local cooldown; durable atomic rules outcomes are covered by the emulator suite.', feedbackSources, [
+    feedback('shows a connection error without success or a local cooldown'), feedback('submits to Firestore with the tunnel offline and no backend URL')]],
   ['FEED09', 'Mounted general-feedback modal disables empty submission and handles Escape/close without sending; rating/backdrop/focus and retained draft partitions remain separate.', feedbackSources, [feedback('supports close and Escape without submitting an empty form')]],
 ];
 export const componentTestMap = rows.map(([caseId, scope, sourcePaths, tests]) => ({ caseId, scope, sourcePaths,
