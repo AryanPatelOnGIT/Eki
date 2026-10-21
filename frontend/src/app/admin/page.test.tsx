@@ -16,6 +16,12 @@ vi.mock("@/components/admin/FeedbackPanel", () => ({ default: () => <p>Feedback 
 vi.mock("@/components/admin/SettingsPanel", () => ({ default: () => <p>Settings content</p> }));
 afterEach(cleanup);
 describe("all administration sections", () => {
+  it("links to the passenger panel outside the administration tab list", () => {
+    render(<AdminPage />);
+    const link = screen.getByRole("link", { name: "Passenger Panel" });
+    expect(link.getAttribute("href")).toBe("/passenger");
+    expect(screen.getByRole("tablist").contains(link)).toBe(false);
+  });
   it.each([
     ["Live Ops", "Operations"], ["Routes", "Routes"], ["Fleet & People", "Fleet"],
     ["History", "History"], ["Feedback", "Feedback"], ["Settings", "Settings"],

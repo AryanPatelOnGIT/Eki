@@ -9,4 +9,5 @@ export function clearSettingsCache() {}
 export function invalidateLiveBusCache() {}
 export function usePathname() { return "/admin"; }
 export function useRouter() { return { replace: () => {} }; }
+export function useLinkStatus() { return { pending: false }; }
 export default function Link({ children, href }: { children: ReactNode; href: string }) { return <a href={href}>{children}</a>; }

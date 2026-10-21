@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import WorkspaceLink from "@/components/shared/WorkspaceLink";
 import {
   MapPinned as MapIcon,
   BusFront as BusIcon,
@@ -8,6 +9,7 @@ import {
   Settings as SettingsIcon,
   Activity,
   MessageSquare,
+  UsersRound,
 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -61,8 +63,8 @@ export default function AdminPage() {
     >
       {/* ── Tab Bar ── */}
       <div className="shrink-0 w-full border-b border-white/5 bg-brand-surface/30 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-stretch overflow-x-auto hide-scrollbar" role="tablist" aria-label="Administration sections">
+        <div className="max-w-7xl mx-auto flex items-center gap-2 px-4 sm:px-6">
+          <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto hide-scrollbar" role="tablist" aria-label="Administration sections">
             {TABS.map(({ id, label, Icon, secondary }, index) => (
               <button
                 key={id}
@@ -96,6 +98,13 @@ export default function AdminPage() {
               </button>
             ))}
           </div>
+          <WorkspaceLink
+            href="/passenger"
+            className="flex shrink-0 items-center gap-2 rounded-lg border border-white/10 px-3 py-2.5 text-sm font-semibold text-white/70 transition-colors hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-accent"
+          >
+            <UsersRound className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Passenger Panel</span>
+          </WorkspaceLink>
         </div>
       </div>
 

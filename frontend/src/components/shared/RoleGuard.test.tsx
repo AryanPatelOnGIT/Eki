@@ -37,4 +37,14 @@ describe("workspace authorization UI", () => {
     state.user!.role = "admin"; render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
     expect(screen.getByRole("button", { name: "Protected admin control" })).toBeTruthy();
   });
+  it("removes a previously mounted admin workspace after role loss, despite cached admin navigation", () => {
+    state.user!.role = "admin";
+    const view = render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
+    expect(screen.getByRole("button", { name: "Protected admin control" })).toBeTruthy();
+    localStorage.setItem("eki:role:qa-user", "admin");
+    state.user!.role = "passenger";
+    view.rerender(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
+    expect(screen.queryByRole("button", { name: "Protected admin control" })).toBeNull();
+    expect(screen.getByText("Unauthorized")).toBeTruthy();
+  });
 });

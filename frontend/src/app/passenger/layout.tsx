@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import PassengerLoadingShell from "@/components/passenger/PassengerLoadingShell";
 import RoleGuard from "@/components/shared/RoleGuard";
+import WorkspacePrefetch from "@/components/shared/WorkspacePrefetch";
 
 export const metadata: Metadata = {
   title: "Passenger live map",
@@ -20,6 +21,7 @@ export default function PassengerLayout({ children }: { children: React.ReactNod
             </p>
           }
         >
+          <WorkspacePrefetch destination="/admin" />
           {children}
         </RoleGuard>
       </div>

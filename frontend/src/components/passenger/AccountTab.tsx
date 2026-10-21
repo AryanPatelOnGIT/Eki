@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CircleUserRound, LogOut, ChevronRight, LogIn, HeartHandshake, Trash2 } from "lucide-react";
+import WorkspaceLink from "@/components/shared/WorkspaceLink";
+import { CircleUserRound, LogOut, ChevronRight, LogIn, HeartHandshake, Trash2, LayoutDashboard } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import FeedbackModal from "@/components/shared/FeedbackModal";
 import ConfirmModal from "@/components/ui/ConfirmModal";
@@ -112,6 +113,25 @@ export default function AccountTab() {
         {/* Actions List */}
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
+          {user?.role === "admin" && (
+            <WorkspaceLink
+              href="/admin"
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--surface-3)] transition-colors group active:bg-[var(--surface-4)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)]"
+              style={{ borderBottom: "1px solid var(--border-subtle)" }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+                  style={{ background: "var(--accent-subtle)" }}>
+                  <LayoutDashboard className="w-4 h-4" aria-hidden="true" style={{ color: "var(--accent)" }} />
+                </div>
+                <span className="text-[13px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                  Admin Panel
+                </span>
+              </div>
+              <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5"
+                aria-hidden="true" style={{ color: "var(--text-ghost)" }} />
+            </WorkspaceLink>
+          )}
           {user && <button
             type="button"
             onClick={() => setShowFeedback(true)}
