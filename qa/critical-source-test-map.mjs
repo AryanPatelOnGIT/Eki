@@ -103,7 +103,7 @@ export const criticalSourceTestMap = [{
   sourcePaths: ['frontend/src/lib/firebaseAuthDomain.ts'],
   tests: [link('frontend/src/lib/firebaseAuthDomain.test.ts', 'resolveFirebaseAuthDomain > uses the live web.app hostname so Firebase Auth stays same-origin',
     'A configured firebaseapp.com domain resolves to the current project web.app hostname.'),
-  link('frontend/src/lib/firebaseAuthDomain.test.ts', 'resolveFirebaseAuthDomain > does not trust a foreign or lookalike Hosting hostname: %s',
+  link('frontend/src/lib/firebaseAuthDomain.test.ts', 'resolveFirebaseAuthDomain > does not trust foreign or lookalike Hosting hostnames',
     'Foreign projects, subdomains and suffix lookalikes cannot replace the configured authentication domain.')],
 }, {
   caseId: 'PAX13',
