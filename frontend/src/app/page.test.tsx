@@ -35,4 +35,15 @@ describe("landing sign-in and redirect recovery", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(screen.getByRole("button", { name: "Try reloading" })).toBeTruthy();
   });
+  it.each([ ["admin", "/admin"], ["passenger", "/passenger"] ])(
+    "waits for verification before routing a returned %s account", (role, workspace) => {
+      localStorage.clear();
+      fixture.auth.user = { role };
+      const { rerender } = render(<HomePage />);
+      expect(fixture.replace).not.toHaveBeenCalled();
+      fixture.auth.loading = false;
+      rerender(<HomePage />);
+      expect(fixture.replace).toHaveBeenCalledWith(workspace);
+    },
+  );
 });

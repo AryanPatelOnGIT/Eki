@@ -13,6 +13,7 @@ import {
 import { beginAuthVerification, getAuthVerificationGeneration, notifyAuthReady } from "@/lib/authState";
 import { withTimeout } from "@/lib/promiseTimeout";
 import { apiRequest } from "@/lib/apiClient";
+import { consumeGoogleRedirectPending, markGoogleRedirectPending, prefersGoogleRedirect } from "@/lib/googleSignInFlow";
 
 const ROLE_VERIFICATION_TIMEOUT_MS = 10_000;
 const ACCESS_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
@@ -94,8 +95,11 @@ function useAuthState(): AuthContextValue {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginFallbackAvailable, setLoginFallbackAvailable] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
+  const signingOut = useRef(false);
+  const loginAttempt = useRef(0);
+  const invalidateLoginAttempt = useCallback(() => { loginAttempt.current++; }, []);
   const loginDependencies = useRef<FirebaseLoginDependencies | null>(null);
-  const refreshVerification = useRef<null | (() => Promise<void>)>(null);
+  const refreshVerification = useRef<null | ((onlyIfNeeded?: boolean) => Promise<void>)>(null);
 
   useEffect(() => {
     let generation = 0;
@@ -103,6 +107,8 @@ function useAuthState(): AuthContextValue {
     let unsubscribe = () => {};
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let retryAttempt = 0;
+    let verifiedUser: import("firebase/auth").User | null = null;
+    let verifiedGeneration = -1;
     let recoverAccess: (() => void) | null = null;
     const clearRecovery = () => {
       clearTimeout(retryTimer);
@@ -198,6 +204,8 @@ function useAuthState(): AuthContextValue {
                   isAnonymous: firebaseUser.isAnonymous,
                 });
                 notifyAuthReady();
+                verifiedUser = firebaseUser;
+                verifiedGeneration = verificationGeneration;
                 return;
               }
 
@@ -274,6 +282,8 @@ function useAuthState(): AuthContextValue {
                 isAnonymous: firebaseUser.isAnonymous,
               });
               notifyAuthReady();
+              verifiedUser = firebaseUser;
+              verifiedGeneration = verificationGeneration;
             } catch (err) {
               if (err instanceof Error && err.name === "RoleClaimsMissingError") {
                 if (!isCurrentAuth()) return;
@@ -323,7 +333,10 @@ function useAuthState(): AuthContextValue {
           flight = { user: firebaseUser, generation: getAuthVerificationGeneration(), promise };
           return promise;
         };
-        refreshVerification.current = () => {
+        refreshVerification.current = (onlyIfNeeded = false) => {
+          if (onlyIfNeeded && signingOut.current) return Promise.resolve();
+          if (onlyIfNeeded && auth.currentUser === verifiedUser &&
+              verifiedGeneration === getAuthVerificationGeneration()) return Promise.resolve();
           retryAttempt = 0;
           return runVerification(auth.currentUser);
         };
@@ -331,20 +344,31 @@ function useAuthState(): AuthContextValue {
           retryAttempt = 0;
           return runVerification(firebaseUser);
         });
-        setLoginReady(true);
-
-        // Complete a full-page OAuth fallback if the prior page redirected here.
-        void authModule.getRedirectResult(auth).then((result) => {
-          if (result?.user && !disposed) {
+        // Complete mobile/PWA sign-in or a desktop full-page fallback.
+        // Do not start another OAuth request while Firebase is restoring the
+        // redirect session. Both paths share the observer's trusted role checks.
+        void authModule.getRedirectResult(auth).then(async (result) => {
+          if (disposed) return;
+          const wasRedirecting = consumeGoogleRedirectPending();
+          if (result?.user && auth.currentUser?.uid === result.user.uid) {
+            await refreshVerification.current?.(true);
+          }
+          if (disposed) return;
+          if (auth.currentUser) {
             setLoginError(null);
             setLoginFallbackAvailable(false);
+          } else if (wasRedirecting) {
+            setLoginError("Google sign-in did not restore your session. Please try signing in again.");
           }
         }).catch((error: unknown) => {
           if (disposed) return;
+          consumeGoogleRedirectPending();
           const code = authErrorCode(error);
           console.error("[Auth] Google redirect sign-in failed.", code);
           setLoginError(loginErrorMessage(code));
           setLoginFallbackAvailable(false);
+        }).finally(() => {
+          if (!disposed) setLoginReady(true);
         });
       })
       .catch((error) => {
@@ -361,6 +385,8 @@ function useAuthState(): AuthContextValue {
 
     return () => {
       disposed = true;
+      invalidateLoginAttempt();
+      loginDependencies.current = null;
       clearRecovery();
       window.removeEventListener("online", resumeAccess);
       document.removeEventListener("visibilitychange", resumeAccess);
@@ -368,7 +394,7 @@ function useAuthState(): AuthContextValue {
       clearTimeout(authTimeout);
       unsubscribe();
     };
-  }, []);
+  }, [invalidateLoginAttempt]);
 
   const refreshAccess = useCallback((): Promise<void> => {
     if (!refreshVerification.current) {
@@ -378,7 +404,32 @@ function useAuthState(): AuthContextValue {
     return refreshVerification.current();
   }, []);
 
+  const loginWithGoogleRedirect = useCallback(async () => {
+    if (signingOut.current) return;
+    const dependencies = loginDependencies.current;
+    if (!dependencies) {
+      setLoginError("Google sign-in is still initializing. Reload the page and try again.");
+      return;
+    }
+    setLoginError(null);
+    setLoginFallbackAvailable(false);
+    setLoginLoading(true);
+    const attempt = ++loginAttempt.current;
+    markGoogleRedirectPending();
+    try {
+      await dependencies.signInWithRedirect(dependencies.auth, dependencies.googleProvider);
+    } catch (error: unknown) {
+      if (attempt !== loginAttempt.current) return;
+      consumeGoogleRedirectPending();
+      const code = authErrorCode(error);
+      console.error("[Auth] Google full-page sign-in failed.", code);
+      setLoginError(loginErrorMessage(code));
+      setLoginLoading(false);
+    }
+  }, []);
+
   const loginWithGoogle = useCallback(async () => {
+    if (signingOut.current) return;
     const dependencies = loginDependencies.current;
     if (!dependencies) {
       console.error("Google sign-in is unavailable because Firebase Auth is not initialized.");
@@ -386,11 +437,17 @@ function useAuthState(): AuthContextValue {
       return;
     }
 
+    if (prefersGoogleRedirect(dependencies.auth.config.authDomain)) {
+      return loginWithGoogleRedirect();
+    }
+
     setLoginError(null);
     setLoginFallbackAvailable(false);
     setLoginLoading(true);
+    const attempt = ++loginAttempt.current;
     let showRedirectFallback = false;
     const fallbackTimer = window.setTimeout(() => {
+      if (attempt !== loginAttempt.current) return;
       showRedirectFallback = true;
       setLoginError("Google sign-in is taking longer than usual.");
       setLoginFallbackAvailable(true);
@@ -398,11 +455,19 @@ function useAuthState(): AuthContextValue {
     try {
       // Do not await module loading before this call: browsers may block a
       // popup that is no longer directly associated with the user's click.
-      await dependencies.signInWithPopup(dependencies.auth, dependencies.googleProvider);
+      const result = await dependencies.signInWithPopup(dependencies.auth, dependencies.googleProvider);
+      if (attempt !== loginAttempt.current) return;
+      // A successful OAuth result must also reach the shared role verifier,
+      // including when an existing runtime misses an auth observer update.
+      if (result?.user && dependencies.auth.currentUser?.uid === result.user.uid) {
+        await refreshVerification.current?.(true);
+      }
+      if (attempt !== loginAttempt.current) return;
       showRedirectFallback = false;
       setLoginError(null);
       setLoginFallbackAvailable(false);
     } catch (error: unknown) {
+      if (attempt !== loginAttempt.current) return;
       const code = authErrorCode(error);
       if (
         code !== "auth/cancelled-popup-request" &&
@@ -415,31 +480,20 @@ function useAuthState(): AuthContextValue {
       }
     } finally {
       window.clearTimeout(fallbackTimer);
-      setLoginLoading(false);
-      if (!showRedirectFallback) setLoginFallbackAvailable(false);
+      if (attempt === loginAttempt.current) {
+        setLoginLoading(false);
+        if (!showRedirectFallback) setLoginFallbackAvailable(false);
+      }
     }
-  }, []);
-
-  const loginWithGoogleRedirect = useCallback(async () => {
-    const dependencies = loginDependencies.current;
-    if (!dependencies) {
-      setLoginError("Google sign-in is still initializing. Reload the page and try again.");
-      return;
-    }
-    setLoginError(null);
-    setLoginFallbackAvailable(false);
-    setLoginLoading(true);
-    try {
-      await dependencies.signInWithRedirect(dependencies.auth, dependencies.googleProvider);
-    } catch (error: unknown) {
-      const code = authErrorCode(error);
-      console.error("[Auth] Google full-page sign-in failed.", code);
-      setLoginError(loginErrorMessage(code));
-      setLoginLoading(false);
-    }
-  }, []);
+  }, [loginWithGoogleRedirect]);
 
   const logout = useCallback(async () => {
+    if (signingOut.current) return;
+    signingOut.current = true;
+    invalidateLoginAttempt();
+    setLoginLoading(false);
+    setLoginError(null);
+    setLoginFallbackAvailable(false);
     let logoutGeneration: number | null = null;
     try {
       const [{ signOut }, { auth }] = await Promise.all([
@@ -447,11 +501,15 @@ function useAuthState(): AuthContextValue {
         import("@/lib/firebaseAuth"),
       ]);
       const signedOutUid = auth.currentUser?.uid;
+      consumeGoogleRedirectPending();
       beginAuthVerification();
       logoutGeneration = getAuthVerificationGeneration();
       setUser(null);
       setLoading(true);
       await signOut(auth);
+      // Lazy cache cleanup must not block the next OAuth click after Firebase
+      // has confirmed sign-out (those imports can be slow on mobile).
+      signingOut.current = false;
       if (signedOutUid) {
         window.localStorage.removeItem(`eki:role:${signedOutUid}`);
       }
@@ -474,8 +532,10 @@ function useAuthState(): AuthContextValue {
         setLoading(false);
         setRoleError("Sign-out could not complete. Reload the page and try again.");
       }
+    } finally {
+      signingOut.current = false;
     }
-  }, []);
+  }, [invalidateLoginAttempt]);
 
   return {
     user,
