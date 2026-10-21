@@ -101,6 +101,13 @@ jobs:
           NEXT_PUBLIC_GOOGLE_MAP_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAP_ID }}
           NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
         run: npm run build:production
+      - name: Verify live backend readiness and browser access before staging release
+        run: npm run verify:web-backend-contract
+        env:
+          NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
+          EKI_STRICT_PRODUCTION_BUILD: "true"
+          EKI_RUNTIME_SMOKE: "1"
+          EKI_FRONTEND_ORIGIN: https://bustrack-be165.web.app
       - name: Disable Firebase App Check before staging deploy
         run: node scripts/disable-appcheck-enforcement.mjs --project bustrack-be165 --disable
         env:
@@ -171,6 +178,13 @@ jobs:
           NEXT_PUBLIC_GOOGLE_MAP_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAP_ID }}
           NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
         run: npm run build:production
+      - name: Verify live backend readiness and browser access before production release
+        run: npm run verify:web-backend-contract
+        env:
+          NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
+          EKI_STRICT_PRODUCTION_BUILD: "true"
+          EKI_RUNTIME_SMOKE: "1"
+          EKI_FRONTEND_ORIGIN: https://eki-production.web.app
       - name: Disable Firebase App Check before production deploy
         run: node scripts/disable-appcheck-enforcement.mjs --project eki-production --disable
         env:
