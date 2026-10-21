@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safetyPreflight } from './safety-preflight.mjs';
 import { emulatorTestMap } from '../../qa/emulator-test-map.mjs';
 import { removeGeneratedDemoConfig } from './emulator-environment.mjs';
+import { verifiedEmulatorTargets } from './evidence-inputs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const directory = resolve(root, 'artifacts/qa'); mkdirSync(directory, { recursive: true });
@@ -26,10 +27,7 @@ try {
   const response = await fetch('http://127.0.0.1:4405/emulators', { signal: AbortSignal.timeout(5000), redirect: 'error' });
   if (!response.ok) throw new Error('Emulator hub unavailable');
   const targets = await response.json();
-  for (const [name, port] of Object.entries({ firestore: 8085, database: 9005, auth: 9095 })) {
-    if (targets[name]?.host !== '127.0.0.1' || targets[name]?.port !== port) throw new Error(`${name}: running emulator target mismatch`);
-  }
-  report.emulatorTargets = targets;
+  report.emulatorTargets = verifiedEmulatorTargets(targets);
   const require = createRequire(resolve(root, 'backend/package.json'));
   const script = require('./package.json').scripts['test:rules-integration'];
   const args = script.replace(/^vitest /, '').split(' ');

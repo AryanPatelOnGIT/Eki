@@ -1,12 +1,19 @@
 # Current-source execution ledger
 
-Last updated: 2026-10-12 17:00 IST (UTC+05:30).
+Last updated: 2026-10-21 11:47 IST (UTC+05:30).
 
 `npm run qa:report` combines GNSS/native firmware/reviewed unit-component L1, disposable emulator L2, HTTP authorization L2
 and actual-component browser L3 reports with the full source-attributed catalog. It writes JSON and
 Markdown under ignored `artifacts/qa/execution-report.*` and GitHub Step Summary.
 It is separate from the static catalog, which continues to import definitions
 without inventing executed statuses.
+
+Reports retain only the validated fixed loopback emulator topology, discarding
+other hub response fields. Authorization observations serialize literal 401/403
+categories (or null for an unexpected value); assertions still compare the real
+response status and fail on mismatches. The browser fixture uses rules already
+installed by the owned emulator launcher, without uploading environment-selected
+file contents. These boundaries address the five CodeQL promotion findings.
 
 Run in a clean disposable Linux checkout with Node 24, Java 21 and Chromium:
 

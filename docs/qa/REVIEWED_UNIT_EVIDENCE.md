@@ -1,10 +1,11 @@
 # Reviewed unit sub-oracles
 
-Last updated: 2026-10-12 17:13 IST (UTC+05:30).
+Last updated: 2026-10-21 11:47 IST (UTC+05:30).
 
-`npm run qa:unit:reviewed` executes twenty-three reviewed backend/frontend files and
+`npm run qa:unit:reviewed` executes forty-five reviewed backend/frontend files and
 records exact JSON/JUnit identities, source SHA, dirty state and timestamps. The
-current selection has 224 backend and 91 frontend observations. Every assertion
+current selection includes 26 backend and 19 frontend files. Use the generated
+report for exact assertion counts. Every assertion
 must pass without skip/block; missing files or workspace reports block the scope.
 The Node socket/DNS guard is preloaded before SDK imports. Unit dependencies are
 pure, mocked, loopback Express or actual React/jsdom components/hooks; real OAuth/Firebase/provider/browser
@@ -79,3 +80,11 @@ The expanded local changed-checkout run on 12 October 2026 passed 315/315 assert
 with zero skips/blocks. That run verifies harness configuration and limited
 oracles; a clean hosted commit is needed for current-source acceptance. Software
 release and physical field deployment remain unverified.
+
+The 21 October promotion review adds direct links for worker fencing,
+retention/CLI/Firebase adapter, fleet cache/mutex, stop history, diagnostic
+counters/SDK wiring, Auth initialization/domain, marker tracing, joined-status
+transport and live-store expiry/recovery/normalization. These remain scoped L1
+checks with SDK/datastore/RAF mocks. The initial changed-checkout selection passed
+547 assertions; the contributor's merged selection records 549 observations.
+Use the final clean hosted results for promotion.

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createServer, Server } from 'node:http';
 import { safetyPreflight } from '../../scripts/qa/safety-preflight.mjs';
 import { createProviderAdapter, syntheticProviderKey } from './providers.mjs';
@@ -52,15 +52,9 @@ for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
   try { await auth.getUser(uid); } catch { await auth.createUser({ uid, email: `${uid}@example.invalid`, password: 'SyntheticOnly123!', displayName: uid }); }
   await auth.setCustomUserClaims(uid, uid === 'qa_admin' ? { role: 'admin', admin: true } : { role: 'passenger' });
 }
-const firestoreRules = readFileSync(process.env.FIRESTORE_RULES_PATH, 'utf8');
-const rulesResponse = await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}:securityRules`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ rules: { files: [{ name: 'firestore.rules', content: firestoreRules }] } }), signal: AbortSignal.timeout(10000) });
-if (!rulesResponse.ok) throw new Error('Browser Firestore rules installation failed');
-const databaseRules = await fetch(`http://127.0.0.1:9005/.settings/rules.json?ns=${project}-default-rtdb`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
-  body: readFileSync(process.env.DATABASE_RULES_PATH, 'utf8'), signal: AbortSignal.timeout(10000) });
-if (!databaseRules.ok) throw new Error('Browser database rules installation failed');
+// The owned Firebase emulators:exec launcher installs the isolated rules from
+// writeEmulatorRuleset's config before this process starts. Do not reopen
+// environment-selected files and upload their contents from the fixture.
 
 async function reset() {
   providers.reset();
