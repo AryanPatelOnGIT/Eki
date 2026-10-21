@@ -116,7 +116,7 @@ export default function HomePage() {
             WebkitTextStroke: "1px rgba(255,255,255,0.08)",
           }}
         >
-          Seamless campus mobility<br className="hidden md:block" /> at your fingertips
+          Campus routes<br className="hidden md:block" /> and bus tracking
         </h1>
 
         <p
@@ -126,7 +126,7 @@ export default function HomePage() {
             textShadow: "0 2px 8px rgba(0,0,0,0.2)",
           }}
         >
-          Live GNSS location tracking and intelligent arrival estimates for effortless travel
+          View campus routes and available bus locations. Arrival estimates depend on live service data.
         </p>
 
         <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-4">

@@ -909,6 +909,7 @@ describe("production security configuration", () => {
       return [sources[0], sources.slice(1)] as const;
     }));
     expect(directives.get("script-src")).toContain("https://apis.google.com");
+    expect(directives.get("connect-src")).toContain("https://apis.google.com");
     expect(directives.get("script-src")).not.toContain(
       "https://bustrack-be165-default-rtdb.firebaseio.com",
     );

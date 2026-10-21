@@ -10,8 +10,8 @@
  *   2. Precache – HTML shells, manifest, icons and bootstrap chunks.
  *   3. CacheFirst – same-origin hashed Next.js JS/CSS chunks, cached on use.
  *   4. StaleWhileRevalidate – Google Fonts CSS/woff2 (if ever added).
- *   5. CacheFirst – Google Maps tiles, Firebase SDK CDN scripts.
- *   6. NetworkOnly – authenticated Firebase/API responses.
+ *   5. CacheFirst – Google Maps tiles.
+ *   6. NetworkOnly – Google Auth helpers and authenticated Firebase/API responses.
  *
  * Navigation requests check Hosting first and use cached HTML when offline.
  */
@@ -39,6 +39,12 @@ import { CacheableResponsePlugin } from "workbox-cacheable-response";
 // Remove entries from previous precache versions that are no longer in the
 // manifest. Prevents stale cache bloat across deployments.
 cleanupOutdatedCaches();
+
+// Retire the previous Auth-script cache when this worker activates. Auth
+// helpers are online dependencies and must not replay an obsolete loader.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(caches.delete("eki-firebase-sdk"));
+});
 
 // ─── Navigation requests ────────────────────────────────────────────────────
 // Register before the precache route so a refresh checks Hosting for the
@@ -136,21 +142,16 @@ registerRoute(
 );
 
 // ─── Runtime caching: Firebase Auth ─────────────────────────────────────────
-// Auth iframe JS from apis.google.com and gstatic.com. These change
-// infrequently so StaleWhileRevalidate is fine — we always serve from cache
-// but refresh in the background.
+// Workbox fetches these scripts, so the worker's connect-src must allow their
+// origins as well as the page's script-src. Keep Auth helpers on the network.
+// This worker change also makes browsers install the corrected CSP; changing
+// only Hosting response headers can leave a byte-identical worker in place.
 registerRoute(
   ({ url }) =>
     url.origin === "https://apis.google.com" ||
     (url.origin === "https://www.gstatic.com" &&
       url.pathname.startsWith("/firebasejs/")),
-  new StaleWhileRevalidate({
-    cacheName: "eki-firebase-sdk",
-    plugins: [
-      new CacheableResponsePlugin({ statuses: [0, 200] }),
-      new ExpirationPlugin({ maxEntries: 30, maxAgeSeconds: 7 * 24 * 60 * 60 }),
-    ],
-  })
+  new NetworkOnly()
 );
 
 // ─── Firebase REST APIs (RTDB and Auth only) ───────────────────────────────

@@ -50,6 +50,9 @@ const sources = [
 csp.value = csp.value.replace(/script-src [^;]+;/, `script-src ${sources};`);
 const connectSources = [
   "'self'",
+  // Workbox fetches Google's Auth helper on controlled pages. The worker's
+  // connect-src governs that fetch even though the page permits script-src.
+  "https://apis.google.com",
   "https://*.googleapis.com",
   "https://*.gstatic.com",
   "https://*.ggpht.com",

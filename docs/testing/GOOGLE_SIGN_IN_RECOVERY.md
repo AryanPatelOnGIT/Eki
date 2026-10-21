@@ -1,5 +1,50 @@
 # Google sign-in recovery (#356)
 
+## Production incident, 21 October 2026
+
+The merged OAuth lifecycle tests in #358 mock Firebase. They do not cover the
+production service worker or Hosting CSP. Successful CI and deployment of
+#358/#359/#362 therefore do not establish live sign-in, API availability or
+end-to-end transit operation.
+
+On the deployed `bustrack-be165.web.app` app, popup and redirect sign-in returned
+`auth/internal-error` in the in-app browser, including after selecting an
+existing Google account. A Chrome visit completed sign-in and opened the Admin
+profile and Admin Panel, but live data showed unavailable. This is not a claim
+that all browsers or subsequent sign-ins work.
+
+Workbox intercepts `apis.google.com` scripts and uses `fetch()`. The deployed
+worker's CSP allowed that origin in `script-src` but omitted it from
+`connect-src`. Thus a controlled page can fail to load the Auth helper even
+though a first, uncontrolled visit works. A local browser fixture using the
+actual bundled Eki worker reproduced a blocked real Google helper with the old
+policy. The corrected-policy fixture was started, but browser access was
+disabled before its final result could be inspected; no passing live OAuth
+result is claimed for this patch.
+
+The repair permits exactly `https://apis.google.com` in `connect-src` in both
+the checked-in policy and its build generator. Auth helpers now use NetworkOnly;
+activation removes only the obsolete `eki-firebase-sdk` cache. Changing worker
+bytes also ensures a worker update installs the corrected policy. The update
+still waits for existing clients to close, preserving active-session behavior.
+
+The live CSP also referenced a backend tunnel whose hostname did not resolve.
+The locally configured alternative returned HTTP 503 with degraded readiness;
+neither is evidence of a working production backend. Deployment now checks
+healthy JSON readiness and browser CORS/preflight before publishing Hosting or
+rules. This is a read-only gate, not a backend repair or uptime guarantee.
+
+Before release, the deployment owner must restore a healthy backend and set the
+matching `NEXT_PUBLIC_BACKEND_URL` deployment secret and backend CORS origins.
+This PR does not change cloud secrets, deploy, grant roles or relax Firebase
+rules. After deployment, close all Eki tabs and installed-app windows, reopen,
+then repeat login/logout/redirect and live-data checks below. The original
+64 field/deployed acceptance gates in #351 remain pending.
+
+The landing copy now describes routes and available bus locations and explicitly
+conditions arrival estimates on live service data; it no longer promises
+seamless or effortless travel.
+
 Mobile browsers (including iPad desktop mode) and installed PWAs use full-page
 Google sign-in when Firebase's `authDomain` matches the application host.
 Desktop browsers retain popups. Cross-origin/local development configurations
