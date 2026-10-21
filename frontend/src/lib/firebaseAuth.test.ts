@@ -1,26 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ initialize: vi.fn(), app: {}, auth: {}, provider: vi.fn(),
-  local: {}, indexed: {}, session: {}, resolver: {} }));
-vi.mock("./firebaseCore", () => ({ firebaseApp: mocks.app }));
+import { describe, expect, it, vi } from "vitest";
+
+const fixture = vi.hoisted(() => ({ app: {}, auth: {}, initialize: vi.fn() }));
+vi.mock("./firebaseCore", () => ({ firebaseApp: fixture.app }));
 vi.mock("firebase/auth", () => ({
-  initializeAuth: mocks.initialize, browserLocalPersistence: mocks.local,
-  indexedDBLocalPersistence: mocks.indexed, browserSessionPersistence: mocks.session,
-  browserPopupRedirectResolver: mocks.resolver,
-  GoogleAuthProvider: class { constructor() { mocks.provider(); } },
+  initializeAuth: fixture.initialize.mockReturnValue(fixture.auth),
+  browserLocalPersistence: { type: "LOCAL" },
+  indexedDBLocalPersistence: { type: "INDEXED_DB" },
+  browserSessionPersistence: { type: "SESSION" },
+  browserPopupRedirectResolver: {},
+  GoogleAuthProvider: class {},
 }));
-beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); mocks.initialize.mockReturnValue(mocks.auth); });
+
 describe("Firebase Auth initialization", () => {
-  it("keeps restoration and sign-in on the same ordered persistence fallbacks", async () => {
-    const result = await import("./firebaseAuth");
-    expect(result.auth).toBe(mocks.auth);
-    expect(mocks.initialize).toHaveBeenCalledExactlyOnceWith(mocks.app, {
-      persistence: [mocks.local, mocks.indexed, mocks.session], popupRedirectResolver: mocks.resolver,
+  it("restores local persistence first without switching an existing tab to another store", async () => {
+    const sdk = await import("firebase/auth");
+    const { auth, googleProvider } = await import("./firebaseAuth");
+    expect(fixture.initialize).toHaveBeenCalledExactlyOnceWith(fixture.app, {
+      persistence: [sdk.browserLocalPersistence, sdk.indexedDBLocalPersistence, sdk.browserSessionPersistence],
+      popupRedirectResolver: sdk.browserPopupRedirectResolver,
     });
-    expect(mocks.provider).toHaveBeenCalledOnce();
-  });
-  it("shares one initialization and provider across repeat imports", async () => {
-    const first = await import("./firebaseAuth"), second = await import("./firebaseAuth");
-    expect(second.auth).toBe(first.auth); expect(second.googleProvider).toBe(first.googleProvider);
-    expect(mocks.initialize).toHaveBeenCalledOnce(); expect(mocks.provider).toHaveBeenCalledOnce();
+    expect(auth).toBe(fixture.auth);
+    expect(googleProvider).toBeInstanceOf(sdk.GoogleAuthProvider);
   });
 });

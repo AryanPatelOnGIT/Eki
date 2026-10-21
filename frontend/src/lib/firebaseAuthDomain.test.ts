@@ -2,11 +2,6 @@ import { describe, expect, it } from "vitest";
 import { resolveFirebaseAuthDomain } from "./firebaseAuthDomain";
 
 describe("resolveFirebaseAuthDomain", () => {
-  it("never adopts a lookalike or another project's Hosting hostname", () => {
-    for (const host of ["project.web.app.attacker.invalid", "other.web.app", "sub.project.web.app"]) {
-      expect(resolveFirebaseAuthDomain("auth.example.invalid", "project", host)).toBe("auth.example.invalid");
-    }
-  });
   it("uses the live web.app hostname so Firebase Auth stays same-origin", () => {
     expect(
       resolveFirebaseAuthDomain(
@@ -45,5 +40,17 @@ describe("resolveFirebaseAuthDomain", () => {
         undefined,
       ),
     ).toBe("bustrack-be165.firebaseapp.com");
+  });
+
+  it("does not trust foreign or lookalike Hosting hostnames", () => {
+    for (const hostname of [
+      "other-project.web.app",
+      "bustrack-be165.web.app.example.invalid",
+      "preview.bustrack-be165.web.app",
+      "bustrack-be165.firebaseapp.com.example.invalid",
+    ]) {
+      expect(resolveFirebaseAuthDomain("auth.university.example", "bustrack-be165", hostname), hostname)
+        .toBe("auth.university.example");
+    }
   });
 });

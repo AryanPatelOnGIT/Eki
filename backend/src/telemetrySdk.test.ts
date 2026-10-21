@@ -1,38 +1,38 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => {
-  class Adapter { constructor(public options?: Record<string, unknown>) {} }
-  return { Adapter, sdk: vi.fn(), start: vi.fn() };
-});
-vi.mock("@opentelemetry/sdk-node", () => ({ NodeSDK: class { constructor(options: unknown) { mocks.sdk(options); } start() { mocks.start(); } } }));
-vi.mock("@opentelemetry/exporter-logs-otlp-http", () => ({ OTLPLogExporter: mocks.Adapter }));
-vi.mock("@opentelemetry/exporter-metrics-otlp-http", () => ({ OTLPMetricExporter: mocks.Adapter }));
-vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({ OTLPTraceExporter: mocks.Adapter }));
-vi.mock("@opentelemetry/sdk-logs", () => ({ BatchLogRecordProcessor: mocks.Adapter }));
-vi.mock("@opentelemetry/sdk-metrics", () => ({ PeriodicExportingMetricReader: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-http", () => ({ HttpInstrumentation: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-express", () => ({ ExpressInstrumentation: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-grpc", () => ({ GrpcInstrumentation: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-pino", () => ({ PinoInstrumentation: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-runtime-node", () => ({ RuntimeNodeInstrumentation: mocks.Adapter }));
-vi.mock("@opentelemetry/instrumentation-undici", () => ({ UndiciInstrumentation: mocks.Adapter }));
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const fixture = vi.hoisted(() => ({ sdk: vi.fn(), start: vi.fn(), logs: vi.fn(), metrics: vi.fn(), http: vi.fn() }));
+vi.mock("@opentelemetry/sdk-node", () => ({ NodeSDK: class {
+  constructor(options: unknown) { fixture.sdk(options); }
+  start() { fixture.start(); }
+} }));
+vi.mock("@opentelemetry/sdk-logs", () => ({ BatchLogRecordProcessor: class {
+  constructor(options: unknown) { fixture.logs(options); }
+} }));
+vi.mock("@opentelemetry/sdk-metrics", () => ({ PeriodicExportingMetricReader: class {
+  constructor(options: unknown) { fixture.metrics(options); }
+} }));
+vi.mock("@opentelemetry/instrumentation-http", () => ({ HttpInstrumentation: class {
+  constructor(options: unknown) { fixture.http(options); }
+} }));
 import { createTelemetrySdk } from "./telemetrySdk";
-beforeEach(() => vi.clearAllMocks());
-describe("telemetry SDK wiring", () => {
-  it("bounds exporter queues and intervals before starting the SDK once", () => {
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+
+describe("telemetry SDK export policy", () => {
+  it("bounds log and metric exports and redacts private HTTP URLs", () => {
+    vi.stubEnv("OTEL_SERVICE_NAME", " test-service ");
     createTelemetrySdk();
-    const options = mocks.sdk.mock.calls[0][0];
-    expect(options.metricReaders[0].options).toMatchObject({ exportIntervalMillis: 30000, exportTimeoutMillis: 10000 });
-    expect(options.logRecordProcessors[0].options).toMatchObject({ maxQueueSize: 2048, maxExportBatchSize: 512, exportTimeoutMillis: 10000 });
-    expect(mocks.start).toHaveBeenCalledOnce();
-  });
-  it("excludes health polling and redacts request URLs at the installed HTTP hook", () => {
-    createTelemetrySdk();
-    const options = mocks.sdk.mock.calls[0][0].instrumentations[0].options;
-    expect(options.ignoreIncomingRequestHook({ url: "/health?secret=value" })).toBe(true);
-    expect(options.ignoreIncomingRequestHook({ url: "/live" })).toBe(true);
-    expect(options.ignoreIncomingRequestHook({ url: "/api/sessions" })).toBe(false);
-    const setAttribute = vi.fn(); options.requestHook({ setAttribute });
-    expect(setAttribute).toHaveBeenCalledWith("url.query", "");
-    expect(setAttribute).toHaveBeenCalledWith("http.url", "[redacted]");
+    expect(fixture.start).toHaveBeenCalledOnce();
+    expect(fixture.sdk.mock.calls[0][0].serviceName).toBe("test-service");
+    expect(fixture.logs.mock.calls[0][0]).toMatchObject({
+      scheduledDelayMillis: 2_000, exportTimeoutMillis: 10_000, maxQueueSize: 2_048, maxExportBatchSize: 512,
+    });
+    expect(fixture.metrics.mock.calls[0][0]).toMatchObject({ exportIntervalMillis: 30_000, exportTimeoutMillis: 10_000 });
+    const http = fixture.http.mock.calls[0][0];
+    expect(http.ignoreIncomingRequestHook({ url: "/health?token=private" })).toBe(true);
+    expect(http.ignoreIncomingRequestHook({ url: "/live" })).toBe(true);
+    expect(http.ignoreIncomingRequestHook({ url: "/api/sessions" })).toBe(false);
+    const attributes: Record<string, string> = { "http.url": "https://example.invalid/?token=private" };
+    http.requestHook({ setAttribute: (key: string, value: string) => { attributes[key] = value; } });
+    expect(attributes).toEqual({ "http.target": "/[redacted]", "http.url": "[redacted]", "url.full": "[redacted]", "url.path": "/[redacted]", "url.query": "" });
   });
 });
