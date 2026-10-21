@@ -1,8 +1,51 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHealthState } from "./healthState";
+import { createHealthState, probeRtdbConnection } from "./healthState";
+import type { Database } from "firebase-admin/database";
 const connected = async () => ({ val: () => true });
 const firestore = async () => undefined;
 afterEach(() => vi.useRealTimers());
+
+describe("idle RTDB readiness", () => {
+  function fixture(read: () => Promise<unknown>) {
+    let opened = false;
+    const get = vi.fn(async () => { await read(); opened = true; });
+    const once = vi.fn(async () => ({ val: () => opened }));
+    const ref = vi.fn((path: string) => {
+      if (path === "_health") return { get };
+      if (path === ".info/connected") return { once };
+      throw new Error("Unexpected health read path");
+    });
+    return { database: { ref } as unknown as Pick<Database, "ref">, ref, get, once };
+  }
+
+  it("opens the idle transport before checking its connection flag", async () => {
+    const sdk = fixture(async () => undefined);
+    const health = createHealthState();
+    await health.probe(firestore, () => probeRtdbConnection(sdk.database));
+    expect(health.snapshot().ready).toBe(true);
+    expect(sdk.ref.mock.calls).toEqual([["_health"], [".info/connected"]]);
+    expect(sdk.get).toHaveBeenCalledOnce();
+    expect(sdk.once).toHaveBeenCalledWith("value");
+  });
+
+  it("keeps readiness closed after a rejected or stalled sentinel read", async () => {
+    const denied = fixture(async () => { throw new Error("permission denied"); });
+    const health = createHealthState();
+    await health.probe(firestore, () => probeRtdbConnection(denied.database));
+    expect(health.snapshot().ready).toBe(false);
+    expect(denied.once).not.toHaveBeenCalled();
+
+    vi.useFakeTimers();
+    const stalled = fixture(() => new Promise(() => {}));
+    const bounded = createHealthState({ timeoutMs: 50 });
+    const pending = bounded.probe(firestore, () => probeRtdbConnection(stalled.database));
+    await vi.advanceTimersByTimeAsync(50); await pending;
+    await bounded.probe(firestore, () => probeRtdbConnection(stalled.database));
+    expect(bounded.snapshot().ready).toBe(false);
+    expect(stalled.get).toHaveBeenCalledOnce();
+    expect(stalled.once).not.toHaveBeenCalled();
+  });
+});
 
 describe("cached dependency readiness", () => {
   it("starts disconnected and reports each store separately", async () => {

@@ -45,6 +45,29 @@ The landing copy now describes routes and available bus locations and explicitly
 conditions arrival estimates on live service data; it no longer promises
 seamless or effortless travel.
 
+### Deployment readiness follow-up
+
+Deploy run `39600983201` stopped before publication because the staging backend
+secret still referenced an expired Cloudflare Quick Tunnel (DNS `ENOTFOUND`).
+The assigned ngrok endpoint reached the backend but initially reported HTTP 503.
+Firestore reads succeeded; the idle RTDB SDK had not opened its transport.
+
+Reading `.info/connected` alone returns local metadata and does not establish
+a database connection. The backend readiness probe now first reads the `_health`
+sentinel, then checks the real connection flag. It never reads the root or
+writes sentinel data. Existing probe deadlines, stalled-flight coalescing and
+readiness expiry still apply; denied or stalled reads remain unhealthy. A live
+read-only diagnostic observed false → true connectivity and a successful
+authenticated RTDB read. This resolves idle readiness, not general backend
+availability or provider acceptance.
+
+For this laptop-hosted deployment, keep the assigned ngrok tunnel and backend
+running and use its exact origin in the staging `NEXT_PUBLIC_BACKEND_URL`
+secret. Both `/health` and the authenticated-request OPTIONS preflight must pass
+from the Hosting origin before retrying deployment. These runtime configuration
+steps do not require a frontend source rebuild commit; the deployment workflow
+rebuilds with the current secret on retry.
+
 Mobile browsers (including iPad desktop mode) and installed PWAs use full-page
 Google sign-in when Firebase's `authDomain` matches the application host.
 Desktop browsers retain popups. Cross-origin/local development configurations

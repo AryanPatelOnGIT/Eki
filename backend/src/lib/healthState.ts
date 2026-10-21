@@ -1,3 +1,13 @@
+import type { Database } from "firebase-admin/database";
+
+/** Establish the SDK transport with a bounded sentinel read before inspecting it. */
+export async function probeRtdbConnection(database: Pick<Database, "ref">) {
+  // .info/connected is local metadata: reading it alone does not open an idle
+  // SDK connection. Never read the database root or write health sentinel data.
+  await database.ref("_health").get();
+  return database.ref(".info/connected").once("value");
+}
+
 export type StoreStatus = "connected" | "disconnected";
 
 export interface HealthSnapshot {
