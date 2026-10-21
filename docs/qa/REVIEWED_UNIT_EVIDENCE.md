@@ -2,9 +2,9 @@
 
 Last updated: 2026-10-21 11:47 IST (UTC+05:30).
 
-`npm run qa:unit:reviewed` executes forty-four reviewed backend/frontend files and
+`npm run qa:unit:reviewed` executes forty-five reviewed backend/frontend files and
 records exact JSON/JUnit identities, source SHA, dirty state and timestamps. The
-current selection includes 25 backend and 19 frontend files. Use the generated
+current selection includes 26 backend and 19 frontend files. Use the generated
 report for exact assertion counts. Every assertion
 must pass without skip/block; missing files or workspace reports block the scope.
 The Node socket/DNS guard is preloaded before SDK imports. Unit dependencies are
@@ -85,5 +85,6 @@ The 21 October promotion review adds direct links for worker fencing,
 retention/CLI/Firebase adapter, fleet cache/mutex, stop history, diagnostic
 counters/SDK wiring, Auth initialization/domain, marker tracing, joined-status
 transport and live-store expiry/recovery/normalization. These remain scoped L1
-checks with SDK/datastore/RAF mocks. All 547 selected assertions passed locally
-without skips/blocks; clean hosted results are required for promotion.
+checks with SDK/datastore/RAF mocks. The initial changed-checkout selection passed
+547 assertions; the contributor's merged selection records 549 observations.
+Use the final clean hosted results for promotion.
