@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { resolveFirebaseAuthDomain } from "./firebaseAuthDomain";
 
 describe("resolveFirebaseAuthDomain", () => {
+  it("never adopts a lookalike or another project's Hosting hostname", () => {
+    for (const host of ["project.web.app.attacker.invalid", "other.web.app", "sub.project.web.app"]) {
+      expect(resolveFirebaseAuthDomain("auth.example.invalid", "project", host)).toBe("auth.example.invalid");
+    }
+  });
   it("uses the live web.app hostname so Firebase Auth stays same-origin", () => {
     expect(
       resolveFirebaseAuthDomain(

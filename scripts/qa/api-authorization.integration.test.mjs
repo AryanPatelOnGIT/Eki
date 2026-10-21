@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { repositoryRoot } from './acceptance-catalog.mjs';
 import { safetyPreflight } from './safety-preflight.mjs';
 import { createRequire } from 'node:module';
+import { observedAuthorizationStatus } from './evidence-inputs.mjs';
 
 safetyPreflight(process.env, { mode: 'emulator' });
 if (!globalThis.__ekiQaNetworkGuard?.enabled) throw Error('Preloaded transport guard required');
@@ -112,7 +113,7 @@ async function sweep(label, targets, authorization, expectedStatus) {
     const response = await fetch(`http://127.0.0.1:3116${path}`, { method: operation.method.toUpperCase(), headers,
       ...(operation.method === 'get' ? {} : { body: '{}' }), signal: AbortSignal.timeout(5000), redirect: 'error' });
     observations.push({ partition: label, method: operation.method.toUpperCase(), path: operation.path,
-      expectedStatus, observedStatus: response.status, authClass: operation.auth });
+      expectedStatus, observedStatus: observedAuthorizationStatus(response.status), authClass: operation.auth });
     writeFileSync(resolve(directory, 'api-operation-observations.json'), JSON.stringify(observations, null, 2) + '\n');
     assert.equal(response.status, expectedStatus, `${label}: ${operation.method.toUpperCase()} ${operation.path}`);
     assert.match(response.headers.get('content-type') ?? '', /application\/json/);
