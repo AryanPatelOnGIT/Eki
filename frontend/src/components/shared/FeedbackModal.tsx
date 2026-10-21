@@ -5,7 +5,7 @@ import { Star, HeartHandshake, X, Send, Check } from "lucide-react";
 import { auth } from "@/lib/firebaseAuth";
 import { FEEDBACK_WORD_LIMIT } from "@/config/passenger";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { apiRequest } from "@/lib/apiClient";
+import { feedbackErrorMessage, submitFeedback } from "@/lib/feedbackStore";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -13,7 +13,7 @@ interface Props {
   userId: string;
   busId?: string; // If provided, this is a ride feedback. Otherwise, general suggestion.
   driverId?: string; // Links precise operational data to specific admins
-  sessionId?: string; // Required for server-side ride/passenger eligibility checks
+  sessionId?: string; // Required for Firestore ride/passenger eligibility checks
   onClose: () => void;
 }
 
@@ -114,15 +114,6 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
         throw new Error("Ride feedback requires a ride session");
       }
 
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
-      if (!backendUrl) {
-        throw new Error("Feedback service is not configured");
-      }
-
-      // Server-authoritative submission: the backend enforces the 24h
-      // cooldown, the ride/general shape, and ride eligibility before
-      // persisting feedback and the cooldown stamp.
-      const token = await currentUser.getIdToken();
       const payload = {
         type: busId ? "ride" as const : "general" as const,
         sessionId: sessionId || undefined,
@@ -136,16 +127,7 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
         ? pendingFeedbackRef.current
         : { fingerprint, requestId: crypto.randomUUID() };
       pendingFeedbackRef.current = pending;
-      const result = await apiRequest<{ submitted?: boolean }>("/api/feedback", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ ...payload, requestId: pending.requestId }),
-        fallbackError: "Unable to submit feedback.",
-      });
-      if (result?.submitted !== true) throw new Error("Feedback acknowledgement is missing.");
+      await submitFeedback(userId, payload, pending.requestId);
       pendingFeedbackRef.current = null;
 
       try {
@@ -169,7 +151,7 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
         setCooldownRemaining(remaining);
         setError(`Limit reached. Please try again in ${formatCooldown(remaining)}.`);
       } else {
-        setError("Failed to send. Please try again.");
+        setError(feedbackErrorMessage(err, "Failed to send. Please try again."));
       }
     } finally {
       setSubmitting(false);

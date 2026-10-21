@@ -42,8 +42,10 @@ are no-store. The admin-only `/api/health` contains detailed diagnostics.
 - Device routes authenticate per-device credentials and preserve current plus
   previous telemetry schemas during fleet rollout.
 - Browser HTTP routes verify Firebase ID tokens; privileged routes additionally
-  check trusted claims and assignments. Admin feedback reads use
-  `GET /api/v2/feedback`, returning at most 200 timestamp-ordered records.
+  check trusted claims and assignments. Feedback API routes remain available
+  for compatibility, sharing the same Firestore records and 24-hour cooldown.
+  Browser feedback submission and admin review now use Firestore directly
+  and remain available when the backend tunnel is offline.
 - The lease-owned worker advances ordered ride progress and runs recovery,
   privacy and retention. Terminal deletion is resumable; active ownership and
   current geometry pointers are protected.

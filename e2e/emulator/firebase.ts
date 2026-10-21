@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAuth, browserLocalPersistence, browserPopupRedirectResolver, connectAuthEmulator, GoogleAuthProvider } from 'firebase/auth';
 import { initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+export { disableNetwork, enableNetwork } from 'firebase/firestore';
 import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
 
 export const firebaseApp = initializeApp({ apiKey: 'synthetic-emulator-key', projectId: 'demo-eki-qa',

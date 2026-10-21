@@ -57,6 +57,28 @@ export const limit = () => ({});
 export const limitToLast = () => ({});
 export const where = () => ({});
 export const orderBy = () => ({});
+export const doc = (_db: unknown, name: string, id: string) => ({ name, id });
+export const serverTimestamp = () => ({});
+export async function runTransaction() { throw new Error("Unexpected feedback submission in admin fixture"); }
+// Test-only transport for the Firestore SDK boundary. Production feedbackStore
+// and the auth-generation guards run unchanged; no backend API is involved.
+async function feedbackTransport(id?: string, data?: unknown) {
+  const response = await fetch(`/__qa/firestore/feedback${id ? `/${id}` : ""}`, {
+    method: data ? "PATCH" : "GET",
+    headers: { Authorization: `Bearer ${await auth.currentUser?.getIdToken()}`, "Content-Type": "application/json" },
+    body: data ? JSON.stringify(data) : undefined,
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error);
+  return result;
+}
+export async function getDocsFromServer() {
+  const result = await feedbackTransport();
+  return { docs: result.feedbacks.map(({ id, ...data }: { id: string }) => ({ id, data: () => data })) };
+}
+export async function updateDoc(source: { id: string }, data: unknown) {
+  await feedbackTransport(source.id, data);
+}
 const reads = new Map<string, number>();
 export function onSnapshot(source: { name: string }, success: (snapshot: unknown) => void, failure: (error: unknown) => void) {
   const count = (reads.get(source.name) ?? 0) + 1;
