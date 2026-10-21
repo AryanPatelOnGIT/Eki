@@ -1,5 +1,6 @@
 import { componentTestMap } from './component-test-map.mjs';
 import { httpUnitTestMap } from './http-unit-test-map.mjs';
+import { criticalSourceTestMap } from './critical-source-test-map.mjs';
 import { mergeTestMaps } from '../scripts/qa/merge-test-maps.mjs';
 const backend = (file, suite, title) => ({ path: `backend/src/services/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
 const frontend = (file, suite, title) => ({ path: `frontend/src/lib/${file}.test.ts`, name: suite ? `${suite} > ${title}` : title, level: 'L1' });
@@ -10,7 +11,7 @@ const rows = [
       backend('authTokenVerifier', 'revocation-aware token verification', 'does not serve a cached token past its JWT expiry'),
       backend('authTokenVerifier', 'revocation-aware token verification', 'can disable caching without disabling revocation checks')]],
   ['AUTH13', 'Privileged tokens force fresh revocation checks. Authorization publication blocks both database versions before revocation and new claims, rotates versions on repeated changes, preserves newer publications and retains failed offboarding for retry. CLI chunks share the fleet mutex, reread roles and backfill unassigned drivers. Auth and storage are mocked; deployed acceptance and frontend convergence remain separate.',
-    ['backend/src/services/authTokenVerifier.ts', 'backend/src/services/userAuthorization.ts', 'backend/src/routes/fleet.ts', 'backend/src/syncRoleClaims.ts'], [
+    ['backend/src/services/authTokenVerifier.ts', 'backend/src/services/userAuthorization.ts', 'backend/src/routes/fleet.ts', 'backend/src/syncRoleClaims.ts', 'backend/src/services/fleetMutationLock.ts'], [
       backend('authTokenVerifier', 'revocation-aware token verification', 'always performs a fresh revocation check for privileged claims'),
       backend('userAuthorization', 'cross-database authorization publication', 'invalidates both products before claims and revocation, then publishes matching versions'),
       backend('userAuthorization', 'cross-database authorization publication', 'never reuses versions across demotion and restoration of the same privilege'),
@@ -83,6 +84,6 @@ const rows = [
     ['frontend/src/lib/rideHistory.ts'], [frontend('rideHistory', 'ride history timestamp normalization', 'normalizes milliseconds, seconds, Date, and Firestore timestamp values'), frontend('rideHistory', 'ride history stop records', 'keeps the earliest trustworthy event for each stop index')]],
 ];
 export const reviewedUnitTestMap = mergeTestMaps(rows.map(([caseId, scope, sourcePaths, tests]) => ({ caseId, scope, sourcePaths,
-  tests: tests.map(link => ({ ...link, semantics: scope })) })), componentTestMap, httpUnitTestMap);
+  tests: tests.map(link => ({ ...link, semantics: scope })) })), componentTestMap, httpUnitTestMap, criticalSourceTestMap);
 export const reviewedUnitFiles = Object.freeze(Object.fromEntries(['backend', 'frontend'].map(workspace => [workspace,
   [...new Set(reviewedUnitTestMap.flatMap(item => item.tests).filter(link => link.path.startsWith(`${workspace}/`)).map(link => link.path.slice(workspace.length + 1)))]])));

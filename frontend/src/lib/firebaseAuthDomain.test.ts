@@ -41,4 +41,14 @@ describe("resolveFirebaseAuthDomain", () => {
       ),
     ).toBe("bustrack-be165.firebaseapp.com");
   });
+
+  it.each([
+    "other-project.web.app",
+    "bustrack-be165.web.app.example.invalid",
+    "preview.bustrack-be165.web.app",
+    "bustrack-be165.firebaseapp.com.example.invalid",
+  ])("does not trust a foreign or lookalike Hosting hostname: %s", hostname => {
+    expect(resolveFirebaseAuthDomain("auth.university.example", "bustrack-be165", hostname))
+      .toBe("auth.university.example");
+  });
 });
