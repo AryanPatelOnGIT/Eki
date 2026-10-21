@@ -249,89 +249,91 @@ rulesDescribe("Firebase security rules integration", () => {
     await assertSucceeds(getDoc(doc(passenger.firestore(), "users", "passenger_1")));
   });
 
-  it("keeps feedback backend-authoritative and gates ride feedback to session riders", async () => {
-    const passenger = environment.authenticatedContext("passenger_1", { role: "passenger" });
-    const outsider = environment.authenticatedContext("passenger_2", { role: "passenger" });
-    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" });
-
-    // The backend issues boarding and feedback: simulate those
-    // server-authoritative writes here (rules-disabled == Admin SDK path).
-    await environment.withSecurityRulesDisabled(async (context) => {
-      await updateDoc(doc(context.firestore(), "ride_sessions", "session_1"), {
-        "passengers.passenger_1": {
-          userId: "passenger_1",
-          userName: "Rider",
-          boardingStopId: "stop_1",
-          alightingStopId: "stop_2",
-          joinedAt: serverTimestamp(),
-        },
-        status: "completed",
-      });
-      await setDoc(doc(context.firestore(), "feedbacks", "feedback_1"), {
-        userId: "passenger_1",
-        userName: "Rider",
-        type: "ride",
-        sessionId: "session_1",
-        busId: "bus_1",
-        driverId: "driver_1",
-        rating: 5,
-        comment: "Safe ride",
-        timestamp: serverTimestamp(),
-        status: "new",
-      });
-      await setDoc(doc(context.firestore(), "feedbackCooldowns", "passenger_1"), {
-        userId: "passenger_1",
-        lastSubmittedAt: serverTimestamp(),
-      });
+  describe("feedback without the backend tunnel", () => {
+    let sequence = 0;
+    const passenger = (uid: string) => environment.authenticatedContext(uid, { role: "passenger" }).firestore();
+    const admin = () => environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" }).firestore();
+    const feedback = (uid: string, overrides: Record<string, unknown> = {}) => ({
+      userId: uid, userName: "Passenger", type: "general", sessionId: null, busId: null, driverId: null,
+      rating: null, comment: "Please improve the route card", requestHash: "a".repeat(64),
+      timestamp: serverTimestamp(), status: "new", ...overrides,
     });
-
-    // Clients can never create feedback or cooldown docs — the backend is
-    // the only writer (POST /api/feedback).
-    await assertFails(runTransaction(passenger.firestore(), async (transaction) => {
-      transaction.set(doc(collection(passenger.firestore(), "feedbacks")), {
-        userId: "passenger_1",
-        userName: "Rider",
-        type: "general",
-        sessionId: null,
-        busId: null,
-        driverId: null,
-        rating: null,
-        comment: "Hello",
-        timestamp: serverTimestamp(),
-        status: "new",
+    const seed = async (uid: string, cooldown?: unknown) => {
+      await environment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), "users", uid), { role: "passenger", displayName: "Rider" });
+        if (cooldown !== undefined) await setDoc(doc(context.firestore(), "feedbackCooldowns", uid), { userId: uid, lastSubmittedAt: cooldown });
+        await setDoc(doc(context.firestore(), "ride_sessions", "feedback_session"), {
+          status: "completed", busId: "bus_1", driverId: "driver_1", passengers: { [uid]: { userId: uid } },
+        });
       });
-      transaction.set(doc(passenger.firestore(), "feedbackCooldowns", "passenger_1"), {
-        userId: "passenger_1",
-        lastSubmittedAt: serverTimestamp(),
+    };
+    const submit = async (uid: string, overrides: Record<string, unknown> = {}, id = (++sequence).toString(16).padStart(64, "0")) => {
+      const store = passenger(uid);
+      await runTransaction(store, async tx => {
+        // These reads match the real browser transaction, including missing IDs.
+        await tx.get(doc(store, "feedbacks", id));
+        await tx.get(doc(store, "feedbackCooldowns", uid));
+        await tx.get(doc(store, "users", uid));
+        tx.set(doc(store, "feedbacks", id), feedback(uid, overrides));
+        tx.set(doc(store, "feedbackCooldowns", uid), { userId: uid, feedbackId: id, lastSubmittedAt: serverTimestamp() });
       });
-    }));
-    await assertFails(runTransaction(outsider.firestore(), async (transaction) => {
-      transaction.set(doc(collection(outsider.firestore(), "feedbacks")), {
-        userId: "passenger_2",
-        userName: "Outsider",
-        type: "ride",
-        sessionId: "session_1",
-        busId: "bus_1",
-        driverId: "driver_1",
-        rating: 4,
-        comment: "Not my ride",
-        timestamp: serverTimestamp(),
-        status: "new",
-      });
-      transaction.set(doc(outsider.firestore(), "feedbackCooldowns", "passenger_2"), {
-        userId: "passenger_2",
-        lastSubmittedAt: serverTimestamp(),
-      });
-    }));
-
-    // Even admin status changes go through PATCH /api/feedback/:id/status;
-    // every browser write to feedback documents is denied.
-    await assertFails(updateDoc(doc(admin.firestore(), "feedbacks", "feedback_1"), {
-      status: "reviewed",
-    }));
-    await assertFails(updateDoc(doc(admin.firestore(), "feedbacks", "feedback_1"), {
-      comment: "tampered",
-    }));
+      return id;
+    };
+    it("atomically accepts general feedback and allows only admins to list and review it", async () => {
+      const uid = "direct_general"; await seed(uid);
+      const id = await assertSucceeds(submit(uid));
+      await assertSucceeds(getDoc(doc(passenger(uid), "feedbacks", id)));
+      await assertFails(getDoc(doc(passenger("other_passenger"), "feedbacks", id)));
+      await assertFails(getDocs(collection(passenger(uid), "feedbacks")));
+      await assertFails(getDocs(collection(environment.unauthenticatedContext().firestore(), "feedbacks")));
+      await assertSucceeds(getDocs(collection(admin(), "feedbacks")));
+      await assertFails(updateDoc(doc(passenger(uid), "feedbacks", id), { status: "resolved" }));
+      await assertFails(updateDoc(doc(admin(), "feedbacks", id), { comment: "tampered" }));
+      await assertFails(updateDoc(doc(admin(), "feedbacks", id), { status: "invalid", reviewedAt: serverTimestamp(), reviewedBy: "admin_1" }));
+      await assertFails(updateDoc(doc(admin(), "feedbacks", id), { status: "reviewed", reviewedAt: serverTimestamp(), reviewedBy: "other_admin" }));
+      await assertSucceeds(updateDoc(doc(admin(), "feedbacks", id), { status: "reviewed", reviewedAt: serverTimestamp(), reviewedBy: "admin_1" }));
+      await assertFails(deleteDoc(doc(admin(), "feedbacks", id)));
+    });
+    it("enforces the cooldown against fresh, future, and legacy API stamps", async () => {
+      for (const [name, stamp] of [["recent", new Date()], ["future", new Date(Date.now() + 86400000)], ["legacy", new Date()]] as const) {
+        const uid = `direct_${name}`; await seed(uid, stamp); await assertFails(submit(uid));
+      }
+      await seed("direct_expired", new Date(Date.now() - 86401000));
+      await assertSucceeds(submit("direct_expired"));
+    });
+    it("allows only one of two concurrent feedback transactions", async () => {
+      await seed("direct_race");
+      const results = await Promise.allSettled([submit("direct_race"), submit("direct_race")]);
+      expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    });
+    it("denies standalone writes, forged identity, names, timestamps, and deleted profiles", async () => {
+      await seed("direct_forgery");
+      const store = passenger("direct_forgery");
+      await assertFails(setDoc(doc(store, "feedbacks", "b".repeat(64)), feedback("direct_forgery")));
+      await assertFails(setDoc(doc(store, "feedbackCooldowns", "direct_forgery"), { userId: "direct_forgery", feedbackId: "b".repeat(64), lastSubmittedAt: serverTimestamp() }));
+      for (const override of [{ userId: "someone_else" }, { userName: "Forged Name" }, { timestamp: new Date() }, { extra: true }, { status: "resolved" }]) await assertFails(submit("direct_forgery", override));
+      await assertFails(submit("missing_profile"));
+    });
+    it("enforces comment, rating, and general-feedback shape limits", async () => {
+      await seed("direct_validation");
+      for (const override of [{ comment: "" }, { comment: "   " }, { comment: "x ".repeat(201) }, { comment: "x".repeat(2001) }, { rating: 5 }, { busId: "bus_1" }, { type: "invalid" }]) await assertFails(submit("direct_validation", override));
+      await assertSucceeds(submit("direct_validation", { comment: "x ".repeat(199) + "x" }));
+      await seed("direct_multiline"); await assertSucceeds(submit("direct_multiline", { comment: "First line\nSecond line" }));
+      await seed("direct_max_chars"); await assertSucceeds(submit("direct_max_chars", { comment: "x".repeat(2000) }));
+    });
+    it("checks completed exact-manifest rides without exposing the manifest to passengers", async () => {
+      const uid = "direct_rider"; await seed(uid);
+      const ride = { type: "ride", sessionId: "feedback_session", busId: "bus_1", driverId: "driver_1", rating: 5, comment: "" };
+      await assertFails(getDoc(doc(passenger(uid), "ride_sessions", "feedback_session")));
+      for (const override of [{ rating: 0 }, { rating: 6 }, { rating: 1.5 }, { rating: "5" }, { rating: null }, { busId: "wrong" }, { driverId: "wrong" }, { sessionId: "missing" }]) await assertFails(submit(uid, { ...ride, ...override }));
+      await environment.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), "ride_sessions", "feedback_session"), { status: "active" }));
+      await assertFails(submit(uid, ride));
+      await environment.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), "ride_sessions", "feedback_session"), { status: "completed", passengers: { [uid]: { userId: "wrong" } } }));
+      await assertFails(submit(uid, ride));
+      await seed(uid); await assertSucceeds(submit(uid, ride));
+      await seed("direct_outsider");
+      await assertFails(submit("direct_outsider", { ...ride, sessionId: "session_1" }));
+    });
   });
 
   it("denies every client write to ride session manifests", async () => {

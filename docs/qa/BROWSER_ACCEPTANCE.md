@@ -1,6 +1,6 @@
 # Actual components with disposable browser integration
 
-Last updated: 2026-10-12 17:29 IST (UTC+05:30).
+Last updated: 2026-10-21 15:25 IST (UTC+05:30).
 
 This L3 suite mounts PassengerWorkspace with its actual boarding, profile,
 chat and feedback children, actual AuthProvider/hooks/database SDKs, and the
@@ -11,16 +11,14 @@ control listener. No application route is replaced with a success stub.
 
 ## Run
 
-The completed-ride feedback path holds one real status PATCH before forwarding
-through the existing outbound allowlist. While pending, the button is disabled
-and the stored status remains `new`. After release, separate assertions wait for
-the durable demo record and rendered status badge to become `reviewed`/`resolved`.
-A disabled button alone is not treated as a successful write. This removes an
-observed mobile timing race without adding retries or changing product behavior.
-The gate sits inside the existing context allowlist, so a request has one
-forwarding handler. The changed-checkout Linux verification passed all thirty
-mobile/desktop tests on 12 October with zero failures/skips/retries in 2.7 minutes;
-clean hosted evidence is required separately.
+The completed-ride feedback path pauses the real Firestore SDK network before
+an admin status write. While the write is queued locally, both status actions
+are disabled and the independent server record and rendered badge remain `new`.
+Networking is restored in `finally`; separate assertions then wait for the
+durable demo record and rendered badge to become `reviewed`/`resolved`. This
+exercises the direct Firestore transport used by the application. A disabled
+button alone is not treated as a successful write. The browser outbound
+allowlist stays active throughout the test.
 
 Use a clean disposable checkout with Node 24, Java 21 and the locked npm
 dependencies. The frontend/production `.env` files must not be copied here.

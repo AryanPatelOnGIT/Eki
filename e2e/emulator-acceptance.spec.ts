@@ -1,6 +1,4 @@
-import { test, expect, type Page, type APIRequestContext, type BrowserContext } from '@playwright/test';
-
-const feedbackStatusGates = new WeakMap<BrowserContext, () => Promise<void>>();
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 
 const control = 'http://127.0.0.1:3117';
 const evidence = async (request: APIRequestContext) => (await request.get(`${control}/evidence`)).json();
@@ -39,9 +37,6 @@ test.beforeEach(async ({ context, request, browser }, testInfo) => {
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.hostname === '127.0.0.1' && ['3115', '3116', '8085', '9005', '9095'].includes(url.port)) {
-      const gate = url.port === '3116' && route.request().method() === 'PATCH' &&
-        /^\/api\/v2\/feedback\/[A-Za-z0-9_-]+$/.test(url.pathname) ? feedbackStatusGates.get(context) : undefined;
-      if (gate) { feedbackStatusGates.delete(context); await gate(); }
       await route.continue();
     }
     else { denied.push(`${url.protocol}//${url.hostname}:${url.port}`); await route.abort('blockedbyclient'); }
@@ -459,7 +454,7 @@ test('10m stop arrival updates the real passenger timeline only after authentica
   expect((await evidence(request)).live.currentStopIndex).toBe(2);
 });
 
-test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request, context }) => {
+test('authenticated telemetry completes the joined ride and arms a distinct return while feedback and history retain identity', async ({ page, request }) => {
   test.setTimeout(60000);
   await page.goto('/'); await login(page); await board(page);
   const chatResult = await page.evaluate(async () => {
@@ -542,20 +537,24 @@ test('authenticated telemetry completes the joined ride and arms a distinct retu
   await page.goto('/?panel=feedback');
   const feedbackCard = page.getByRole('button').filter({ hasText: 'Synthetic completed ride feedback.' });
   await feedbackCard.click();
-  let statusRequestPending = false;
-  let releaseStatusWrite: () => void = () => {};
-  const statusWriteGate = new Promise<void>(resolve => { releaseStatusWrite = resolve; });
-  feedbackStatusGates.set(context, async () => {
-    statusRequestPending = true;
-    await statusWriteGate;
+  await page.evaluate(async () => {
+    const { db, disableNetwork } = await import('/firebase.ts');
+    await disableNetwork(db);
   });
   try {
+    await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'reviewed', exact: true }).click();
-    await expect.poll(() => statusRequestPending).toBe(true);
     await expect(page.getByRole('button', { name: 'reviewed', exact: true })).toBeDisabled();
-    // Pending disable is not a confirmed write: no request has reached Express yet.
+    await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeDisabled();
+    // A queued local Firestore write is not a server acknowledgement.
     expect((await evidence(request)).feedbacks[0].status).toBe('new');
-  } finally { feedbackStatusGates.delete(context); releaseStatusWrite(); }
+    await expect(feedbackCard).toContainText('new');
+  } finally {
+    await page.evaluate(async () => {
+      const { db, enableNetwork } = await import('/firebase.ts');
+      await enableNetwork(db);
+    });
+  }
   await expect.poll(async () => (await evidence(request)).feedbacks[0].status).toBe('reviewed');
   await expect(feedbackCard).toContainText('reviewed');
   await expect(page.getByRole('button', { name: 'resolved', exact: true })).toBeEnabled();

@@ -1,7 +1,7 @@
 /**
- * Server-side feedback eligibility + 24h cooldown enforcement. The backend is
- * now the only writer of feedback and cooldown docs, so the checks that used
- * to live in Firestore rules (and could be bypassed) are enforced here.
+ * Server-side feedback eligibility + 24h cooldown enforcement for API clients.
+ * Browser clients use atomic Firestore writes with the equivalent policy in
+ * firestore.rules so feedback remains available without the backend tunnel.
  */
 
 export const FEEDBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
