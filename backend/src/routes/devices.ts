@@ -6,8 +6,9 @@ import { ipKeyGenerator } from "../lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "../lib/rateLimitShard";
 import { db } from "../lib/firebaseAdmin";
 import { singleRouteParam } from "../lib/requestParams";
+import { TelemetryExecutionFailure } from "../lib/executionDeadline";
 import {
-  authenticateDeviceCredentials,
+  checkDeviceCredentials,
   ingestDeviceTelemetry,
   parseDeviceAuthorization,
   publishDeviceCredentialInvalidation,
@@ -18,6 +19,8 @@ import {
   readFirmwareRelease,
 } from "../services/firmwareRelease";
 import { parseTelemetryValue } from "../services/telemetryPayload";
+import { retireDeviceAssignment } from "../services/deviceAssignmentRetirement";
+import { recordDiagnosticRejection, recordDiagnosticSchema } from "../services/telemetryDiagnosticCounters";
 import {
   ingestDeviceDiagnostics,
   parseDeviceDiagnosticsValue,
@@ -103,6 +106,7 @@ router.post(
         : { ok: false as const, reason: "payload_size" };
     if (deviceId === null || !SAFE_ID.test(deviceId) || !secret || !parsed.ok) {
       recordTelemetryRejection();
+      recordDiagnosticRejection(!secret ? "credentials" : !parsed.ok ? parsed.reason : "payload");
       const payloadTooLarge = !parsed.ok && parsed.reason === "payload_size";
       res.status(!secret ? 401 : payloadTooLarge ? 413 : 400).json({
         error: !secret
@@ -122,6 +126,7 @@ router.post(
         serverReceivedAt,
       );
       if (!result.ok) {
+        recordDiagnosticRejection(result.reason);
         if (result.reason === "rate_limit") {
           res.set(
             "Retry-After",
@@ -131,12 +136,15 @@ router.post(
             error: "Telemetry rate limit exceeded.",
             retryAfterMs: result.retryAfterMs,
           });
+        } else if (result.reason === "unassigned") {
+          res.status(403).json({ error: "Device assignment is unavailable." });
         } else {
           res.status(401).json({ error: "Invalid device credentials." });
         }
         return;
       }
       const serverRespondedAt = Date.now();
+      recordDiagnosticSchema(req.body as Record<string, unknown>);
       res.set("X-Eki-Server-Received-At", String(serverReceivedAt));
       res.set("X-Eki-Server-Responded-At", String(serverRespondedAt));
       res.status(result.duplicate ? 200 : 202).json({
@@ -145,8 +153,11 @@ router.post(
       });
     } catch (error) {
       recordTelemetryRejection();
+      recordDiagnosticRejection("dependency");
       console.error("[Devices] HTTPS telemetry ingestion failed:", error);
-      res.status(503).json({ error: "Telemetry service unavailable." });
+      res.set("Retry-After", "1");
+      res.status(503).json({ error: "Telemetry service unavailable.", retryAfterMs: 1_000,
+        commitState: error instanceof TelemetryExecutionFailure && !error.uncertainCommit ? "not_dispatched" : "unknown" });
     }
   },
 );
@@ -169,15 +180,16 @@ router.get(
     }
 
     try {
-      const assignment = await authenticateDeviceCredentials(
+      const credential = await checkDeviceCredentials(
         deviceId,
         secret,
         Date.now(),
       );
-      if (!assignment) {
-        res.status(401).json({ error: "Invalid device credentials." });
+      if (credential.status !== "assigned") {
+        res.status(credential.status === "unassigned" ? 403 : 401).json({ error: credential.status === "unassigned" ? "Device assignment is unavailable." : "Invalid device credentials." });
         return;
       }
+      const assignment = credential.assignment;
 
       const configuration = readFirmwareRelease();
       if (configuration.state === "invalid") {
@@ -213,6 +225,53 @@ router.get(
 );
 
 router.post(
+  "/:deviceId/firmware/installation",
+  firmwareLimiter,
+  async (req: Request, res: Response) => {
+    res.set("Cache-Control", "no-store");
+    const deviceId = singleRouteParam(req.params.deviceId);
+    const secret = parseDeviceAuthorization(req.get("authorization"));
+    const action = req.body?.action;
+    if (!deviceId || !SAFE_ID.test(deviceId) || !secret ||
+        !req.body || Object.keys(req.body).length !== 1 ||
+        (action !== "acquire" && action !== "release")) {
+      res.status(!secret ? 401 : 400).json({ error: "Invalid firmware maintenance request." });
+      return;
+    }
+    try {
+      const credential = await checkDeviceCredentials(deviceId, secret, Date.now());
+      if (credential.status !== "assigned") { res.status(credential.status === "unassigned" ? 403 : 401).json({ error: credential.status === "unassigned" ? "Device assignment is unavailable." : "Invalid device credentials." }); return; }
+      const assignment = credential.assignment;
+      const lockRef = db.collection("_active_bus_locks").doc(assignment.busId);
+      const rideRef = db.collection("active_rides").doc(`${assignment.busId}_${assignment.routeId}`);
+      const deviceRef = db.collection("devices").doc(deviceId);
+      const allowed = await db.runTransaction(async transaction => {
+        const [lock, ride, device] = await Promise.all([transaction.get(lockRef), transaction.get(rideRef), transaction.get(deviceRef)]);
+        const ownMaintenance = lock.data()?.kind === "firmware" && lock.data()?.deviceId === deviceId;
+        if (action === "release") {
+          if (ownMaintenance) transaction.delete(lockRef);
+          return true;
+        }
+        if (ride.exists || lock.exists || !device.exists || device.data()?.enabled === false ||
+            device.data()?.busId !== assignment.busId || device.data()?.routeId !== assignment.routeId) return false;
+        // No timed expiry: a stalled/crashed flash must not overlap a new ride.
+        // The same authenticated board releases after failure or on reboot.
+        transaction.create(lockRef, {
+          kind: "firmware", deviceId, routeId: assignment.routeId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        return true;
+      });
+      if (!allowed) { res.status(409).json({ error: "Bus is busy." }); return; }
+      res.json({ acknowledged: true });
+    } catch (error) {
+      console.error("[Firmware] Maintenance reservation failed:", error);
+      res.status(503).json({ error: "Firmware service unavailable." });
+    }
+  },
+);
+
+router.post(
   "/:deviceId/diagnostics",
   diagnosticsLimiter,
   async (req: Request, res: Response) => {
@@ -234,8 +293,8 @@ router.post(
         secret,
         parsed.value,
       );
-      if (!accepted) {
-        res.status(401).json({ error: "Invalid device credentials." });
+      if (accepted !== "accepted") {
+        res.status(accepted === "unassigned" ? 403 : 401).json({ error: accepted === "unassigned" ? "Device assignment is unavailable." : "Invalid device credentials." });
         return;
       }
       res.status(202).json({ accepted: true });
@@ -274,14 +333,16 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
   const deviceId = singleRouteParam(req.params.deviceId);
   const busId = req.body?.busId;
   const routeId = req.body?.routeId;
-  const enabled = req.body?.enabled !== false;
+  const enabled = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled")
+    ? req.body.enabled : true;
   if (
     deviceId === null ||
     !SAFE_ID.test(deviceId) ||
     typeof busId !== "string" ||
     !SAFE_ID.test(busId) ||
     typeof routeId !== "string" ||
-    !SAFE_ID.test(routeId)
+    !SAFE_ID.test(routeId) ||
+    typeof enabled !== "boolean"
   ) {
     res.status(400).json({ error: "Invalid device, bus, or route ID." });
     return;
@@ -321,6 +382,9 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
         !existingDevice.exists ||
         previous?.busId !== busId ||
         previous?.routeId !== routeId;
+      const pending = previous?.pendingAssignmentRetirement as
+        { busId: string; routeId: string; revision: number } | undefined;
+      if (assignmentChanged && pending) return "retirement_pending" as const;
       const targetOwnedByAnotherDevice = targetDevices.docs.some(
         (candidate) => candidate.id !== deviceId,
       );
@@ -348,12 +412,21 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
         }
       }
 
+      const revision = assignmentChanged
+        ? (Number.isSafeInteger(previous?.assignmentRevision) ? Number(previous?.assignmentRevision) : 0) + 1
+        : (Number.isSafeInteger(previous?.assignmentRevision) ? Number(previous?.assignmentRevision) : 0);
+      if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("Invalid assignment revision.");
+      const retirement = assignmentChanged && typeof previous?.busId === "string" && typeof previous?.routeId === "string"
+        ? { busId: previous.busId, routeId: previous.routeId, revision } : pending;
       transaction.set(
         deviceRef,
-        { deviceId, busId, routeId, enabled, updatedAt: FieldValue.serverTimestamp() },
+        { deviceId, busId, routeId, enabled,
+          assignmentRevision: revision,
+          ...(retirement ? { pendingAssignmentRetirement: retirement } : {}),
+          updatedAt: FieldValue.serverTimestamp() },
         { merge: true },
       );
-      return "saved" as const;
+      return { saved: true, retirement, revision };
     });
     if (result === "invalid_assignment") {
       res.status(400).json({ error: "Device assignment must match an existing bus route." });
@@ -371,7 +444,21 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
       });
       return;
     }
+    if (result === "retirement_pending") {
+      res.status(409).json({ error: "Retry the current assignment before assigning this device again." });
+      return;
+    }
     await publishDeviceCredentialInvalidation(deviceId);
+    if (result.retirement) {
+      const retirement = result.retirement;
+      await retireDeviceAssignment(deviceId, retirement.busId, retirement.routeId, retirement.revision);
+      await db.runTransaction(async transaction => {
+        const current = await transaction.get(deviceRef);
+        if (current.data()?.pendingAssignmentRetirement?.revision === retirement.revision) {
+          transaction.update(deviceRef, { pendingAssignmentRetirement: FieldValue.delete() });
+        }
+      });
+    }
     res.json({ saved: true });
   } catch (error) {
     console.error("[Devices] Registry update failed:", error);
@@ -379,7 +466,10 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
   }
 });
 
-router.post("/:deviceId/disable", requireAdmin, async (req: Request, res: Response) => {
+export const devicesV2Router = Router();
+
+const disableDevice = async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
   const deviceId = singleRouteParam(req.params.deviceId);
   if (deviceId === null || !SAFE_ID.test(deviceId)) {
     res.status(400).json({ error: "Invalid device ID." });
@@ -396,6 +486,18 @@ router.post("/:deviceId/disable", requireAdmin, async (req: Request, res: Respon
     console.error("[Devices] Disable failed:", error);
     res.status(500).json({ error: "Unable to disable device." });
   }
+};
+
+router.post("/:deviceId/disable", requireAdmin, disableDevice);
+devicesV2Router.patch("/:deviceId", requireAdmin, (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const body = req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length !== 1 || body.enabled !== false) {
+    res.status(400).json({ error: "Only enabled:false is supported for device PATCH." });
+    return;
+  }
+  void disableDevice(req, res);
 });
 
 export default router;

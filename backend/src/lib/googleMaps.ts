@@ -15,6 +15,7 @@ export interface RouteGeometry {
   distanceMeters: number;
   duration: string;
   polylineQuality: "HIGH_QUALITY";
+  trafficFallback?: boolean;
 }
 
 // Matches the runtime callers (polyline.ts 10s, places.ts 5s) so a hung
@@ -36,12 +37,23 @@ export async function computeRouteGeometry(
   intermediates: LatLng[] = [],
   options: RouteGeometryOptions = {},
 ): Promise<RouteGeometry> {
+  const validPoint = (point: LatLng) =>
+    point !== null && typeof point === "object" &&
+    Number.isFinite(point.lat) && point.lat >= -90 && point.lat <= 90 &&
+    Number.isFinite(point.lng) && point.lng >= -180 && point.lng <= 180;
+  if (!validPoint(origin) || !validPoint(destination) ||
+      !Array.isArray(intermediates) || !intermediates.every(validPoint)) {
+    throw new RangeError("Route waypoints must have valid latitude and longitude.");
+  }
   if (intermediates.length > 25) {
+    let trafficFallback = false;
     const geometry = await computeOrderedRouteGeometry([origin, ...intermediates, destination], async (chunk) => {
       const result = await computeRouteGeometry(chunk[0], chunk[chunk.length - 1], chunk.slice(1, -1), options);
+      trafficFallback ||= result.trafficFallback === true;
       return { polyline: result.encodedPolyline, distanceMeters: result.distanceMeters, duration: result.duration };
     });
-    return { encodedPolyline: geometry.polyline, distanceMeters: geometry.distanceMeters, duration: geometry.duration, polylineQuality: "HIGH_QUALITY" };
+    return { encodedPolyline: geometry.polyline, distanceMeters: geometry.distanceMeters, duration: geometry.duration, polylineQuality: "HIGH_QUALITY",
+      ...(trafficFallback ? { trafficFallback: true } : {}) };
   }
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
@@ -96,14 +108,15 @@ export async function computeRouteGeometry(
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline",
+        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,fallbackInfo",
       },
       body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      const errorData = (await response.json()) as any;
-      throw new Error(errorData.error?.message || "Failed to compute route via Routes API v2");
+      // Upstream error bodies are not guaranteed to be JSON. Keep the status
+      // visible without letting a parse error hide the actual HTTP failure.
+      throw new Error(`Google Routes request failed (HTTP ${response.status}).`);
     }
 
     const data = (await response.json()) as any;
@@ -117,6 +130,7 @@ export async function computeRouteGeometry(
       distanceMeters: route.distanceMeters,
       duration: route.duration,
       polylineQuality: "HIGH_QUALITY",
+      ...(data.fallbackInfo ? { trafficFallback: true } : {}),
     };
   } finally {
     clearTimeout(timeoutId);

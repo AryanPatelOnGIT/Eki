@@ -1,7 +1,78 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiRequest } from "./apiClient";
+import { ApiError, apiRequest, acknowledgedField } from "./apiClient";
 
 describe("apiRequest", () => {
+  it("sends identity authorization without browser attestation", async () => {
+    vi.stubGlobal("window", {}); vi.stubEnv("NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY", "test-site-key");
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}')); vi.stubGlobal("fetch", fetchMock);
+    await apiRequest("/api/test", { headers: { Authorization: "Bearer test-only" } });
+    const headers = fetchMock.mock.calls[0][1].headers as Headers;
+    expect(headers.get("X-Firebase-AppCheck")).toBeNull();
+    expect(headers.get("Authorization")).toBe("Bearer test-only");
+  });
+  it("bounds a stalled HTTP write with the API deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    const fetchMock = vi.fn((_url, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = expect(apiRequest("/api/test", { method: "POST", timeoutMs: 1000 })).rejects.toMatchObject({ code: "NETWORK_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(1001); await result;
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+  it.each(["http://api.example.test", "http://localhost.example.test", "http://192.168.1.2"])("rejects non-local cleartext transport before sending credentials: %s", async url => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", url);
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(apiRequest("/api/test", { headers: { Authorization: "Bearer test-only" } })).rejects.toThrow("Backend URL is invalid");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(["localhost", "127.0.0.1", "[::1]"])("allows loopback development transport: %s", async host => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", `http://${host}:4000`);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"ok":true}')));
+    await expect(apiRequest("/api/test")).resolves.toEqual({ ok: true });
+  });
+  it.each([{}, null, { saved: false }, { saved: "true" }])("rejects missing write acknowledgements: %j", async body => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    await expect(apiRequest("/api/test", { validateResponse: value => acknowledgedField(value, "saved") }))
+      .rejects.toMatchObject({ code: "INVALID_ACKNOWLEDGEMENT", outcomeUnknown: true });
+  });
+  it("does not treat a no-content write as confirmed when acknowledgement is required", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    await expect(apiRequest("/api/test", { validateResponse: value => acknowledgedField(value, "saved") }))
+      .rejects.toMatchObject({ outcomeUnknown: true });
+  });
+  it.each([null, {}, { retryAfterMs: -1 }, { retryAfterMs: "100" }, { retryAfterMs: 5000 }])("handles cooldown and malformed HTTP error bodies: %j", async body => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 429 })));
+    const status = vi.fn();
+    await expect(apiRequest("/api/test", { onResponseStatus: status }))
+      .rejects.toMatchObject({ status: 429, retryAfterMs: body && "retryAfterMs" in body && body.retryAfterMs === 5000 ? 5000 : undefined });
+    expect(status).toHaveBeenCalledWith(429);
+  });
+  it.each([
+    ["2", 2_000],
+    ["bogus", 900],
+    ["-1", 900],
+  ])("reads Retry-After %s with a safe body fallback", async (header, expected) => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ retryAfterMs: 900 }), {
+      status: 503, headers: { "Retry-After": header },
+    })));
+    await expect(apiRequest("/api/test")).rejects.toMatchObject({ retryAfterMs: expected });
+  });
+  it("accepts an HTTP-date Retry-After hint", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T10:00:00.000Z"));
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", {
+      status: 503, headers: { "Retry-After": "Tue, 06 Oct 2026 10:00:02 GMT" },
+    })));
+    await expect(apiRequest("/api/test")).rejects.toMatchObject({ retryAfterMs: 2_000 });
+  });
   it.each(["ngrok-free.dev", "ngrok-free.app", "ngrok.io"])("requests API responses from %s while preserving auth headers", async domain => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", `https://test.${domain}`);
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}'));
@@ -158,6 +229,6 @@ describe("apiRequest", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response("not-json", { status: 200 }),
     ));
-    await expect(apiRequest("/api/test")).rejects.toBeInstanceOf(SyntaxError);
+    await expect(apiRequest("/api/test")).rejects.toMatchObject({ code: "INVALID_RESPONSE", status: 200, outcomeUnknown: true });
   });
 });

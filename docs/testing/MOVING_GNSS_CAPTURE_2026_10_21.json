@@ -1,0 +1,526 @@
+{
+  "schemaVersion": 1,
+  "observedSource": "a523731295d37c9ecaf1a917cebefa4502b34dab",
+  "integrationBaseline": "371eb7d9d07c8a2e43c42125a53cbc12115d28a4",
+  "nativeSubissues": [
+    {
+      "parent": 245,
+      "child": 300
+    }
+  ],
+  "scope": "Evidence from the ended ride only; no complete live acceptance passes.",
+  "requirements": [
+    {
+      "id": "245-01",
+      "issue": 245,
+      "requirement": "Moving ride/demo (#51/#149): verify outdoors forward/reverse routes, parallel/divided roads, pending direction and endpoints, ordered stops, final-stop completion, return dwell, all browser roles, restarts and preserved history.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: observe full real route when possible; preserve every endpoint/stop/dwell and original/return session. Any unvisited direction/road/endpoint remains pending.",
+      "oracle": "Moving ride/demo (#51/#149): verify outdoors forward/reverse routes, parallel/divided roads, pending direction and endpoints, ordered stops, final-stop completion, return dwell, all browser roles, restarts and preserved history."
+    },
+    {
+      "id": "245-02",
+      "issue": 245,
+      "requirement": "Latency/transport (#149/#159/#191/#194/#195): complete role/profile-specific first-paint and message timing, clock uncertainty/visibility evidence, controlled weak-network recovery, payload/physical-connection counts and matched Firebase/Google usage; finalize measured transport ADR and geometry budgets. The short-drive device/cloud/React-marker baseline is preserved in the consolidated comment.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: correlate all measurable stages by role/profile. Later: matched usage and actual paint/connection evidence, transport ADR and geometry budget.",
+      "oracle": "Latency/transport (#149/#159/#191/#194/#195): complete role/profile-specific first-paint and message timing, clock uncertainty/visibility evidence, controlled weak-network recovery, payload/physical-connection counts and matched Firebase/Google usage; finalize measured transport ADR and geometry budgets. The short-drive device/cloud/React-marker baseline is preserved in the consolidated comment."
+    },
+    {
+      "id": "245-03",
+      "issue": 245,
+      "requirement": "Live route editing (#149): verify real Places/provider failures, stop swap/reorder and saved persistence, independent directional geometry, metadata-only call budgets, uncertain save/retry and conflicts.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: read current geometry/provider errors. Later: approved disposable route for stop swap/reorder, metadata-only save, uncertain retry/conflict and real Places.",
+      "oracle": "Live route editing (#149): verify real Places/provider failures, stop swap/reorder and saved persistence, independent directional geometry, metadata-only call budgets, uncertain save/retry and conflicts."
+    },
+    {
+      "id": "245-04",
+      "issue": 245,
+      "requirement": "Physical network recovery (#56): verify GNSS/radio/Wi-Fi interruption, certificate/hostname validation, HTTP failure classes, stale queue drops and fresh store-and-forward recovery.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: observe natural interruption/recovery; optional owner-approved outage with timed restoration. Separate certificate failure tests and unavailable physical GNSS/radio cases.",
+      "oracle": "Physical network recovery (#56): verify GNSS/radio/Wi-Fi interruption, certificate/hostname validation, HTTP failure classes, stale queue drops and fresh store-and-forward recovery."
+    },
+    {
+      "id": "245-05",
+      "issue": 245,
+      "requirement": "Watchdog/brownout (#60): obtain dedicated board/current-limited supply; test >25s task stall and brownout during an armed ride; verify reset counters, queue integrity and same-session recovery without duplicates.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Ride: retain baseline reset/queue counters. Separate bench: current-limited spare, >25-second stall and brownout during an armed test; do not induce on this bus.",
+      "oracle": "Watchdog/brownout (#60): obtain dedicated board/current-limited supply; test >25s task stall and brownout during an armed ride; verify reset counters, queue integrity and same-session recovery without duplicates."
+    },
+    {
+      "id": "245-06",
+      "issue": 245,
+      "requirement": "Managed hosting (#52/#122): establish billing, runtime/domain and operational owners, staging/production boundary and least-privilege secrets; deploy immutable backend with region/scaling limits, worker restart, replica failover within 2s clock tolerance and rollback.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Read-only: record current hosting/instance/region and restart evidence. Separate approved managed deployment, replica fault and rollback acceptance.",
+      "oracle": "Managed hosting (#52/#122): establish billing, runtime/domain and operational owners, staging/production boundary and least-privilege secrets; deploy immutable backend with region/scaling limits, worker restart, replica failover within 2s clock tolerance and rollback."
+    },
+    {
+      "id": "245-07",
+      "issue": 245,
+      "requirement": "Endpoint cutover (#119/#122/#169): verify owned DNS/TLS/CA and matching firmware/frontend origin, CSP/CORS/OAuth/API-key restrictions; perform approved region cutover and ingestion/reconnect/drive checks; retire tunnel/debug credentials.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: record actual endpoints, certificate validation, CSP/CORS and auth/provider failures. Separate approved DNS/region cutover and credential retirement.",
+      "oracle": "Endpoint cutover (#119/#122/#169): verify owned DNS/TLS/CA and matching firmware/frontend origin, CSP/CORS/OAuth/API-key restrictions; perform approved region cutover and ingestion/reconnect/drive checks; retire tunnel/debug credentials."
+    },
+    {
+      "id": "245-08",
+      "issue": 245,
+      "requirement": "Fleet security (#42/#52): establish approved signing-key custody and tested replacement/recovery plan before witnessed secure provisioning, flash encryption/download lockdown and signed OTA trials.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Inventory readable build/security state. Separate witnessed signing custody, recovery and secure provisioning; no eFuse writes.",
+      "oracle": "Fleet security (#42/#52): establish approved signing-key custody and tested replacement/recovery plan before witnessed secure provisioning, flash encryption/download lockdown and signed OTA trials."
+    },
+    {
+      "id": "245-09",
+      "issue": 245,
+      "requirement": "Production operations (#52/#122): deploy WAF/rate limits, quotas, monitoring/alerts and 180-day retention; rehearse backup/restore and obtain incident/privacy/backup-erasure owner sign-off.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Read-only operational/alert availability and observed quota failures. Separate approved WAF/monitoring/180-day retention, backup/restore and owner sign-off.",
+      "oracle": "Production operations (#52/#122): deploy WAF/rate limits, quotas, monitoring/alerts and 180-day retention; rehearse backup/restore and obtain incident/privacy/backup-erasure owner sign-off."
+    },
+    {
+      "id": "245-10",
+      "issue": 245,
+      "requirement": "Legacy retention (#214): inventory external RTDB users/messages consumers and timestamp provenance; approve cutoff, dry-run retirement with active/in-flight protection, and rehearse partial failure/replica recovery before enabling purge.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Retain schemas and timestamp provenance for this run. Separate scoped legacy inventory, approved cutoff, dry run and purge/replica recovery.",
+      "oracle": "Legacy retention (#214): inventory external RTDB users/messages consumers and timestamp provenance; approve cutoff, dry-run retirement with active/in-flight protection, and rehearse partial failure/replica recovery before enabling purge."
+    },
+    {
+      "id": "245-11",
+      "issue": 245,
+      "requirement": "R02: measure real fleet admission and provider/RTDB latency under deployed load, then moving-route state/history recovery.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: admission and provider/RTDB timing for actual observed concurrency. Separate representative fleet load and state/history recovery at load.",
+      "oracle": "R02: measure real fleet admission and provider/RTDB latency under deployed load, then moving-route state/history recovery."
+    },
+    {
+      "id": "245-12",
+      "issue": 245,
+      "requirement": "R07: independently attest stopped owning replica, verify real Auth claims/revocation/RTDB mirrors, provider usage and unknown-ack recovery across deployed replicas; measure load/latency.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: retain existing roles/claims metadata and unknown-ack evidence. Separate stop-attested owning-replica recovery and real revocation/mirror tests.",
+      "oracle": "R07: independently attest stopped owning replica, verify real Auth claims/revocation/RTDB mirrors, provider usage and unknown-ack recovery across deployed replicas; measure load/latency."
+    },
+    {
+      "id": "245-13",
+      "issue": 245,
+      "requirement": "R09: verify real Auth/revocation/mirrors and stop-attested recovery; run beyond-cap fleets/backlogs against live indexes and measure deployed load/latency.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: collect baseline backlog/index/latency evidence if exposed. Separate beyond-cap fleet, deployed indexes, revocation and executor-stop tests.",
+      "oracle": "R09: verify real Auth/revocation/mirrors and stop-attested recovery; run beyond-cap fleets/backlogs against live indexes and measure deployed load/latency."
+    },
+    {
+      "id": "245-14",
+      "issue": 245,
+      "requirement": "R10: verify real Auth failure/revocation/recreated UID, executor-stop attestation and unknown external effects; quiesce console/CLI/cached/in-flight clients across replicas and verify late writes with privacy/backup sign-off.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Record ordinary authorization failures only. Separate disposable Auth failure/recreated-UID, stopped/hung executor, late writes, quiescence and privacy sign-off.",
+      "oracle": "R10: verify real Auth failure/revocation/recreated UID, executor-stop attestation and unknown external effects; quiesce console/CLI/cached/in-flight clients across replicas and verify late writes with privacy/backup sign-off."
+    },
+    {
+      "id": "245-15",
+      "issue": 245,
+      "requirement": "R12: measure deployed route edit/deletion propagation, reconnect/read billing, delayed/uncertain publication ordering and replica load; verify provider/road and moving-route correctness.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: retain current route versions, reconnect and geometry outcomes. Later: approved edit/deletion propagation and uncertain ordering across replicas.",
+      "oracle": "R12: measure deployed route edit/deletion propagation, reconnect/read billing, delayed/uncertain publication ordering and replica load; verify provider/road and moving-route correctness."
+    },
+    {
+      "id": "245-16",
+      "issue": 245,
+      "requirement": "R13: exercise authorized legacy-route repair, active-ride/stale-version rejection, provider/caches/watch propagation, compute saturation and global replica/provider budgets; correlate cloud usage/latency and moving-route results.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: record current route/version and provider errors. Separate approved legacy repair, stale-version rejection, saturation and global budgets.",
+      "oracle": "R13: exercise authorized legacy-route repair, active-ride/stale-version rejection, provider/caches/watch propagation, compute saturation and global replica/provider budgets; correlate cloud usage/latency and moving-route results."
+    },
+    {
+      "id": "245-17",
+      "issue": 245,
+      "requirement": "R14: deploy matching backend/status endpoint, canonical projection backfill/current-generation schema, restrictive RTDB rules and browser artifact; measure moving/replica egress and latency.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: compare raw/public projection, generations, status and browser artifact; record deployed rule/schema identity if readable. Separate deployment/backfill and replica egress.",
+      "oracle": "R14: deploy matching backend/status endpoint, canonical projection backfill/current-generation schema, restrictive RTDB rules and browser artifact; measure moving/replica egress and latency."
+    },
+    {
+      "id": "245-18",
+      "issue": 245,
+      "requirement": "R19: deploy activeBuses timestamp RTDB index before indexed scans; verify beyond-cap backlog, failed-page cursor retention, replica/session replacement and moving ambiguity/reacquisition.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: retain activeBuses timestamp/order and ambiguity/reacquisition. Separate final-index verification, beyond-cap scan and failed-page cursor/replica tests.",
+      "oracle": "R19: deploy activeBuses timestamp RTDB index before indexed scans; verify beyond-cap backlog, failed-page cursor retention, replica/session replacement and moving ambiguity/reacquisition."
+    },
+    {
+      "id": "245-19",
+      "issue": 245,
+      "requirement": "R20: migrate/inventory supported, external and fleet callers; collect billed cloud usage/latency and 90-day compatibility plus 30 consecutive days without supported legacy traffic; communicate release and obtain owner approval before removing adapters.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Record compatibility counters/client identities without tokens. Separate supported-caller inventory, 90-day compatibility and 30-day clean window plus retirement approval.",
+      "oracle": "R20: migrate/inventory supported, external and fleet callers; collect billed cloud usage/latency and 90-day compatibility plus 30 consecutive days without supported legacy traffic; communicate release and obtain owner approval before removing adapters."
+    },
+    {
+      "id": "245-20",
+      "issue": 245,
+      "requirement": "R31: verify production collector, sampled error/span behavior, startup/module profiling, RSS/CPU and sustained representative load.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: retain backend/collector CPU/RSS, startup identity, observed spans/errors and run duration. Separate representative sustained load/profile/production collector acceptance.",
+      "oracle": "R31: verify production collector, sampled error/span behavior, startup/module profiling, RSS/CPU and sustained representative load."
+    },
+    {
+      "id": "245-21",
+      "issue": 245,
+      "requirement": "R35: verify persisted per-ride jitter/backoff/restart and each replica circuit through actual provider outage/recovery, including crash-stranded rerouting claims.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: observe actual reroute, jitter/backoff/circuit transitions and natural failures. Separate approved provider outage, restart and crash-stranded claim experiment.",
+      "oracle": "R35: verify persisted per-ride jitter/backoff/restart and each replica circuit through actual provider outage/recovery, including crash-stranded rerouting claims."
+    },
+    {
+      "id": "245-22",
+      "issue": 245,
+      "requirement": "GNSS plausibility/marker recovery: verify 200 km/h cap, three-fix corroboration, implausible jumps, physical acquisition/reacquisition, parallel roads, interrupted-ride freshness and 24-hour orphan cap; compare projections/history after loss/restart.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: record real quality/fix-age/matching/freshness, jumps and recovery. Do not drive at 200 km/h; cap/corroboration edge cases use controlled replay/bench. 24-hour expiry needs longer evidence.",
+      "oracle": "GNSS plausibility/marker recovery: verify 200 km/h cap, three-fix corroboration, implausible jumps, physical acquisition/reacquisition, parallel roads, interrupted-ride freshness and 24-hour orphan cap; compare projections/history after loss/restart."
+    },
+    {
+      "id": "245-23",
+      "issue": 245,
+      "requirement": "HTTPS/backend-only recovery: correlate remaining -1/-11/-5 transport failures with backend logs; verify TLS/backend outage retries, fresh-only publication and stale drops after repeat hotspot outages.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: correlate each -1/-11/-5, TLS/backend response, queue retry/stale drop and reconnect. Optional bounded hotspot test; record unknown outcomes.",
+      "oracle": "HTTPS/backend-only recovery: correlate remaining -1/-11/-5 transport failures with backend logs; verify TLS/backend outage retries, fresh-only publication and stale drops after repeat hotspot outages."
+    },
+    {
+      "id": "245-24",
+      "issue": 245,
+      "requirement": "Credential faults: verify physical diagnostic and OTA-discovery rejection/recovery, invalid-secret rotation/reflash and secure-fleet equivalents; keep Wi-Fi available during configuration rejection.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: retain naturally occurring rejection diagnostics and recovery. Separate approved invalid-secret/rotation/reflash and secure-device discovery tests.",
+      "oracle": "Credential faults: verify physical diagnostic and OTA-discovery rejection/recovery, invalid-secret rotation/reflash and secure-fleet equivalents; keep Wi-Fi available during configuration rejection."
+    },
+    {
+      "id": "245-25",
+      "issue": 245,
+      "requirement": "Secure hardware evidence: record board/source/firmware/package hashes, receiver MON-VER, effective sdkconfig/ELF/map and JTAG setting/eFuse; witness encryption/checkpoint power-loss recovery and first-boot NTP/TLS/GNSS corroboration after signing/recovery prerequisites.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Read-only identity/build/security inventory now. Separate witnessed protected hardware, checkpoint power loss and first-boot time/TLS/GNSS corroboration.",
+      "oracle": "Secure hardware evidence: record board/source/firmware/package hashes, receiver MON-VER, effective sdkconfig/ELF/map and JTAG setting/eFuse; witness encryption/checkpoint power-loss recovery and first-boot NTP/TLS/GNSS corroboration after signing/recovery prerequisites."
+    },
+    {
+      "id": "245-26",
+      "issue": 245,
+      "requirement": "Signed OTA field trials: on stopped GNSS-verified secure hardware, reject wrong key/digest/version and regressing release sequence; interrupt update and exceed five-minute validation in Wi-Fi dead zone; retain rollback/healthy-image hashes.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Observe ordinary running image only. Separate stopped GNSS-verified secure spare for negative images, sequence regression, interrupted install and rollback.",
+      "oracle": "Signed OTA field trials: on stopped GNSS-verified secure hardware, reject wrong key/digest/version and regressing release sequence; interrupt update and exceed five-minute validation in Wi-Fi dead zone; retain rollback/healthy-image hashes."
+    },
+    {
+      "id": "245-27",
+      "issue": 245,
+      "requirement": "Release query readiness (R11): rerun all seven real Firestore query shapes against the final release environment and verify actual queue/recovery sweeps; retain exact FAILED_PRECONDITION diagnostics and index remediation if any.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Read-only final-environment query diagnostics where already accessible. Separate all seven real query-shape checks and controlled actual queue/recovery sweeps.",
+      "oracle": "Release query readiness (R11): rerun all seven real Firestore query shapes against the final release environment and verify actual queue/recovery sweeps; retain exact FAILED_PRECONDITION diagnostics and index remediation if any."
+    },
+    {
+      "id": "245-28",
+      "issue": 245,
+      "requirement": "Environment/browser acceptance (#204): verify release database/secret alignment, deployed authentication/authorization, registered OAuth hostname/API-key restrictions and current CSP/CORS/browser artifacts; restart after environment changes and test affected second-admin Fleet/Routes/retry plus driver route behavior. Preserve the owner-approved removal of browser/API App Check (#322).",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: genuine role/auth/environment/CSP/CORS evidence and safe existing navigation. Later: second-admin Fleet/Routes/retry and driver feature matrix. Preserve App Check removal.",
+      "oracle": "Environment/browser acceptance (#204): verify release database/secret alignment, deployed authentication/authorization, registered OAuth hostname/API-key restrictions and current CSP/CORS/browser artifacts; restart after environment changes and test affected second-admin Fleet/Routes/retry plus driver route behavior. Preserve the owner-approved removal of browser/API App Check (#322)."
+    },
+    {
+      "id": "245-29",
+      "issue": 245,
+      "requirement": "Privacy recovery: separately test crashed executor and still-running/hung Auth call; prove exact executor stopped, check generation/audit and unknown external effects before destructive retry.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Record current operation/audit identity if relevant. Separate disposable privacy run distinguishing crashed executor from live/hung Auth; prove stopped before destructive retry.",
+      "oracle": "Privacy recovery: separately test crashed executor and still-running/hung Auth call; prove exact executor stopped, check generation/audit and unknown external effects before destructive retry."
+    },
+    {
+      "id": "245-30",
+      "issue": 245,
+      "requirement": "Durable restore backlog: verify deployed multi-replica/process-failure recovery, saturation above 1,016 simultaneous distinct rides and explicit interruption semantics.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: observe one-session durable restore/history if exercised. Separate >1,016 distinct rides, process/replica failure, saturation and interruption semantics.",
+      "oracle": "Durable restore backlog: verify deployed multi-replica/process-failure recovery, saturation above 1,016 simultaneous distinct rides and explicit interruption semantics."
+    },
+    {
+      "id": "245-31",
+      "issue": 245,
+      "requirement": "Lifecycle failover: terminate owner between RTDB retirement and Firestore completion and around lease renewal/expiry; verify no duplicate session, stranded lock, stale marker or unexplained ~45s recovery delay.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: retain lifecycle/lease/lock transitions and natural restart evidence. Separate approved owner termination at retirement/completion/lease boundaries.",
+      "oracle": "Lifecycle failover: terminate owner between RTDB retirement and Firestore completion and around lease renewal/expiry; verify no duplicate session, stranded lock, stale marker or unexplained ~45s recovery delay."
+    },
+    {
+      "id": "245-32",
+      "issue": 245,
+      "requirement": "Legacy records: inventory terminal rides missing endTime and oversized RTDB records; approve bounded backfill/quarantine and rehearse partial sweeper failure/restart with privacy/backup-erasure sign-off.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Retain this ride's start/end/status and any read errors. Separate legacy missing-endTime/oversized-record inventory, approved backfill/quarantine and sweeper recovery.",
+      "oracle": "Legacy records: inventory terminal rides missing endTime and oversized RTDB records; approve bounded backfill/quarantine and rehearse partial sweeper failure/restart with privacy/backup-erasure sign-off."
+    },
+    {
+      "id": "245-33",
+      "issue": 245,
+      "requirement": "Drive/contention thresholds (#159/#160/#174): extend the collected normal-hotspot moving latency baseline to controlled poor-network/reconnect phases; collect 1,000 moving contention samples and compare warm baseline/candidate fleet/replica/region transactions/retries and five-token lease.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: count actual accepted moving/correlated samples and concurrency per phase. Separate 1,000 contention-qualified samples and matched warm baseline/candidate fleet/region transactions.",
+      "oracle": "Drive/contention thresholds (#159/#160/#174): extend the collected normal-hotspot moving latency baseline to controlled poor-network/reconnect phases; collect 1,000 moving contention samples and compare warm baseline/candidate fleet/replica/region transactions/retries and five-token lease."
+    },
+    {
+      "id": "245-34",
+      "issue": 245,
+      "requirement": "Direction/matching/reroute thresholds (#162/#164/#167): validate recorded and real adaptive envelope/endpoints, multipath, intersections, loops/geofences, U-turns/wrong turns, immutable direction, completion/dwell turnaround and visible reroute latency/false snaps.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: record actual intersections/ambiguity/wrong-turn/U-turn only if naturally encountered; immutable direction, endpoint/completion/dwell/reroute. Missing geometry cases remain pending.",
+      "oracle": "Direction/matching/reroute thresholds (#162/#164/#167): validate recorded and real adaptive envelope/endpoints, multipath, intersections, loops/geofences, U-turns/wrong turns, immutable direction, completion/dwell turnaround and visible reroute latency/false snaps."
+    },
+    {
+      "id": "245-35",
+      "issue": 245,
+      "requirement": "Firmware cadence/capacity (#168): measure real timeout/retry, duplicate/backlog/bandwidth and stopped/moving hysteresis; verify responsive acquisition and backend capacity before changing parked cadence.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Ride: stopped/moving cadence/hysteresis, timeout/retry/duplicate/backlog/bandwidth. Later: representative backend capacity before any parked-cadence policy change.",
+      "oracle": "Firmware cadence/capacity (#168): measure real timeout/retry, duplicate/backlog/bandwidth and stopped/moving hysteresis; verify responsive acquisition and backend capacity before changing parked cadence."
+    },
+    {
+      "id": "245-36",
+      "issue": 245,
+      "requirement": "Browser suspension/PWA: verify prolonged suspension, update during active ride and network/Google failure/recovery on passenger/operator/admin clients with synchronized evidence.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Ride: exported real tab/device background/resume and restored identity/state; actual mobile if available. Separate approved PWA update/provider combined failure if unavailable.",
+      "oracle": "Browser suspension/PWA: verify prolonged suspension, update during active ride and network/Google failure/recovery on passenger/operator/admin clients with synchronized evidence."
+    },
+    {
+      "id": "245-37",
+      "issue": 245,
+      "requirement": "Release sign-off: retain redacted timestamps/logs, source/flashed-firmware hashes, Hosting revision/image digest, DNS/TLS/rollback and matched usage windows; obtain named owner acceptance.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Assemble redacted evidence and exact tested identities; identify missing rollout/rollback/usage and obtain named owner review separately.",
+      "oracle": "Release sign-off: retain redacted timestamps/logs, source/flashed-firmware hashes, Hosting revision/image digest, DNS/TLS/rollback and matched usage windows; obtain named owner acceptance."
+    },
+    {
+      "id": "245-38",
+      "issue": 245,
+      "requirement": "SEC-01 / #315 — Against the approved staging deployment, retain redacted saved-ID-token evidence for driver unassignment/demotion, reassignment to another Auth UID, deletion, and admin demotion/restoration. Verify old tokens lose protected Firestore/RTDB and HTTP access, current authorized accounts retain access, and authorization publication/retry failures cannot report successful offboarding while stale access remains. Record deployed backend/rules revisions and authorization claims/backfill status. Keep the complete Auth/Firestore/RTDB workflow distinct from disposable-emulator evidence; complete claims backfill before admitting admin traffic.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Ride: identify genuine roles and current claims/revision metadata without tokens. Separate approved staging saved-token demotion/unassignment/reassignment/deletion and backfill/publication-failure matrix.",
+      "oracle": "SEC-01 / #315 — Against the approved staging deployment, retain redacted saved-ID-token evidence for driver unassignment/demotion, reassignment to another Auth UID, deletion, and admin demotion/restoration. Verify old tokens lose protected Firestore/RTDB and HTTP access, current authorized accounts retain access, and authorization publication/retry failures cannot report successful offboarding while stale access remains. Record deployed backend/rules revisions and authorization claims/backfill status. Keep the complete Auth/Firestore/RTDB workflow distinct from disposable-emulator evidence; complete claims backfill before admitting admin traffic."
+    },
+    {
+      "id": "245-39",
+      "issue": 245,
+      "requirement": "SEC-03 / #317 — On approved stopped GNSS-verified secure hardware, retain redacted source/firmware/package/build hashes and Device-only reservation evidence for signed OTA acquire/install/release, interrupted installation, abort/reboot and failure recovery. Verify ride/conflicting-reservation exclusion and owner-only release throughout. Emulator/native tests do not establish physical OTA acceptance.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Capture readable reservation/security state only if relevant. Separate stopped secure-device signed-OTA reservation exclusion, owner-only release, abort/reboot and recovery.",
+      "oracle": "SEC-03 / #317 — On approved stopped GNSS-verified secure hardware, retain redacted source/firmware/package/build hashes and Device-only reservation evidence for signed OTA acquire/install/release, interrupted installation, abort/reboot and failure recovery. Verify ride/conflicting-reservation exclusion and owner-only release throughout. Emulator/native tests do not establish physical OTA acceptance."
+    },
+    {
+      "id": "246-01",
+      "issue": 246,
+      "requirement": "R11: complete protected release-environment index-first deployment and real retention/collection-group deletion/recovery sweep acceptance; current-project read-only readiness does not certify destructive outcomes (live gates in #245).",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Collect current release/index identity and any query error. Separate protected index-first deployment and real retention/collection-group deletion/recovery.",
+      "oracle": "R11: complete protected release-environment index-first deployment and real retention/collection-group deletion/recovery sweep acceptance; current-project read-only readiness does not certify destructive outcomes (live gates in #245)."
+    },
+    {
+      "id": "246-02",
+      "issue": 246,
+      "requirement": "R20: migrate/inventory supported, external and fleet API callers; retain 90-day compatibility and 30-day no-supported-legacy-traffic evidence, release communication and owner approval before adapter retirement (#245).",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Capture actual compatibility metrics during this run. Complete caller inventory plus 90/30-day evidence and release/owner approval later.",
+      "oracle": "R20: migrate/inventory supported, external and fleet API callers; retain 90-day compatibility and 30-day no-supported-legacy-traffic evidence, release communication and owner approval before adapter retirement (#245)."
+    },
+    {
+      "id": "246-03",
+      "issue": 246,
+      "requirement": "R30: deploy and verify a redacted device-silence alert following credential rejection; establish managed runtime/collector/monitoring prerequisites (#245).",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Record existing credential rejection/device-silence diagnostics and monitor availability. Separate managed runtime/collector setup and witnessed silence-alert delivery.",
+      "oracle": "R30: deploy and verify a redacted device-silence alert following credential rejection; establish managed runtime/collector/monitoring prerequisites (#245)."
+    },
+    {
+      "id": "246-04",
+      "issue": 246,
+      "requirement": "R34: complete remaining physical, deployed-browser and cloud acceptance in #245; independently verify the flashed image, effective toolchain/package/sdkconfig/ELF/map identity and receiver MON-VER. The retained local-build hashes and short moving latency baseline do not establish installed-image or full-route acceptance.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Retain local/deployed/installed identities distinctly and real ride/browser evidence. Complete missing MON-VER, installed-image attestation and R34 live/secure acceptance separately.",
+      "oracle": "R34: complete remaining physical, deployed-browser and cloud acceptance in #245; independently verify the flashed image, effective toolchain/package/sdkconfig/ELF/map identity and receiver MON-VER. The retained local-build hashes and short moving latency baseline do not establish installed-image or full-route acceptance."
+    },
+    {
+      "id": "246-05",
+      "issue": 246,
+      "requirement": "R36: decide optional parked heartbeat/cost policy with coordinated freshness/presence/start/turnaround measurements, boarding-code lifetime/rotation, passenger-accuracy/fix-age bounds, zero-dwell return behavior and dedicated offline-shell need; implement approved changes only.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Measure parked/moving cadence, presence, boarding-code lifetime without values, turnaround/fix age and offline UI. Record policy questions for owner; do not adopt new policy.",
+      "oracle": "R36: decide optional parked heartbeat/cost policy with coordinated freshness/presence/start/turnaround measurements, boarding-code lifetime/rotation, passenger-accuracy/fix-age bounds, zero-dwell return behavior and dedicated offline-shell need; implement approved changes only."
+    },
+    {
+      "id": "246-06",
+      "issue": 246,
+      "requirement": "Decide whether independent release-metadata signatures are required in addition to mandatory RSA-3072 image signatures and descriptor version/sequence checks; implement if adopted.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Record current image/descriptor verification configuration if readable. Independent metadata signatures are an owner decision; this ride cannot decide or prove it.",
+      "oracle": "Decide whether independent release-metadata signatures are required in addition to mandatory RSA-3072 image signatures and descriptor version/sequence checks; implement if adopted."
+    },
+    {
+      "id": "300-01",
+      "issue": 300,
+      "requirement": "Record an independent position/time reference, its measured uncertainty and synchronized device/backend/RTDB/browser clocks. Compare along/cross-track error, false parallel-road snaps, marker freshness and lifecycle progression with the reference during safe owner-controlled forward/reverse/turnaround drives. Preserve exact source/flashed image, receiver MON-VER, antenna installation, environment and redacted evidence timestamps.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Capture independent reference if actually present, uncertainty and all clock domains. Without it: retain observations, block absolute error/false-snap truth claims.",
+      "oracle": "Record an independent position/time reference, its measured uncertainty and synchronized device/backend/RTDB/browser clocks. Compare along/cross-track error, false parallel-road snaps, marker freshness and lifecycle progression with the reference during safe owner-controlled forward/reverse/turnaround drives. Preserve exact source/flashed image, receiver MON-VER, antenna installation, environment and redacted evidence timestamps."
+    },
+    {
+      "id": "300-02",
+      "issue": 300,
+      "requirement": "Distinguish measured cold/warm/hot receiver start setup and first valid/usable fix; do not label a software restart a receiver cold start without the correct receiver-state setup. Repeat stationary baseline and moving acquisition/reacquisition under representative sky/antenna conditions.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Retain actual power/receiver-state setup and first valid versus usable fix. Correct cold/warm/hot claims require documented receiver setup; ordinary reboot is insufficient.",
+      "oracle": "Distinguish measured cold/warm/hot receiver start setup and first valid/usable fix; do not label a software restart a receiver cold start without the correct receiver-state setup. Repeat stationary baseline and moving acquisition/reacquisition under representative sky/antenna conditions."
+    },
+    {
+      "id": "300-03",
+      "issue": 300,
+      "requirement": "Verify plausible gradual drift, multipath, adjacent-road ambiguity and quality loss followed by recovery; include fixes that remain inside per-step jump limits. Assert conservative confidence/freshness and no false boarding, stop progression, completion or direction flip.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Observe natural gradual drift/multipath/adjacent-road and quality recovery; compare lifecycle confidence to independent reference. Unencountered cases remain untested.",
+      "oracle": "Verify plausible gradual drift, multipath, adjacent-road ambiguity and quality loss followed by recovery; include fixes that remain inside per-step jump limits. Assert conservative confidence/freshness and no false boarding, stop progression, completion or direction flip."
+    },
+    {
+      "id": "300-04",
+      "issue": 300,
+      "requirement": "Run coupled recovery windows under safe conditions: GNSS loss plus Wi-Fi loss; device reboot plus queued telemetry plus backend reconnect; browser suspension during outage followed by resume. Correlate authoritative session, raw/accepted/matched location, queue drops/retries and observed marker after recovery; distinguish unknown write outcomes from definite rejection.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Use only a specifically approved safe combined phase; otherwise capture natural overlap. Distinguish device, backend and browser recovery and unknown acknowledgements.",
+      "oracle": "Run coupled recovery windows under safe conditions: GNSS loss plus Wi-Fi loss; device reboot plus queued telemetry plus backend reconnect; browser suspension during outage followed by resume. Correlate authoritative session, raw/accepted/matched location, queue drops/retries and observed marker after recovery; distinguish unknown write outcomes from definite rejection."
+    },
+    {
+      "id": "300-05",
+      "issue": 300,
+      "requirement": "Compare seeded expectations with observed field behavior without promoting software PASS to field PASS; add a controlled degraded/recovered phase to the recorded normal short-motion phase, with drive bounds, operator responsibilities and stop/abort annotations. Specialized RF vulnerability work still requires an approved contained bench facility; no RF interference/jamming/spoofing is authorized.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Preserve normal/degraded/recovered boundaries, safe bounds and physical witness. Seeded replay later remains software evidence; no RF interference.",
+      "oracle": "Compare seeded expectations with observed field behavior without promoting software PASS to field PASS; add a controlled degraded/recovered phase to the recorded normal short-motion phase, with drive bounds, operator responsibilities and stop/abort annotations. Specialized RF vulnerability work still requires an approved contained bench facility; no RF interference/jamming/spoofing is authorized."
+    },
+    {
+      "id": "300-06",
+      "issue": 300,
+      "requirement": "Define acceptable measured accuracy/fix-age/recovery limits and named owner sign-off before declaring field acceptance. Unavailable instruments, actual receiver setup or safe drive conditions remain BLOCKED, never synthetic passes.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Record existing limits and owner identity; request missing criteria without blocking recording. Keep field sign-off blocked until evidence meets agreed limits.",
+      "oracle": "Define acceptable measured accuracy/fix-age/recovery limits and named owner sign-off before declaring field acceptance. Unavailable instruments, actual receiver setup or safe drive conditions remain BLOCKED, never synthetic passes."
+    },
+    {
+      "id": "300-07",
+      "issue": 300,
+      "requirement": "Drive the full forward and reverse route with a safe owner-controlled vehicle: pending and resolved endpoint direction, ordered/close stops, departure evidence, final completion, configured zero/nonzero turnaround dwell, U-turn/wrong-turn/parallel-road ambiguity and preserved original passenger history across a distinct return session. Correlate passenger, operator and admin views.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Capture true forward/reverse, ordered/close stops, departure/completion/dwell and distinct return only when reached; retain original history. Do not force route completion.",
+      "oracle": "Drive the full forward and reverse route with a safe owner-controlled vehicle: pending and resolved endpoint direction, ordered/close stops, departure evidence, final completion, configured zero/nonzero turnaround dwell, U-turn/wrong-turn/parallel-road ambiguity and preserved original passenger history across a distinct return session. Correlate passenger, operator and admin views."
+    },
+    {
+      "id": "300-08",
+      "issue": 300,
+      "requirement": "Extend the captured normal-hotspot moving baseline (202 accepted serial moving samples, 106 correlated Passenger React samples) to controlled poor-network/reconnect profiles and collect 1,000 moving contention samples; retain actual paint/message boundaries, clock-offset uncertainty and matched baseline/candidate cloud usage. The measured short-run p50/p95/p99 and gaps are preserved in the consolidated comment.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Count moving samples, real contention and per-profile timing/paint gaps. Capture usage availability; do not call single-device 1,000 samples a fleet contention pass.",
+      "oracle": "Extend the captured normal-hotspot moving baseline (202 accepted serial moving samples, 106 correlated Passenger React samples) to controlled poor-network/reconnect profiles and collect 1,000 moving contention samples; retain actual paint/message boundaries, clock-offset uncertainty and matched baseline/candidate cloud usage. The measured short-run p50/p95/p99 and gaps are preserved in the consolidated comment."
+    },
+    {
+      "id": "300-09",
+      "issue": 300,
+      "requirement": "Exercise current-session recovery during approved backend owner/replica restart or partition while driving safely, including lease expiry/renewal, unknown acknowledgements, queued old writes and delayed reroute results. Verify no duplicate return session, stranded lock, unexplained marker disappearance or overwritten replacement ride; retain exact image/source/firmware hashes.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Record natural owner/reconnect/lease events if any. Deliberate backend owner/replica restart or partition requires separate approved environment and recovery plan.",
+      "oracle": "Exercise current-session recovery during approved backend owner/replica restart or partition while driving safely, including lease expiry/renewal, unknown acknowledgements, queued old writes and delayed reroute results. Verify no duplicate return session, stranded lock, unexplained marker disappearance or overwritten replacement ride; retain exact image/source/firmware hashes."
+    },
+    {
+      "id": "300-10",
+      "issue": 300,
+      "requirement": "Test real mobile passenger/operator/admin suspension, resume and PWA update during an active ride and combined network/provider interruption. Verify identity, boarding state, geometry/ETA, chat and history after recovery; distinguish actual browser/provider observations from synthetic adapters.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Observe genuine mobile role suspension/resume and restored state if devices/accounts available. An emulated viewport is not a physical-phone test; PWA update is a separate labelled event.",
+      "oracle": "Test real mobile passenger/operator/admin suspension, resume and PWA update during an active ride and combined network/provider interruption. Verify identity, boarding state, geometry/ETA, chat and history after recovery; distinguish actual browser/provider observations from synthetic adapters."
+    },
+    {
+      "id": "300-11",
+      "issue": 300,
+      "requirement": "Obtain named owner acceptance of measured movement/freshness/accuracy/latency/recovery thresholds and retained evidence. Real provider/staging access, safe drive logistics and independent timing/position instruments must be arranged explicitly; no unattended live mutations or road/RF fault injection are authorized by this checklist.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Deliver evidence, uncertainty, missing instruments/providers and actual bounds for named owner acceptance. No unattended live faults or inferred sign-off.",
+      "oracle": "Obtain named owner acceptance of measured movement/freshness/accuracy/latency/recovery thresholds and retained evidence. Real provider/staging access, safe drive logistics and independent timing/position instruments must be arranged explicitly; no unattended live mutations or road/RF fault injection are authorized by this checklist."
+    },
+    {
+      "id": "337-01",
+      "issue": 337,
+      "requirement": "Investigate deployed archived-message permission denial with the intended Admin identity, deployed rules/claims and browser resource-blocking evidence; verify archived-message recovery.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Reproduce archived-message read with intended Admin, preserve permission/CSP/resource error and request/rules/claims metadata. Read-only SDK success is not client recovery.",
+      "oracle": "Investigate deployed archived-message permission denial with the intended Admin identity, deployed rules/claims and browser resource-blocking evidence; verify archived-message recovery."
+    },
+    {
+      "id": "337-02",
+      "issue": 337,
+      "requirement": "Recheck the operator-form validation and unselected-destination fixes from merged PR #336 on the current deployed artifact at desktop and exact 390/360 CSS-pixel widths; the source/regression repairs are complete, while deployed acceptance remains pending.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Verify deployed artifact at desktop and exact 390/360 CSS px with appropriate test form; capture validation and unselected destination. Source tests alone do not close deployed acceptance.",
+      "oracle": "Recheck the operator-form validation and unselected-destination fixes from merged PR #336 on the current deployed artifact at desktop and exact 390/360 CSS-pixel widths; the source/regression repairs are complete, while deployed acceptance remains pending."
+    },
+    {
+      "id": "337-03",
+      "issue": 337,
+      "requirement": "Finish the genuine Passenger-role and remaining Admin/Passenger feature/state census, including Settings/Feedback, navigation/logout/reload, provider/permission failure paths and appropriate disposable fixtures for writes/deletes. Earlier ADMIN/DRIVER sessions do not establish Passenger-role acceptance.",
+      "evidenceStatus": "NOT_RUN",
+      "nextExperiment": "Capture genuine Passenger plus available Admin Settings/Feedback/navigation/logout/reload/failure states, using approved test accounts/fixtures. Carry remaining control/state census forward explicitly.",
+      "oracle": "Finish the genuine Passenger-role and remaining Admin/Passenger feature/state census, including Settings/Feedback, navigation/logout/reload, provider/permission failure paths and appropriate disposable fixtures for writes/deletes. Earlier ADMIN/DRIVER sessions do not establish Passenger-role acceptance."
+    },
+    {
+      "id": "337-04",
+      "issue": 337,
+      "requirement": "Run an armed service with boarding, walking/vehicle ETAs, real chat delivery, completion/feedback, restore/history and automatic return; movement without a session cannot complete these gates (#245/#300).",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Run normal armed boarding/ETA/chat/completion/feedback/history/return when feasible. Unarmed phases remain useful but do not fulfill these lifecycle gates.",
+      "oracle": "Run an armed service with boarding, walking/vehicle ETAs, real chat delivery, completion/feedback, restore/history and automatic return; movement without a session cannot complete these gates (#245/#300)."
+    },
+    {
+      "id": "337-05",
+      "issue": 337,
+      "requirement": "Diagnose the remaining device -11/-1 transport failures and previously observed degraded-health/67-second delivery gap; correlate same-attempt device/HTTP/backend/dependency evidence, controlled network/backend recovery and fresh marker observations. Three captured read timeouts had inspector HTTP 202; their device acknowledgement is unknown.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Correlate same-attempt transport/dependency evidence for -11/-1 and any degraded/gap event. Preserve accepted-with-unknown-device-ack outcomes and actual recovery.",
+      "oracle": "Diagnose the remaining device -11/-1 transport failures and previously observed degraded-health/67-second delivery gap; correlate same-attempt device/HTTP/backend/dependency evidence, controlled network/backend recovery and fresh marker observations. Three captured read timeouts had inspector HTTP 202; their device acknowledgement is unknown."
+    },
+    {
+      "id": "337-06",
+      "issue": 337,
+      "requirement": "Complete visibility/suspension-aware browser timing and independent paint observation across all roles/network profiles, including missing render/target correlations and the sparse Admin capture; exact one-way latency remains qualified by clock uncertainty.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Export periodically with visibility/lifecycle events; obtain role/network timing pairs and independent visual observations where possible. Keep missing paint and clock uncertainty explicit.",
+      "oracle": "Complete visibility/suspension-aware browser timing and independent paint observation across all roles/network profiles, including missing render/target correlations and the sparse Admin capture; exact one-way latency remains qualified by clock uncertainty."
+    },
+    {
+      "id": "337-07",
+      "issue": 337,
+      "requirement": "Complete independent GNSS-reference accuracy, verified installed firmware/receiver identity, acquisition/reacquisition and controlled compound-fault acceptance under #300; the new continuous serial/cloud/HTTP exports and 100-plus moving Passenger timing pairs are recorded in the consolidated comment.",
+      "evidenceStatus": "BLOCKED",
+      "nextExperiment": "Capture identity, reference and safe acquisition/compound recovery under #300; missing instruments/installed image remain distinct blockers.",
+      "oracle": "Complete independent GNSS-reference accuracy, verified installed firmware/receiver identity, acquisition/reacquisition and controlled compound-fault acceptance under #300; the new continuous serial/cloud/HTTP exports and 100-plus moving Passenger timing pairs are recorded in the consolidated comment."
+    },
+    {
+      "id": "337-08",
+      "issue": 337,
+      "requirement": "Finish the strict acceptance ledger and remaining offline/timeout/race/fix-loss/multiple-bus/provider/role matrices; do not turn static source coverage or unit/mock success into full live or release certification.",
+      "evidenceStatus": "OBSERVED_PARTIAL",
+      "nextExperiment": "Populate strict evidence ledger for every exercised state; retain offline/timeout/race/fix-loss/multiple-bus/provider/role gaps. No static/mock evidence promotion.",
+      "oracle": "Finish the strict acceptance ledger and remaining offline/timeout/race/fix-loss/multiple-bus/provider/role matrices; do not turn static source coverage or unit/mock success into full live or release certification."
+    }
+  ]
+}

@@ -150,6 +150,21 @@ function installBrowserApi(): void {
       );
     },
   };
+  const lifecycle = (trigger: string, persisted: boolean | null = null) => {
+    appendRecord(ensureState(), {
+      event: "browser_lifecycle",
+      trigger,
+      persisted,
+      browserMonotonicAtMs: monotonicNow(),
+    });
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener?.("visibilitychange", () => lifecycle("visibilitychange"));
+  }
+  window.addEventListener?.("pagehide", event => lifecycle("pagehide", event.persisted));
+  window.addEventListener?.("pageshow", event => lifecycle("pageshow", event.persisted));
+  window.addEventListener?.("online", () => lifecycle("online"));
+  window.addEventListener?.("offline", () => lifecycle("offline"));
 }
 
 function ensureState(): TraceState {
@@ -168,7 +183,15 @@ function appendRecord(
     eventId: current.nextEventId,
     runId: current.runId,
     scenario: current.scenario,
+    browserWallAtMs: wallClockNow(),
     ...record,
+    browserVisibilityState: typeof document !== "undefined" &&
+      ["visible", "hidden"].includes(document.visibilityState) ? document.visibilityState : "unknown",
+    // This browser hint is not proof that Firebase, the backend or Maps is reachable.
+    browserOnline: typeof navigator !== "undefined" && typeof navigator.onLine === "boolean"
+      ? navigator.onLine : null,
+    browserReducedMotion: typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : null,
   });
   current.nextEventId += 1;
 }
@@ -195,7 +218,8 @@ function liveTimingFields(
     sampledAtDeviceMs: readNumber(raw?.sampledAt) ?? readNumber(value.timestamp),
     deviceSentAtDeviceMs: readNumber(value.deviceSentAt),
     backendReceivedAtMs: readNumber(value.backendReceivedAt),
-    rtdbCommittedAtMs: readNumber(value.rtdbCommittedAt) ?? readNumber(value.receivedAt),
+    // Keep the export schema stable and accept historical alias-only captures.
+    rtdbCommittedAtMs: readNumber(value.receivedAt) ?? readNumber(value.rtdbCommittedAt),
   };
 }
 
@@ -227,7 +251,8 @@ export function recordTelemetryListenerDelivery(
 export function recordTelemetryRender(
   entry: ActiveBusEntry,
   consumer: "admin" | "passenger",
-  displayKind: "matched" | "raw" | "none",
+  displayKind: "matched" | "raw" | "held" | "none",
+  event: "browser_render" | "browser_marker_settled" = "browser_render",
 ): void {
   if (!telemetryTraceEnabled()) return;
   const current = ensureState();
@@ -235,7 +260,8 @@ export function recordTelemetryRender(
   const serverOffset = current.firebaseServerTimeOffsetMs;
   const routeId = entry.routeId ?? "unknown-route";
   appendRecord(current, {
-    event: "browser_render",
+    event,
+    ...(event === "browser_marker_settled" ? { markerToleranceMeters: 0.05 } : {}),
     consumer,
     displayKind,
     ...liveTimingFields(
@@ -248,6 +274,47 @@ export function recordTelemetryRender(
     browserEstimatedServerAtMs:
       serverOffset === null ? null : browserWallAtMs + serverOffset,
   });
+}
+
+type RealtimeSource = "active_buses" | "messages";
+
+function recordRealtime(event: string, fields: TraceRecord): void {
+  if (!telemetryTraceEnabled()) return;
+  const current = ensureState();
+  appendRecord(current, { event, browserMonotonicAtMs: monotonicNow(), ...fields });
+}
+
+/** Logical application watch groups, not physical Firebase connections. */
+export function recordRealtimeWatch(source: RealtimeSource, attached: boolean): void {
+  recordRealtime("realtime_watch", { source, attached });
+}
+
+/** Application JSON size only: never store payload values or claim wire/billed bytes. */
+export function recordRealtimePayload(source: RealtimeSource, value: unknown, fromCache = false): void {
+  if (!telemetryTraceEnabled()) return;
+  let bytes: number | null = null;
+  try { bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { /* Missing estimate stays explicit. */ }
+  recordRealtime("realtime_payload", { source, bytes, fromCache });
+}
+
+export function recordRealtimeConnection(connected: boolean): void {
+  recordRealtime("realtime_connection", { connected });
+}
+
+export function beginMessageWriteTrace(sessionId: string): number | null {
+  if (!telemetryTraceEnabled()) return null;
+  const startedAtMs = monotonicNow();
+  recordRealtime("message_attempt", { sessionId, startedAtMs });
+  return startedAtMs;
+}
+
+export function recordMessageWriteTrace(sessionId: string, messageId: unknown, startedAtMs: number | null, status: number): void {
+  if (startedAtMs === null) return;
+  recordRealtime("message_write", { sessionId, messageId: readString(messageId), startedAtMs, status });
+}
+
+export function recordMessageListenerTrace(sessionId: string, messageId: string): void {
+  recordRealtime("message_listener", { sessionId, messageId });
 }
 
 if (telemetryTraceEnabled()) ensureState();

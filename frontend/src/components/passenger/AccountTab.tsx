@@ -6,6 +6,16 @@ import { useAuth } from "@/hooks/useAuth";
 import FeedbackModal from "@/components/shared/FeedbackModal";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { auth } from "@/lib/firebaseAuth";
+import { apiRequest } from "@/lib/apiClient";
+
+function ProfilePhoto({ photoURL }: { photoURL?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!photoURL || failed) {
+    return <CircleUserRound role="img" aria-label="Default profile" className="w-9 h-9" style={{ color: "var(--text-ghost)" }} />;
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={photoURL} alt="Profile" referrerPolicy="no-referrer" onError={() => setFailed(true)} className="w-full h-full object-cover" />;
+}
 
 export default function AccountTab() {
   const {
@@ -21,6 +31,7 @@ export default function AccountTab() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeletionAccepted, setShowDeletionAccepted] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletionStatus, setDeletionStatus] = useState("");
 
@@ -35,19 +46,25 @@ export default function AccountTab() {
     }
     try {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch(`${backendUrl}/api/privacy/deletion-request`, {
+      const result = await apiRequest<{ accepted?: boolean }>("/api/v2/privacy-deletion-requests", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
+        fallbackError: "Deletion request failed.",
       });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Deletion request failed.");
-      setDeletionStatus("Deletion queued. Your account will be removed shortly.");
+      if (result?.accepted !== true) throw new Error("Deletion acknowledgement is missing.");
+      setDeletionStatus("");
       setShowDeleteConfirm(false);
+      setShowDeletionAccepted(true);
     } catch (error) {
       setDeletionStatus(error instanceof Error ? error.message : "Deletion request failed.");
+      setShowDeleteConfirm(false);
     } finally {
       setIsDeleting(false);
     }
+  };
+  const dismissDeletionAccepted = () => {
+    setShowDeletionAccepted(false);
+    void logout();
   };
   return (
     <div className="flex-1 overflow-y-auto flex flex-col pt-safe px-5" style={{ background: "var(--surface-0)" }}>
@@ -58,13 +75,9 @@ export default function AccountTab() {
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
           <div className="flex flex-col items-center gap-5 relative z-10">
             <div className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden"
+              role="group" aria-label="Profile photo"
               style={{ background: "var(--surface-3)", border: "1px solid var(--border-default)" }}>
-               {user?.photoURL ? (
-                 // eslint-disable-next-line @next/next/no-img-element
-                 <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-               ) : (
-                 <CircleUserRound className="w-9 h-9" style={{ color: "var(--text-ghost)" }} />
-               )}
+               <ProfilePhoto key={JSON.stringify([user?.uid, user?.photoURL])} photoURL={user?.photoURL} />
             </div>
             
             <div className="text-center">
@@ -75,8 +88,8 @@ export default function AccountTab() {
                   </h2>
                   <span className="text-[10px] font-semibold px-2 py-1 rounded-md"
                     style={{ 
-                      background: "rgba(59, 130, 246, 0.10)", 
-                      color: "#60A5FA",
+                      background: "var(--accent-subtle)",
+                      color: "var(--accent)",
                       letterSpacing: "0.05em" 
                     }}>
                     {user.role?.toUpperCase() || "PASSENGER"}
@@ -99,7 +112,8 @@ export default function AccountTab() {
         {/* Actions List */}
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-subtle)" }}>
-          <button
+          {user && <button
+            type="button"
             onClick={() => setShowFeedback(true)}
             className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group active:bg-[var(--surface-4)]"
             style={{ borderBottom: "1px solid var(--border-subtle)" }}
@@ -115,11 +129,12 @@ export default function AccountTab() {
             </div>
             <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" 
               style={{ color: "var(--text-ghost)" }} />
-          </button>
+          </button>}
 
           {user ? (
             <>
               <button
+                type="button"
                 onClick={() => setShowLogoutConfirm(true)}
                 className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
               >
@@ -132,10 +147,15 @@ export default function AccountTab() {
                     Sign Out
                   </span>
                 </div>
+                <ChevronRight className="w-4 h-4" aria-hidden="true" style={{ color: "var(--text-ghost)" }} />
               </button>
               {user.role === "passenger" && (
                 <button
-                  onClick={() => setShowDeleteConfirm(true)}
+                  type="button"
+                  onClick={() => {
+                    setDeletionStatus("");
+                    setShowDeleteConfirm(true);
+                  }}
                   className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
                   style={{ borderTop: "1px solid var(--border-subtle)" }}
                 >
@@ -148,11 +168,13 @@ export default function AccountTab() {
                       Delete Account
                     </span>
                   </div>
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" style={{ color: "var(--text-ghost)" }} />
                 </button>
               )}
             </>
           ) : (
             <button
+              type="button"
               onClick={loginWithGoogle}
               disabled={!loginReady || loginLoading}
               className="w-full flex items-center justify-between p-4 bg-transparent hover:bg-[var(--surface-3)] transition-colors group"
@@ -194,9 +216,9 @@ export default function AccountTab() {
           </p>
         )}
         
-        {showFeedback && (
+        {showFeedback && user && (
           <FeedbackModal
-            userId={user?.uid || "anonymous"}
+            userId={user.uid}
             onClose={() => setShowFeedback(false)}
           />
         )}
@@ -222,13 +244,23 @@ export default function AccountTab() {
       <ConfirmModal
         isOpen={showDeleteConfirm}
         title="Delete Account?"
-        description="Permanently delete your Eki account and associated personal data? This action cannot be undone."
+        description="Permanently delete your Eki profile and login account? Your feedback, passenger ride entries, and messages will be retained. This action cannot be undone."
         confirmText="Delete Account"
         cancelText="Cancel"
         variant="danger"
         loading={isDeleting}
         onConfirm={confirmDeletion}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        isOpen={showDeletionAccepted}
+        title="Deletion requested"
+        description="Your account deletion request has been queued. You will now be signed out. Your feedback, passenger ride entries, and messages will be retained."
+        confirmText="OK"
+        showCancel={false}
+        variant="info"
+        onConfirm={dismissDeletionAccepted}
+        onCancel={dismissDeletionAccepted}
       />
     </div>
   );

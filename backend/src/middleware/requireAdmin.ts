@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import {
   AuthVerificationCapacityError,
-  verifyRevocationAwareIdToken,
 } from "../services/authTokenVerifier";
+import { verifyRequestToken } from "./verifiedRequest";
 import { recordAuthAttempt } from "../lib/metrics";
+import { authorizationIsCurrent } from "../services/userAuthorization";
 
 const EXPECTED_AUTH_ERROR_CODES = new Set([
   "auth/argument-error",
@@ -26,7 +27,7 @@ function authErrorCode(error: unknown): string | undefined {
 
 /**
  * Express middleware that verifies a Firebase ID token from the Authorization header
- * and checks that the user has the `admin: true` custom claim.
+ * and checks current, backend-published admin authority in both databases.
  *
  * Usage:  router.post("/compute-polyline", requireAdmin, handler);
  *
@@ -48,15 +49,39 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   const idToken = authHeader.split("Bearer ")[1];
 
   try {
-    const decoded = await verifyRevocationAwareIdToken(idToken);
+    const decoded = await verifyRequestToken(req, idToken);
 
-    // Check for admin custom claim
-    if (!decoded.admin) {
+    // Match the database policy, including legacy tokens without a version.
+    if (decoded.admin !== true || decoded.role !== "admin" ||
+        typeof decoded.authorizationVersion !== "string") {
       recordAuthAttempt("denied");
       res.status(403).json({
         error: "Forbidden: Admin access required.",
         code: "ADMIN_REQUIRED",
         phase: "authentication",
+      });
+      return;
+    }
+
+    // Auth revocation has second resolution: auth_time === validSince remains
+    // provider-valid. A saved token must still lose HTTP privilege immediately,
+    // including across a later restoration of the same account's admin role.
+    let current: boolean;
+    try {
+      current = await authorizationIsCurrent(decoded.uid, decoded);
+    } catch {
+      recordAuthAttempt("error");
+      res.set("Retry-After", "1").status(503).json({
+        error: "Authorization service unavailable. Retry shortly.",
+        code: "AUTH_UNAVAILABLE", phase: "authentication",
+      });
+      return;
+    }
+    if (!current) {
+      recordAuthAttempt("denied");
+      res.status(403).json({
+        error: "Forbidden: Admin access required.",
+        code: "ADMIN_REQUIRED", phase: "authentication",
       });
       return;
     }

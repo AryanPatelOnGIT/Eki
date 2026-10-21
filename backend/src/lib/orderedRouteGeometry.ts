@@ -22,7 +22,13 @@ export async function computeOrderedRouteGeometry(
   for (let index = 0; index < points.length - 1; index += MAX_REQUEST_POINTS - 1) {
     chunks.push(points.slice(index, index + MAX_REQUEST_POINTS));
   }
-  const results = await Promise.all(chunks.map(compute));
+  // Keep operation ownership until every billable request has settled, even
+  // when one chunk fails before the others return.
+  const outcomes = await Promise.allSettled(chunks.map(async chunk => compute(chunk)));
+  const results = outcomes.map(outcome => {
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  });
   if (results.length === 1) return results[0];
   const path: LatLng[] = [];
   let distanceMeters = 0;

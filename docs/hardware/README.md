@@ -1,10 +1,15 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
 has no Firebase credential and cannot choose its bus or route.
+Publisher/diagnostic HTTPS uses a one-second bounded DNS caller wait before
+hostname-validated TLS; see [cold-connect ownership and limits](DNS_COLD_CONNECT.md).
+An authenticated encrypted flash checkpoint can restore one committed fix after
+complete power loss. This does not preserve every fix; see the
+[recovery limits and stationary acceptance procedure](COLD_POWER_RECOVERY.md).
 
 ## Before you start
 
@@ -26,11 +31,16 @@ at `hardware/keys/secure_boot_signing_key.pem`; that key must exist only in the
 approved signing environment.
 
 ```powershell
-npm install
+npm ci
 py -m pip install --upgrade platformio
 Copy-Item backend/.env.example backend/.env
 Copy-Item hardware/include/secrets.example.h hardware/include/secrets.h
 ```
+
+For a laptop test, set backend `NODE_ENV=development`, `PORT=4000`, the frontend
+origins in `CORS_ORIGIN`, and keep `RETENTION_SWEEPER_ENABLED=false`. The copied
+template uses production mode/port and requires an explicit production retention
+override. Follow [local setup](../GETTING_STARTED.md#local-development).
 
 For the backend, set Firebase Admin credentials or ADC,
 `FIREBASE_DATABASE_URL`, and an appropriate `GOOGLE_MAPS_API_KEY` when routes
@@ -115,8 +125,24 @@ Choose exactly one build path:
 | Purpose | Command | Use |
 |---|---|---|
 | Host policy tests | `platformio test --project-dir hardware -e native` | Safe repeatable tests; no board or secrets required by the native target |
+| Host protocol tests | `python hardware/scripts/test_host_protocols.py` after native tests | Requires gcc/g++; real AES-GCM checkpoint codec, TinyGPSPlus parser and TLS wrapper, with host adapters for radio/tasks/entropy |
 | Bench/development board | `platformio run --project-dir hardware -e esp32dev` then `platformio run --project-dir hardware -e esp32dev --target upload` | Local testing only; never install this image in a production vehicle |
 | Signed fleet board | Follow [fleet security provisioning](../operations/HARDWARE_SECURITY_PROVISIONING.md) and use `esp32dev-secure` | Production-capable artifact; requires the signing key, ECO3+ board, witnessed first boot and physical evidence |
+
+Host protocol tests download checksum-pinned upstream Mbed TLS 2.28.7, matching
+the version in the pinned Arduino SDK. They reject checkpoint tampering, recover
+the previous authenticated journal record, test no-fix/checksum/clock-rollover
+NMEA input, and exercise actual cipher configuration and single-use ECDH keys.
+Radio entropy and task ownership are deterministic host adapters; ESP acceleration,
+certificate/hostname behavior through WiFiClientSecure and physical flash writes
+still require board acceptance.
+
+CI also runs `hardware/scripts/test_signed_image.py` on the compiled signed fleet
+image using its ephemeral CI-only RSA-3072 key. It rejects changed application
+bytes, an altered signature with repaired CRC, truncation, unsigned data and a
+foreign key. Local `--fixture` mode generates disposable data/key material to
+check this harness; it does not certify a fleet artifact, OTA installation,
+rollback or provision a board.
 
 After flashing, open the monitor at 115200 baud and verify, without exposing
 credential values:
@@ -134,9 +160,10 @@ credential values:
 
 If a boot validation message names `WIFI_SSID`, `WIFI_PASS`, `DEVICE_ID`,
 `DEVICE_SECRET`, `BACKEND_URL`, or `BACKEND_ROOT_CA`, correct that definition in
-the ignored file and rebuild. A 401/403 is a backend registry/credential or
-assignment problem; update the registry and flash the corrected device secret
-when required. A TLS error is a hostname, clock, certificate-chain, or root-CA
+the ignored file and rebuild. A 401 means invalid credentials and latches the
+radio off until restart; a 403 means a valid device awaits an assignment and
+retries after one minute. Repair the backend assignment without reflashing when
+the compiled credentials are correct. A TLS error is a hostname, clock, certificate-chain, or root-CA
 problem; do not bypass certificate validation.
 
 ## Wiring
@@ -193,7 +220,9 @@ The artifact request never receives the device credential. The device verifies
 the stream digest before activating the slot, and Secure Boot V2 rejects an
 image not signed by the fleet key. A candidate becomes permanent only after an
 authenticated telemetry or diagnostics response; otherwise the bootloader
-rolls it back after five minutes. The artifact host certificate must chain to
+rolls it back after five minutes, including time spent outside Wi-Fi coverage.
+Install at a depot with stable backend access and rehearse the dead-zone case
+on a spare board. The artifact host certificate must chain to
 `BACKEND_ROOT_CA`.
 
 Arduino-ESP32 2.x unconditionally initializes a small framework system
@@ -218,17 +247,32 @@ done safely while retaining the current Wi-Fi stack.
   backend's 60-second freshness gate. A 100-sample RTC ring survives resets, evicts oldest on overflow,
   sends newest first after outages, compacts acknowledged older fixes, and
   discards samples outside the backend's 55-second safety margin.
+- On cold boot, one compatible flash checkpoint can restore its original retry
+  sequence. Warm RTC state wins. Checkpoints use a ten-second scheduling interval;
+  newer uncommitted fixes can be lost. Serial `[PowerCheckpoint]` logs expose
+  readiness, recovery, storage slots, interval, commit outcome and write time.
 - Wi-Fi retries indefinitely with bounded 5-60 second exponential backoff,
-  strongest-AP fast scan, auto-reconnect, and modem sleep disabled.
+  strongest-AP fast scan, auto-reconnect, and modem sleep disabled. A retry
+  also starts when the ESP32 has lost its access-point association even if the
+  Arduino Wi-Fi status still says connected. The retry always issues a new
+  connect attempt after any preceding disconnect error; `[WiFi]` serial lines
+  report state and retry results without printing the SSID or password.
 - HTTP 200/202 succeeds. Transport errors, 408/425/429, and 5xx retain the
   newest eligible sample with bounded backoff. Other permanent rejection drops
-  that sample. A 401/403 latches publishing off, disables the station radio,
-  and emits three GPIO2 pulses every two seconds; correction requires updating
-  `secrets.h` and reflashing.
+  that sample. A 401 latches publishing off, disables the station radio, and
+  emits three GPIO2 pulses every two seconds. A 403 keeps Wi-Fi enabled and
+  retries after one minute while waiting for a valid backend assignment.
 - A 25-second watchdog covers both tasks. Authenticated remote diagnostics send
   bounded health state every five minutes while idle and never send credentials.
-- Fleet OTA checks are locally idle/stopped and server-gated against active
-  rides. Downloaded candidates are size/digest checked, secure-boot verified,
+- Fleet OTA discovery runs on its own watched task. Installation requires a
+  fresh, protected stopped-GNSS snapshot and an authenticated transactional
+  reservation of the same bus lock used by ride startup/turnaround. Motion or
+  stale GNSS aborts the candidate before activation. The lock has no timed
+  expiry: failed/rebooted boards release it through the authenticated
+  firmware installation endpoint, including uncertain acquire responses.
+  If a board is lost, an operator must prove flashing has stopped before
+  removing its firmware lock; never delete a live ride lock.
+  Downloaded candidates are size/digest checked, secure-boot verified,
   installed into the inactive slot and health-confirmed with automatic rollback.
 
 Read [Hardware telemetry](HARDWARE_TELEMETRY.md) for parameters,
@@ -236,6 +280,43 @@ failure points, and physical acceptance cases. A production release still
 requires controlled signing, immutable HTTPS hosting, backend release metadata,
 and spare-board rollout/rollback evidence.
 
+
+Clock discipline requires three distinct GNSS UTC epochs advancing with the
+monotonic clock (500–3000 ms spacing, at most 250 ms cadence error). GNSS-only
+startup remains supported after that corroboration. Once system time exists,
+corrections above 10 seconds require a fresh agreeing peer; a GNSS/NTP
+disagreement above 1.5 seconds pauses new TLS/telemetry instead of changing
+certificate time. NTP candidates are guarded before IDF sets time. Peer NTP
+references expire after ten minutes, and clock faults retry NTP after one minute.
+These checks establish consistency, not cryptographic GNSS/NTP authenticity.
+
+Firmware refuses outbound telemetry/diagnostics when ArduinoJson overflows,
+required fields are missing, or the complete object does not fit the buffer.
+Serial resource evidence reports JSON preparation time, heap before/after,
+minimum heap, largest allocatable block and task stack headroom (bytes in the
+pinned ESP32 port). TLS connection traces include key-preparation headroom.
+Native allocator-exhaustion tests exercise the actual serializer.
+
+Detailed traces default on in development and off in fleet builds; set
+`EKI_ENABLE_FLEET_TRACES=1` for a bounded acceptance capture. The
+`esp32dev-quiet` environment measures the same development runtime with traces
+disabled. Sparse health/resource diagnostics remain enabled. No CA, cipher,
+curve, fresh-key or credential policy changes accompany trace gating.
+
+Diagnostics retain separate short-lived transport: the normal five-minute
+interval exceeds the backend's 65-second keep-alive timeout. A persistent
+socket cannot deliver a warm connection over that idle interval; changing
+cadence or transport requires measured board evidence. Document/pool reuse is
+also deferred until the new allocation/headroom records justify it.
+
+For new latency captures, firmware trace version 2 adds a correlated
+`device_capture` record with receiver UTC, RMC first-byte/checksum arrival and
+evaluation/enqueue monotonic times. `device_http` retains the response-header
+timing used for clock estimation; `device_http_complete` records send, headers
+and completed body drain per attempt. Recovery without receiver evidence stays
+unavailable in the analyzer. The one-second evaluation cadence is unchanged:
+its phase delay is now measured, including time spent before enqueue.
+`configuredHandshakeTimeoutMs` is a configured limit, not a measured handshake.
 
 Live ESP32 verification and TLS compatibility details are recorded in
 `docs/testing/LIVE_ESP32_LATENCY_RESULT.md`. Telemetry retains its HTTPClient

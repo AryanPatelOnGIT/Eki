@@ -47,6 +47,7 @@ describe("production security configuration", () => {
     expect(database.rules.activeBuses[".write"]).toBe(false);
     expect(activeBus[".write"]).toBe(false);
     expect(database.rules.activeBuses[".indexOn"]).toContain("busId");
+    expect(database.rules.activeBuses[".indexOn"]).toContain("timestamp");
     // Dead rule blocks are gone: nothing reads RTDB messages/users, and the
     // driverRouteAssignments mirror is Admin-SDK-only (default-deny for
     // clients is identical to the removed explicit denies) (issue #49 L2).
@@ -157,7 +158,7 @@ describe("production security configuration", () => {
     // Firestore caches repeated access calls for the same document within a
     // rule evaluation. The helper deliberately repeats the same sessionDoc
     // path only behind authenticated branches, keeping one billed get().
-    expect(helper.split("sessionDoc(").length - 1).toBe(4);
+    expect(helper.split("sessionDoc(").length - 1).toBe(5);
     expect(rules).not.toContain("function isSessionPassenger");
   });
 
@@ -178,7 +179,7 @@ describe("production security configuration", () => {
     expect(helper).toContain("isAuthenticated() &&");
   });
 
-  it("keeps rules get() cost bounded: one session fetch, no write-path gets (issue #40)", () => {
+  it("bounds session reads to four distinct documents and keeps writes backend-only", () => {
     const rules = workspaceFile("firestore.rules");
     const feedback = ruleBlock(rules, "match /feedbacks/{feedbackId}");
     const messages = ruleBlock(rules, "match /messages/{messageId}");
@@ -187,21 +188,19 @@ describe("production security configuration", () => {
     const operator = ruleBlock(rules, "function isSessionOperator");
     const sessionHelper = ruleBlock(rules, "function canReadSession");
 
-    // Chat create used to cost 2 session get()s + 2 rate-limit get()/getAfter();
-    // feedback create cost 3 session get()s (issue #40). Those writes are now
-    // backend-authoritative, so the ONLY get() left in the whole rules file is
-    // the single session fetch shared by read checks. This guard fails if a
-    // future rule reintroduces a second fetch or a write-path get().
-    // (Comments are stripped so "single get()" prose doesn't count.)
+    // Privileged reads consult current authorization, profile and registry in
+    // addition to the session. Repeated identical paths are cached by rules.
+    // Writes stay backend-only; reads remain under the ten-document limit.
     const code = rules.replace(/\/\/.*$/gm, "");
-    expect(code.match(/get\(/g) ?? []).toHaveLength(1);
+    const paths = [...code.matchAll(/get\(([^\n]+)\)\.data/g)].map(match => match[1]);
+    expect(new Set(paths).size).toBe(3);
+    expect(code.match(/get\(/g) ?? []).toHaveLength(8);
     expect(code).not.toContain("getAfter(");
 
-    // The one allowed get() lives in the sessionDoc helper and is shared by
-    // exactly the two read helpers; client write rules must never call it.
+    // Session lookups share one cached document; writes never call them.
     expect(sessionHelper).toContain("sessionDoc(sessionId)");
-    expect(rules.match(/sessionDoc\(/g) ?? []).toHaveLength(7);
-    expect(operator.split("sessionDoc(").length - 1).toBe(1);
+    expect(rules.match(/sessionDoc\(/g) ?? []).toHaveLength(9);
+    expect(operator.split("sessionDoc(").length - 1).toBe(2);
     expect(feedback).not.toContain("sessionDoc(");
     expect(messages).not.toContain("sessionDoc(");
     expect(rateLimits).not.toContain("sessionDoc(");
@@ -256,11 +255,11 @@ describe("production security configuration", () => {
     expect(feedbackService).toContain("sessionCompleted");
     expect(feedbackService).toContain("isSessionPassenger");
     const messagingPanel = workspaceFile("frontend/src/components/shared/MessagingPanel.tsx");
-    const feedbackPage = workspaceFile("frontend/src/app/feedback/page.tsx");
+    const feedbackPage = workspaceFile("frontend/src/components/admin/FeedbackPanel.tsx");
     expect(messagingPanel).toContain("limitToLast(200)");
     expect(messagingPanel).toContain("requestId: pending.requestId");
     expect(messagingPanel).not.toContain("currentUserName");
-    expect(feedbackPage).toContain("/api/feedback/${encodeURIComponent(id)}/status");
+    expect(feedbackPage).toContain("/api/v2/feedback/${encodeURIComponent(id)}");
     expect(feedbackPage).toContain("apiRequest(");
     expect(feedbackPage).not.toContain("updateDoc(");
   });
@@ -294,9 +293,12 @@ describe("production security configuration", () => {
     expect(routes).toContain("allow read: if isAuthenticated();");
     expect(buses).toContain("allow read: if isAuthenticated();");
     expect(settings).toContain("allow read: if isAuthenticated();");
-    expect(locations).toContain("allow read, write: if isAdmin();");
+    expect(locations).toContain("allow read: if isAdmin();");
+    expect(locations).toContain("allow write: if false;");
     expect(planRoute).toContain('router.post("/", requireAuth');
+    expect(planRoute).toContain('segmentRoutes.get("/:routeId/segments", requireAuth');
     expect(routesList).toContain('router.get("/", requireAuth');
+    expect(routesList).toContain('routesCollectionRoutes.get("/", requireAuth');
   });
 
   it("keeps App Check enforcement out of Firestore rules", () => {
@@ -305,9 +307,14 @@ describe("production security configuration", () => {
     expect(rules).not.toContain("isAppChecked");
   });
 
-  it("keeps Realtime Database rules valid while App Check is enforced by Firebase", () => {
+  it("keeps Realtime Database identity and role authorization after App Check removal", () => {
     const database = JSON.parse(workspaceFile("database.rules.json"));
-    expect(database.rules.activeBuses[".read"]).toBe("auth != null");
+    expect(database.rules.activeBuses[".read"]).toBe(false);
+    expect(database.rules.publicRouteBuses.$routeId.buses[".read"]).toBe("auth != null");
+    expect(database.rules.publicRouteBuses[".read"]).toContain("auth.token.authorizationVersion");
+    expect(database.rules.publicRouteBuses[".read"]).toContain("root.child('_userAuthorization')");
+    expect(database.rules.clientProjectionStatus[".read"]).toBe(false);
+    expect(database.rules.clientProjectionStatus.public[".read"]).toBe("auth != null");
     expect(database.rules.activeRouteGeometry[".read"]).toBe("auth != null");
     expect(database.rules.activeRouteGeometry[".write"]).toBe(false);
     expect(JSON.stringify(database)).not.toContain("request.app");
@@ -356,7 +363,8 @@ describe("production security configuration", () => {
     const passengerSource = loadPassengerSource();
     const passengerNormalizer = workspaceFile("frontend/src/lib/passengerLiveBus.ts");
 
-    expect(operations).toContain("/api/shifts/start");
+    expect(operations).toContain("/api/v2/ride-sessions");
+    expect(operations).toContain('"Idempotency-Key": key');
     expect(operations).not.toContain("updateDoc(");
     expect(passengerSource).toContain("passengerLiveBuses(");
     expect(passengerNormalizer).toContain(
@@ -450,9 +458,14 @@ describe("production security configuration", () => {
     expect(shard).toContain("RATE_LIMIT_SHARD_FACTOR");
     expect(shard).toContain("Math.floor");
     expect(server).toContain("readRateLimitShardFactor()");
-    expect(server).toContain("shardedLimit(200");
+    const admission = workspaceFile("backend/src/lib/browserAdmission.ts");
+    expect(admission).toContain("read: 200, mutation: 30");
+    expect(admission).toContain("shardedLimit(limits.read");
+    expect(admission).toContain("shardedLimit(limits.mutation");
+    expect(server.indexOf("app.use(cors(")).toBeLessThan(server.indexOf("app.use(createBrowserIngressLimiter("));
     expect(server).toContain("shardedLimit(30");
-    expect(server).toContain("shardedLimit(10");
+    expect(server).toContain("createRouteComputeLimiter(RATE_LIMIT_SHARD_FACTOR)");
+    expect(workspaceFile("backend/src/lib/routeComputeLimiter.ts")).toContain("shardedLimit(10");
     expect(devices).toContain("shardedLimit(requestsPerWindow");
     // Operators must set the factor to the deployed replica count.
     expect(envExample).toContain("RATE_LIMIT_SHARD_FACTOR");
@@ -507,15 +520,15 @@ describe("production security configuration", () => {
     expect(authHook).toContain("claimsUpdated === true");
     expect(authHook).toContain("firebaseUser.getIdToken(true)");
     expect(authHook).not.toContain("setDoc(userDocRef");
-    expect(settingsHook).toContain("/api/settings");
+    expect(settingsHook).toContain("/api/v2/settings/global");
     expect(settingsHook).not.toContain('setDoc(doc(db, "settings"');
   });
 
-  it("allows the minimal reCAPTCHA Enterprise CSP surface required by App Check", () => {
+  it("omits the retired reCAPTCHA CSP surface while keeping Google sign-in frames", () => {
     const cspBuild = workspaceFile("scripts/update-csp.mjs");
 
-    expect(cspBuild).toContain('"https://www.google.com/recaptcha/"');
-    expect(cspBuild).toContain('"https://recaptcha.google.com/recaptcha/"');
+    expect(cspBuild).not.toContain('recaptcha/');
+    expect(cspBuild).toContain('"https://accounts.google.com"');
     expect(cspBuild).toContain("const frameSources");
     expect(cspBuild).toContain("/frame-src [^;]+;/");
   });
@@ -627,7 +640,8 @@ describe("production security configuration", () => {
     expect(firmware).toContain("settimeofday(&tv, nullptr)");
     expect(firmware).toContain("std::numeric_limits<time_t>::max()");
     expect(firmware).toContain("NTP_CROSS_CHECK_INTERVAL_MS");
-    expect(firmware).toContain("sntp_set_time_sync_notification_cb");
+    expect(firmware).toContain('extern "C" void sntp_sync_time');
+    expect(firmware).toContain("eki::clock::candidateSafe");
     expect(firmware).toContain("NTP/GNSS divergence=");
     expect(clockPolicy).toContain("utcToEpochMilliseconds");
     expect(clockPolicy).toContain("GNSS_CLOCK_CORRECTION_THRESHOLD_MS");
@@ -688,7 +702,7 @@ describe("production security configuration", () => {
     expect(routeEditor).not.toContain("setDoc(");
     expect(routeEditor).not.toContain("updateDoc(");
     expect(dashboard).toMatch(
-      /requestAdmin<\{ delayMinutes: number \}>\("\/api\/shifts\/delay",\s*\{\s*method: "PATCH"/,
+      /requestAdmin<\{ delayMinutes: number \}>\("\/api\/shifts\/delay",\s*\{[\s\S]*?method: "PATCH"/,
     );
     expect(dashboard).not.toContain("Force Offline");
     expect(dashboard).not.toContain("Position Override");
@@ -764,7 +778,7 @@ describe("production security configuration", () => {
     const engine = workspaceFile("backend/src/services/tripStateEngine.ts");
 
     expect(server).toContain('app.use("/api/shifts"');
-    expect(operations).toContain("/api/shifts/start");
+    expect(operations).toContain("/api/v2/ride-sessions");
     expect(operations).toContain("/api/shifts/stop");
     expect(operations).not.toContain("arrayUnion(");
     expect(operations).not.toContain("test_bus_1");
@@ -804,7 +818,7 @@ describe("production security configuration", () => {
     const completionBlock = engine.slice(
       engine.indexOf('if (tripState === "completed"'),
       engine.indexOf(
-        'if (tripState === "pre_departure" || tripState === "in_service")',
+        'if (isNewTelemetry) {',
       ),
     );
 
@@ -820,15 +834,15 @@ describe("production security configuration", () => {
     expect(engine).not.toContain('.doc(data.sessionId).update({');
     expect(engine).toContain("live.sessionId !== data.sessionId");
     expect(engine).not.toContain("snapshot.ref.update({ status: \"offline\" })");
-    expect(completionBlock.indexOf("await db.runTransaction")).toBeGreaterThan(-1);
-    expect(completionBlock.indexOf("await snapshot.ref.transaction")).toBeGreaterThan(
-      completionBlock.indexOf("await db.runTransaction"),
+    expect(completionBlock.indexOf("await workerTransaction(db,")).toBeGreaterThan(-1);
+    expect(completionBlock.indexOf("await workerRtdbTransaction(snapshot.ref,")).toBeGreaterThan(
+      completionBlock.indexOf("await workerTransaction(db,"),
     );
     const telemetry = workspaceFile(
       "backend/src/services/deviceTelemetryService.ts",
     );
     expect(telemetry).toContain("durableRideRestores");
-    expect(telemetry).toContain("scheduleDurableRideRestore(assignment, sample)");
+    expect(telemetry).toContain("scheduleDurableRideRestore(assignment, sample, persisted.claimId, persisted.recoverTerminal)");
     expect(telemetry).not.toContain("await restoreDurableRide(assignment, sample)");
   });
 
@@ -894,17 +908,19 @@ describe("production security configuration", () => {
       const sources = directive.trim().split(/\s+/);
       return [sources[0], sources.slice(1)] as const;
     }));
-    expect(directives.get("script-src")).toContain(
+    expect(directives.get("script-src")).toContain("https://apis.google.com");
+    expect(directives.get("script-src")).not.toContain(
       "https://bustrack-be165-default-rtdb.firebaseio.com",
+    );
+    expect(directives.get("connect-src")).not.toContain(
+      "https://rigging-everglade-tidal.ngrok-free.dev",
     );
     expect(directives.get("frame-src")).toEqual([
       "'self'",
       "https://accounts.google.com",
       "https://*.firebaseapp.com",
-      "https://www.google.com/recaptcha/",
-      "https://recaptcha.google.com/recaptcha/",
     ]);
-    expect(directives.get("connect-src")).toContain("https://www.google.com/recaptcha/");
+    expect(directives.get("connect-src")).not.toContain("https://www.google.com/recaptcha/");
     expect(directives.get("connect-src")).toContain("https://*.gstatic.com");
     expect(directives.get("connect-src")).toContain("https://*.ggpht.com");
     expect(headers.get("Strict-Transport-Security")).toMatch(/^max-age=\d+/);

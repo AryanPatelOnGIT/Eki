@@ -49,7 +49,10 @@ export default function SettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDirty = Object.keys(overrides).length > 0;
+  const changedFields = Object.fromEntries(Object.entries(overrides).filter(
+    ([key, value]) => value !== settings[key as keyof GlobalSettings],
+  )) as Partial<GlobalSettings>;
+  const isDirty = Object.keys(changedFields).length > 0;
 
   useEffect(() => {
     return () => {
@@ -68,7 +71,7 @@ export default function SettingsPanel() {
     }
     setSaving(true);
     try {
-      await saveSettings(draft);
+      await saveSettings(changedFields);
       setOverrides({});
       setSaved(true);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
@@ -121,6 +124,7 @@ export default function SettingsPanel() {
         <Field controlId="setting-service-start-time" label="Service Start Time" hint='Shown to passengers in the "no buses" empty state. e.g. "6:30 am"'>
           <input
             id="setting-service-start-time"
+            disabled={saving}
             type="text"
             value={draft.serviceStartTime}
             onChange={e => set("serviceStartTime", e.target.value)}
@@ -137,6 +141,7 @@ export default function SettingsPanel() {
         <Field controlId="setting-no-buses-headline" label="No Buses — Headline" hint='The bold text shown in the empty state. e.g. "No buses running"'>
           <input
             id="setting-no-buses-headline"
+            disabled={saving}
             value={draft.noBusesMessage}
             onChange={e => set("noBusesMessage", e.target.value)}
             placeholder="No buses running"
@@ -151,6 +156,7 @@ export default function SettingsPanel() {
         >
           <input
             id="setting-no-buses-subtext"
+            disabled={saving}
             value={draft.noBusesSubMessage}
             onChange={e => set("noBusesSubMessage", e.target.value)}
             placeholder="Service starts at {time}"
@@ -175,6 +181,7 @@ export default function SettingsPanel() {
         <Field controlId="setting-announcement-text" label="Announcement Text" hint="Keep it brief — shown in a slim banner strip">
           <textarea
             id="setting-announcement-text"
+            disabled={saving}
             value={draft.announcementText}
             onChange={e => set("announcementText", e.target.value)}
             placeholder="e.g. Heavy traffic near Central Park — expect delays on Route 1A"
@@ -186,6 +193,7 @@ export default function SettingsPanel() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => set("announcementActive", !draft.announcementActive)}
+            disabled={saving}
             className={`relative w-11 h-6 rounded-full transition-all ${draft.announcementActive ? "bg-emerald-500" : "bg-white/10"}`}
             role="switch"
             aria-checked={draft.announcementActive}

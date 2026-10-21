@@ -7,10 +7,10 @@ interface Coordinate {
 }
 
 /** Authoritative radius for selecting a new ride direction at an endpoint. */
-export const ENDPOINT_GEOFENCE_M = 20;
+export const ENDPOINT_GEOFENCE_M = 10;
 /** @deprecated Use ENDPOINT_GEOFENCE_M for new direction inference. */
 export const DIRECTION_INFERENCE_RADIUS_M = ENDPOINT_GEOFENCE_M;
-/** Turnaround arrival may use a broader, independently tuned arrival radius. */
+/** Parked return readiness after confirmed completion; never marks a stop arrived. */
 export const TURNAROUND_ARRIVAL_RADIUS_M = 75;
 export const TURNAROUND_TELEMETRY_MAX_AGE_MS = 60_000;
 export const DIRECTION_INFERENCE_MAX_HDOP = 4;
@@ -95,6 +95,7 @@ interface TurnaroundReadinessInput {
   eligibleAt: number;
   minimumSampleTimestamp?: number;
   motionState: unknown;
+  gpsHdop?: unknown;
   position: Coordinate;
   destination: Coordinate;
 }
@@ -114,6 +115,8 @@ export function automaticTurnaroundIsReady(
     input.telemetryTimestamp <= input.now + 10_000 &&
     input.now - input.telemetryTimestamp <= TURNAROUND_TELEMETRY_MAX_AGE_MS &&
     input.motionState === "stopped" &&
+    typeof input.gpsHdop === "number" && Number.isFinite(input.gpsHdop) &&
+    input.gpsHdop >= 0 && input.gpsHdop <= DIRECTION_INFERENCE_MAX_HDOP &&
     validCoordinate(input.position) &&
     validCoordinate(input.destination) &&
     Number.isFinite(radiusMeters) &&

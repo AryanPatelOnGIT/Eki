@@ -1,5 +1,9 @@
 # ESP32 live bench result (2026-09-13)
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 The attached ESP32 on COM3 has been flashed with the current development build.
 Its configured HTTPS URL was corrected to the running ngrok endpoint. The original
 board had Secure Boot and flash encryption disabled; no eFuses were changed.
@@ -67,7 +71,6 @@ Aggregate results and image hash are in LIVE_BENCH_METRICS.json. Raw serial and
 observer data remain under ignored hardware/.pio because they contain device
 identifiers and location/timing evidence.
 
-
 ## Stationary recovery follow-up, 2026-09-13
 
 The receiver now snapshots UTC/date/position/speed/course immediately when a
@@ -123,7 +126,6 @@ callback-to-render trace, long stationary soak and the user-deferred 30-60 minut
 moving-route run. Cold TLS still has a separate 10-second handshake budget and DNS
 can exceed the TCP connect limit. Do not interpret the shorter steady-state
 measurements as a hard two-second maximum or zero freezes under outages.
-
 
 ### Final four-minute capture
 

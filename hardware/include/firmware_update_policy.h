@@ -126,6 +126,10 @@ inline bool locallySafeToUpdate(
          !rollbackValidationPending;
 }
 
+inline bool installationSnapshotSafe(bool valid, bool stopped, uint32_t observedAt, uint32_t now) {
+  return valid && stopped && now - observedAt <= 2000;
+}
+
 inline bool checkIsDue(
   uint32_t now,
   bool checkedBefore,

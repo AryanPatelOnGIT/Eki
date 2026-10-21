@@ -39,7 +39,7 @@ rulesDescribe("Firebase security rules integration", () => {
     assertFails = rulesModule.assertFails;
     assertSucceeds = rulesModule.assertSucceeds;
     environment = await rulesModule.initializeTestEnvironment({
-      projectId: "eki-rules-test",
+      projectId: "demo-eki-rules-test",
       firestore: {
         ...emulator("FIRESTORE_EMULATOR_HOST"),
         rules: readFileSync(rulesPath("FIRESTORE_RULES_PATH", "../../firestore.rules"), "utf8"),
@@ -50,6 +50,11 @@ rulesDescribe("Firebase security rules integration", () => {
       },
     });
     await environment.withSecurityRulesDisabled(async (context) => {
+      for (const uid of ["admin_1", "fleet_viewer"]) {
+        await setDoc(doc(context.firestore(), "users", uid), { role: "admin" });
+        await setDoc(doc(context.firestore(), "_userAuthorization", uid), { role: "admin", version: "current" });
+        await set(ref(context.database(), `_userAuthorization/${uid}`), { role: "admin", version: "current" });
+      }
       await set(ref(context.database(), "activeBuses/bus_1_route_1"), {
         busId: "bus_1",
         routeId: "route_1",
@@ -60,6 +65,14 @@ rulesDescribe("Firebase security rules integration", () => {
         motionState: "stopped",
         timestamp: Date.now(),
       });
+      await set(ref(context.database(), "publicRouteBuses"), {
+        "route:route_1": { _workerGeneration: 7, revision: 1, buses: { "node:bus_1_route_1": { busId: "bus_1", routeId: "route_1", lat: 23 } } },
+        "route:route_2": { _workerGeneration: 7, revision: 1, buses: { "node:bus_2_route_2": { busId: "bus_2", routeId: "route_2", lat: 24 } } },
+      });
+      await set(ref(context.database(), "liveRouteCatalog"), {
+        _workerGeneration: 7, revisions: { "route:route_1": 1 }, values: { "route:route_1": { active: 1, available: 0, freshestAt: 0 } },
+      });
+      await set(ref(context.database(), "clientProjectionStatus"), { _workerGeneration: 7, public: { schemaVersion: 1, ready: true } });
       await set(ref(context.database(), "activeRouteGeometry/bus_1_route_1/2"), {
         routeId: "route_1",
         direction: "forward",
@@ -104,11 +117,64 @@ rulesDescribe("Firebase security rules integration", () => {
     await environment?.cleanup();
   });
 
+  it("retained ride membership cannot authorize chat reads after the profile is deleted", async () => {
+    const passenger = environment.authenticatedContext("retired_passenger", { role: "passenger" });
+    const admin = environment.authenticatedContext("retirement_admin", { role: "admin", authorizationVersion: "current" });
+    const session = "retained_session";
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "users", "retired_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "users", "retirement_admin"), { role: "admin" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "retirement_admin"), { role: "admin", version: "current" });
+      await setDoc(doc(context.firestore(), "users", "retained_operator"), { role: "driver" });
+      await setDoc(doc(context.firestore(), "drivers", "retained_driver"), { authUid: "retained_operator", assignedBusId: "retained_bus" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "retained_operator"), {
+        role: "driver", version: "current", driverId: "retained_driver", assignedBusId: "retained_bus",
+      });
+      await setDoc(doc(context.firestore(), "ride_sessions", session), {
+        driverId: "retained_driver", busId: "retained_bus", passengers: { retired_passenger: { userId: "retired_passenger" } },
+      });
+      await setDoc(doc(context.firestore(), "ride_sessions", session, "messages", "retained"), { text: "Retained history" });
+    });
+    const message = doc(passenger.firestore(), "ride_sessions", session, "messages", "retained");
+    await assertSucceeds(getDoc(message));
+    await environment.withSecurityRulesDisabled(context => deleteDoc(doc(context.firestore(), "users", "retired_passenger")));
+    // The same signed token and preserved manifest must now lose authority.
+    await assertFails(getDoc(message));
+    await assertSucceeds(getDoc(doc(admin.firestore(), "ride_sessions", session, "messages", "retained")));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext("retained_operator", { role: "driver", driverId: "retained_driver", assignedBusId: "retained_bus", authorizationVersion: "current" }).firestore(), "ride_sessions", session, "messages", "retained")));
+  });
+
+  it("restricts cleared ride chat archives to current operators and denies client mutation", async () => {
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "users", "archive_admin"), { role: "admin" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "archive_admin"), { role: "admin", version: "current" });
+      await setDoc(doc(context.firestore(), "users", "archive_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "users", "archive_driver"), { role: "driver" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", "archive_driver"), { role: "driver", version: "current", driverId: "archive_operator", assignedBusId: "archive_bus" });
+      await setDoc(doc(context.firestore(), "drivers", "archive_operator"), { authUid: "archive_driver", assignedBusId: "archive_bus" });
+      await setDoc(doc(context.firestore(), "ride_sessions", "archive_session"), { driverId: "archive_operator", busId: "archive_bus", passengers: { archive_passenger: { userId: "archive_passenger" } } });
+      await setDoc(doc(context.firestore(), "ride_sessions", "archive_session", "archivedMessages", "kept"), { text: "Retained after clear" });
+    });
+    const admin = environment.authenticatedContext("archive_admin", { role: "admin", admin: true, authorizationVersion: "current" });
+    const passenger = environment.authenticatedContext("archive_passenger", { role: "passenger" });
+    const archived = (context: ReturnType<typeof environment.authenticatedContext>) => doc(context.firestore(), "ride_sessions", "archive_session", "archivedMessages", "kept");
+    await assertSucceeds(getDoc(archived(admin)));
+    await assertSucceeds(getDocs(collection(admin.firestore(), "ride_sessions", "archive_session", "archivedMessages")));
+    await assertSucceeds(getDoc(archived(environment.authenticatedContext("archive_driver", { role: "driver", driverId: "archive_operator", assignedBusId: "archive_bus", authorizationVersion: "current" }))));
+    await assertFails(getDoc(archived(environment.authenticatedContext("archive_admin", { role: "admin", authorizationVersion: "old" }))));
+    await assertFails(getDoc(archived(environment.authenticatedContext("archive_driver", { role: "driver", driverId: "archive_operator", assignedBusId: "other_bus", authorizationVersion: "current" }))));
+    await assertFails(getDoc(archived(passenger)));
+    await assertFails(getDoc(archived(environment.unauthenticatedContext())));
+    await assertFails(setDoc(archived(admin), { text: "Forged" }));
+    await assertFails(deleteDoc(archived(admin)));
+  });
+
   it("allows authenticated RTDB reads but denies every client write", async () => {
     const passenger = environment.authenticatedContext("passenger_1", { role: "passenger" });
-    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true });
+    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" });
     const device = environment.authenticatedContext("device_1", { role: "device" });
-    await assertSucceeds(get(ref(passenger.database(), "activeBuses")));
+    await assertFails(get(ref(passenger.database(), "activeBuses")));
+    await assertFails(get(ref(admin.database(), "activeBuses/bus_1_route_1")));
     await assertSucceeds(get(ref(passenger.database(), "activeRouteGeometry/bus_1_route_1/2")));
     await assertFails(get(ref(environment.unauthenticatedContext().database(), "activeBuses")));
     await assertFails(get(ref(environment.unauthenticatedContext().database(), "activeRouteGeometry")));
@@ -120,8 +186,33 @@ rulesDescribe("Firebase security rules integration", () => {
     await assertFails(set(ref(device.database(), "activeRouteGeometry/x/1"), { polyline: "x" }));
   });
 
+  it("scopes passengers to public route buses and hides authority and projection metadata", async () => {
+    const passenger = environment.authenticatedContext("route_viewer", { role: "passenger" });
+    const admin = environment.authenticatedContext("fleet_viewer", { role: "admin", admin: true, authorizationVersion: "current" });
+    const route = await assertSucceeds(get(ref(passenger.database(), "publicRouteBuses/route:route_1/buses")));
+    expect(Object.keys(route.val())).toEqual(["node:bus_1_route_1"]);
+    expect(route.val()["node:bus_1_route_1"]).toEqual({ busId: "bus_1", routeId: "route_1", lat: 23 });
+    await assertFails(get(ref(passenger.database(), "publicRouteBuses")));
+    await assertFails(get(ref(passenger.database(), "publicRouteBuses/route:route_1")));
+    await assertFails(get(ref(passenger.database(), "liveRouteCatalog/revisions")));
+    await assertSucceeds(get(ref(passenger.database(), "liveRouteCatalog/values")));
+    await assertSucceeds(get(ref(admin.database(), "publicRouteBuses")));
+    await assertFails(get(ref(environment.authenticatedContext("role_only", { role: "admin" }).database(), "publicRouteBuses")));
+    await assertSucceeds(get(ref(passenger.database(), "clientProjectionStatus/public")));
+    await assertFails(get(ref(passenger.database(), "clientProjectionStatus")));
+    await assertFails(get(ref(passenger.database(), "clientProjectionStatus/_workerGeneration")));
+    await assertFails(get(ref(environment.unauthenticatedContext().database(), "clientProjectionStatus/public")));
+    await assertFails(get(ref(environment.unauthenticatedContext().database(), "liveRouteCatalog/values")));
+    await assertFails(get(ref(environment.unauthenticatedContext().database(), "publicRouteBuses/route:route_1/buses")));
+    for (const context of [passenger, admin]) {
+      await assertFails(set(ref(context.database(), "publicRouteBuses/route:route_1/buses/x"), { lat: 1 }));
+      await assertFails(set(ref(context.database(), "liveRouteCatalog/values/route:route_1"), { active: 99 }));
+      await assertFails(set(ref(context.database(), "clientProjectionStatus/public"), { schemaVersion: 1, ready: true }));
+    }
+  });
+
   it("denies browser route/device/session mutations and recovery-state reads", async () => {
-    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true });
+    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" });
     await assertSucceeds(getDoc(doc(admin.firestore(), "routes", "route_1")));
     await assertFails(setDoc(doc(admin.firestore(), "routes", "route_2"), { name: "Bypass" }));
     await assertFails(getDoc(doc(admin.firestore(), "devices", "device_1")));
@@ -161,7 +252,7 @@ rulesDescribe("Firebase security rules integration", () => {
   it("keeps feedback backend-authoritative and gates ride feedback to session riders", async () => {
     const passenger = environment.authenticatedContext("passenger_1", { role: "passenger" });
     const outsider = environment.authenticatedContext("passenger_2", { role: "passenger" });
-    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true });
+    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" });
 
     // The backend issues boarding and feedback: simulate those
     // server-authoritative writes here (rules-disabled == Admin SDK path).
@@ -245,7 +336,7 @@ rulesDescribe("Firebase security rules integration", () => {
 
   it("denies every client write to ride session manifests", async () => {
     const noRequest = environment.authenticatedContext("passenger_2", { role: "passenger" });
-    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true });
+    const admin = environment.authenticatedContext("admin_1", { role: "admin", admin: true, authorizationVersion: "current" });
 
     const joinPayload = (uid: string, userName: string) => ({
       [`passengers.${uid}`]: {
@@ -310,5 +401,100 @@ rulesDescribe("Firebase security rules integration", () => {
       status: "accepted",
     }));
     await assertFails(getDoc(doc(passenger.firestore(), "passenger_requests", "passenger_2")));
+  });
+
+  it("rejects stale driver tokens after reassignment, unassignment, deletion and repeated assignment", async () => {
+    const uid = "operator_auth";
+    const claims = { role: "driver", driverId: "security_driver", assignedBusId: "security_bus", authorizationVersion: "v1" };
+    const old = environment.authenticatedContext(uid, claims);
+    const session = (context: ReturnType<typeof environment.authenticatedContext>) => doc(context.firestore(), "ride_sessions", "security_session");
+    const message = (context: ReturnType<typeof environment.authenticatedContext>) => doc(context.firestore(), "ride_sessions", "security_session", "messages", "message");
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "users", uid), { role: "driver" });
+      await setDoc(doc(context.firestore(), "users", "security_passenger"), { role: "passenger" });
+      await setDoc(doc(context.firestore(), "_userAuthorization", uid), { version: "v1", role: "driver", driverId: "security_driver", assignedBusId: "security_bus" });
+      await setDoc(doc(context.firestore(), "drivers", "security_driver"), { authUid: uid, assignedBusId: "security_bus" });
+      await setDoc(session(context), { driverId: "security_driver", busId: "security_bus", boardingCode: "SYNTHETIC", passengers: { security_passenger: { userId: "security_passenger" } } });
+      await setDoc(message(context), { text: "synthetic" });
+    });
+    await assertSucceeds(getDoc(session(old)));
+    await assertSucceeds(getDoc(message(old)));
+    for (const registry of [{ authUid: "replacement", assignedBusId: "security_bus" }, { authUid: uid, assignedBusId: null }, { authUid: uid, assignedBusId: "different_bus" }, null]) {
+      await environment.withSecurityRulesDisabled(async context => {
+        const driver = doc(context.firestore(), "drivers", "security_driver");
+        if (registry) await setDoc(driver, registry); else await deleteDoc(driver);
+      });
+      await assertFails(getDoc(session(old)));
+      await assertFails(getDoc(message(old)));
+    }
+    // Returning the SAME UID to the SAME bus must not revive its old token.
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "drivers", "security_driver"), { authUid: uid, assignedBusId: "security_bus" });
+      await updateDoc(doc(context.firestore(), "_userAuthorization", uid), { version: "v2" });
+    });
+    await assertFails(getDoc(session(old)));
+    await assertFails(getDoc(message(old)));
+    const fresh = environment.authenticatedContext(uid, { ...claims, authorizationVersion: "v2" });
+    await assertSucceeds(getDoc(session(fresh)));
+    await assertSucceeds(getDoc(message(fresh)));
+    const passenger = environment.authenticatedContext("security_passenger", { role: "passenger" });
+    await assertFails(getDoc(session(passenger)));
+    await assertSucceeds(getDoc(message(passenger)));
+    await environment.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), "users", uid), { role: "passenger" }));
+    await assertFails(getDoc(session(fresh)));
+    await assertFails(getDoc(message(fresh)));
+    await environment.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), "users", uid), { role: "driver" });
+      await setDoc(doc(context.firestore(), "drivers", "security_driver"), { authUid: uid, assignedBusId: null });
+      await setDoc(doc(context.firestore(), "_userAuthorization", uid), { role: "driver", version: "unassigned", driverId: null, assignedBusId: null });
+    });
+    const unassigned = environment.authenticatedContext(uid, { role: "driver", authorizationVersion: "unassigned" });
+    await assertSucceeds(getDoc(doc(unassigned.firestore(), "drivers", "security_driver")));
+    await assertFails(getDoc(session(unassigned)));
+    await assertFails(getDoc(message(unassigned)));
+  });
+
+  it("requires current admin authorization in both databases and never revives an old version", async () => {
+    const uid = "security_admin";
+    const contextFor = (authorizationVersion?: string, extra = { role: "admin", admin: true }) => environment.authenticatedContext(uid, { ...extra, ...(authorizationVersion ? { authorizationVersion } : {}) });
+    const old = contextFor("a1");
+    const feedback = (context: ReturnType<typeof contextFor>) => doc(context.firestore(), "feedbacks", "security_feedback");
+    const fleet = (context: ReturnType<typeof contextFor>) => ref(context.database(), "publicRouteBuses");
+    const publish = (role: string, version: string) => environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), "users", uid), { role });
+      await setDoc(doc(context.firestore(), "_userAuthorization", uid), { role, version });
+      await set(ref(context.database(), `_userAuthorization/${uid}`), { role, version });
+      await setDoc(feedback(context), { userId: "synthetic" });
+    });
+    await publish("admin", "a1");
+    await assertSucceeds(getDoc(feedback(old)));
+    await assertSucceeds(get(fleet(old)));
+    for (const role of ["blocked", "passenger"]) {
+      await publish(role, "a2");
+      await assertFails(getDoc(feedback(old)));
+      await assertFails(get(fleet(old)));
+    }
+    await publish("admin", "a3");
+    await assertFails(getDoc(feedback(old)));
+    await assertFails(get(fleet(old)));
+    for (const invalid of [contextFor(), contextFor("unknown"), contextFor("a3", { role: "passenger", admin: true })]) {
+      await assertFails(getDoc(feedback(invalid)));
+      await assertFails(get(fleet(invalid)));
+    }
+    const fresh = contextFor("a3");
+    await assertSucceeds(getDoc(feedback(fresh)));
+    await assertSucceeds(get(fleet(fresh)));
+    for (const context of [old, fresh, environment.authenticatedContext("security_passenger", { role: "passenger" })]) {
+      await assertFails(getDoc(doc(context.firestore(), "_userAuthorization", uid)));
+      await assertFails(setDoc(doc(context.firestore(), "_userAuthorization", uid), { role: "admin", version: "a1" }));
+      await assertFails(get(ref(context.database(), `_userAuthorization/${uid}`)));
+      await assertFails(set(ref(context.database(), `_userAuthorization/${uid}`), { role: "admin", version: "a1" }));
+    }
+    await environment.withSecurityRulesDisabled(async context => {
+      await deleteDoc(doc(context.firestore(), "_userAuthorization", uid));
+      await set(ref(context.database(), `_userAuthorization/${uid}`), null);
+    });
+    await assertFails(getDoc(feedback(fresh)));
+    await assertFails(get(fleet(fresh)));
   });
 });

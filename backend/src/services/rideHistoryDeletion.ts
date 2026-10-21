@@ -1,6 +1,8 @@
-import type {
-  DocumentReference,
-  Firestore,
+import { assertWorkerLeadership, workerWrite, workerSet, workerDelete } from "../lib/workerFence";
+import {
+  Timestamp,
+  type DocumentReference,
+  type Firestore,
 } from "firebase-admin/firestore";
 
 const TERMINAL_RIDE_STATUSES = new Set(["completed", "interrupted", "failed"]);
@@ -28,11 +30,11 @@ async function deleteReferences(
   references: DocumentReference[],
 ): Promise<void> {
   for (let offset = 0; offset < references.length; offset += DELETE_BATCH_SIZE) {
-    const batch = firestore.batch();
-    references
-      .slice(offset, offset + DELETE_BATCH_SIZE)
-      .forEach((reference) => batch.delete(reference));
-    await batch.commit();
+    await workerWrite(firestore, batch => {
+      references
+        .slice(offset, offset + DELETE_BATCH_SIZE)
+        .forEach((reference) => batch.delete(reference));
+    });
   }
 }
 
@@ -67,10 +69,15 @@ export async function deleteTerminalRideHistory(
     ...matchingSessionSnapshot.docs.map((document) => document.ref),
   ]);
 
-  if (sessionSnapshot.exists) {
-    await firestore.recursiveDelete(sessionRef);
-  }
+  const jobRef = firestore.collection("_ride_history_deletion_jobs").doc(sessionId);
+  await workerSet(firestore, jobRef, { requestedAt: Timestamp.now() }, { merge: true });
+  // A previous failure may have removed the parent while leaving descendants.
+  // Recurse even without a parent; retain the independent job until projections
+  // are removed too, so the leader can finish an interrupted manual request.
+  assertWorkerLeadership();
+  await firestore.recursiveDelete(sessionRef);
   await deleteReferences(firestore, projectionReferences);
+  await workerDelete(firestore, jobRef);
 
   return {
     sessionDeleted: sessionSnapshot.exists,

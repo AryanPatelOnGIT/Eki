@@ -1,11 +1,14 @@
 #include "clock_policy.h"
+#include "json_payload.h"
 #include "connectivity_policy.h"
 #include "firmware_config.h"
 #include "firmware_update_policy.h"
 #include "http_response.h"
+#include "bounded_dns_resolver.h"
 #include "secrets.h"
 #include "telemetry_policy.h"
 #include "telemetry_queue.h"
+#include "encrypted_checkpoint.h"
 #include "reset_stats.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -15,25 +18,33 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_attr.h>
+#include <esp_heap_caps.h>
 #include <esp_flash_encrypt.h>
 #include <esp_sntp.h>
 #include <esp_secure_boot.h>
 #include <esp_system.h>
 #include <esp_idf_version.h>
 #include <esp_ota_ops.h>
+#include <esp_wifi.h>
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <mbedtls/sha256.h>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <atomic>
 #include <sys/time.h>
 
 #ifndef EKI_FLEET_BUILD
 #define EKI_FLEET_BUILD 0
 #endif
+#ifndef EKI_ENABLE_FLEET_TRACES
+#define EKI_ENABLE_FLEET_TRACES (!EKI_FLEET_BUILD)
+#endif
+#define EKI_TRACE_PRINTF(...) do { if (EKI_ENABLE_FLEET_TRACES) Serial.printf(__VA_ARGS__); } while (0)
 #if EKI_FLEET_BUILD
 #define EKI_FIRMWARE_VERSION esp_ota_get_app_description()->version
 #elif !defined(EKI_FIRMWARE_VERSION)
@@ -69,6 +80,9 @@ static_assert(
 #if !defined(CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES) || !CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES
 #error "Fleet builds require signed application binaries."
 #endif
+#if defined(CONFIG_SECURE_BOOT_ALLOW_JTAG) && CONFIG_SECURE_BOOT_ALLOW_JTAG
+#error "Fleet builds must disable JTAG during secure provisioning."
+#endif
 #if !defined(CONFIG_SECURE_FLASH_ENC_ENABLED) || !CONFIG_SECURE_FLASH_ENC_ENABLED
 #error "Fleet builds require flash encryption."
 #endif
@@ -93,6 +107,10 @@ constexpr uint32_t GNSS_EPOCH_REFERENCE_MAX_AGE_MS = 24UL * 60 * 60 * 1000;
 constexpr uint32_t NTP_CROSS_CHECK_INTERVAL_MS = 6UL * 60 * 60 * 1000;
 constexpr uint32_t HTTP_TIMEOUT_MS = eki::telemetry::HTTP_REQUEST_TIMEOUT_MS;
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 25000;
+static_assert(eki::dns::RESPONSE_BUDGET_MS + eki::telemetry::HTTP_CONNECT_TIMEOUT_MS +
+  eki::telemetry::TLS_HANDSHAKE_TIMEOUT_SECONDS * 1000 + HTTP_TIMEOUT_MS +
+  eki::http::TELEMETRY_RESPONSE_DRAIN_TIMEOUT_MS < WATCHDOG_TIMEOUT_MS,
+  "Cold network phase budgets must leave publisher watchdog headroom.");
 static_assert(
   HTTP_TIMEOUT_MS < WATCHDOG_TIMEOUT_MS,
   "A bounded HTTP request must leave time for the publisher watchdog."
@@ -136,27 +154,35 @@ TinyGPSPlus gps;
 HardwareSerial &gpsSerial = Serial2;
 using ReuseSafePlainClient = eki::http::ReuseGuardedClient<WiFiClient>;
 using ReuseSafeSecureClient = eki::http::ReuseGuardedClient<WiFiClientSecure>;
+eki::dns::BoundedResolver dnsResolver;
 class TimedSecureClient : public ReuseSafeSecureClient {
   const char *channel;
 public:
   explicit TimedSecureClient(const char *name = "telemetry") : channel(name) {}
   using ReuseSafeSecureClient::connect;
   int connect(const char *host, uint16_t port, int32_t timeout) override {
-    const uint32_t preparingAt = millis();
-    prepareTelemetryTlsKey();
+    const uint32_t heapBefore = EKI_ENABLE_FLEET_TRACES ? ESP.getFreeHeap() : 0;
     const uint32_t started = millis();
     IPAddress address;
-    const bool resolved = WiFi.hostByName(host, address);
+    const bool resolved = dnsResolver.resolve(host, address);
     const uint32_t resolvedAt = millis();
+    const uint32_t preparingAt = millis();
+    if (resolved) prepareTelemetryTlsKey();
+    const uint32_t preparedAt = millis();
     _timeout = timeout;
     const int result = resolved ? WiFiClientSecure::connect(
       address, port, host, _CA_cert, _cert, _private_key) : 0;
     releaseTelemetryTlsKey();
-    Serial.printf("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld handshakeMs=%lu result=%d channel=%s preparationMs=%lu\n",
+    EKI_TRACE_PRINTF("[TlsResources] channel=%s heapBefore=%lu heapAfter=%lu minimumHeap=%lu largestBlock=%lu stackHeadroomBytes=%lu\n",
+      channel, static_cast<unsigned long>(heapBefore), static_cast<unsigned long>(ESP.getFreeHeap()),
+      static_cast<unsigned long>(ESP.getMinFreeHeap()),
+      static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+      static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
+    EKI_TRACE_PRINTF("[NetworkTiming] dnsMs=%lu tlsConnectMs=%lu timeoutMs=%ld configuredHandshakeTimeoutMs=%lu result=%d channel=%s preparationMs=%lu\n",
       static_cast<unsigned long>(resolvedAt - started),
-      static_cast<unsigned long>(millis() - resolvedAt), static_cast<long>(timeout),
+      static_cast<unsigned long>(millis() - preparedAt), static_cast<long>(timeout),
       static_cast<unsigned long>(sslclient->handshake_timeout), result, channel,
-      static_cast<unsigned long>(started - preparingAt));
+      static_cast<unsigned long>(preparedAt - preparingAt));
     return result;
   }
 };
@@ -164,7 +190,7 @@ TimedSecureClient tlsClient;
 ReuseSafePlainClient plainClient;
 WiFiClientSecure maintenanceTlsClient;
 // Diagnostic transport belongs exclusively to its worker. Manifest checks
-// retain maintenanceTlsClient on the publisher; no TLS object crosses tasks.
+// retain maintenanceTlsClient on the maintenance worker; no TLS object crosses tasks.
 struct DiagnosticJob { char payload[1024]; size_t length; };
 struct DiagnosticResult { int status; uint32_t durationMs; };
 QueueHandle_t diagnosticJobs = nullptr;
@@ -193,7 +219,7 @@ struct FirmwareManifest {
   size_t size;
 };
 
-bool otaValidationPending = false;
+std::atomic<bool> otaValidationPending{false};
 uint32_t otaValidationStartedAt = 0;
 bool firmwareCheckedBefore = false;
 bool previousFirmwareCheckFailed = false;
@@ -234,6 +260,13 @@ static_assert(
 // RTC no-init memory preserves the bounded queue across software/watchdog
 // resets. initializeOrRecover() rejects stale firmware layouts explicitly.
 RTC_NOINIT_ATTR TelemetryQueue telemetryQueue;
+eki::checkpoint::FlashStorage checkpointStorage;
+eki::checkpoint::EncryptedCodec<TelemetryFix> checkpointCodec;
+eki::checkpoint::Journal<TelemetryFix, eki::checkpoint::FlashStorage, eki::checkpoint::EncryptedCodec<TelemetryFix>> checkpointJournal(checkpointStorage, checkpointCodec);
+constexpr uint32_t CHECKPOINT_INTERVAL_MS = 10000;
+uint32_t lastCheckpointAt = 0;
+bool checkpointReady = false;
+bool checkpointWrittenThisBoot = false;
 // Reset statistics survive brownout/panic/watchdog resets in RTC no-init
 // memory, so operators see recovery events instead of a silent reboot.
 RTC_NOINIT_ATTR eki::reset::ResetStats resetStats;
@@ -270,10 +303,15 @@ MotionState lastCapturedMotionState = MotionState::Uncertain;
 eki::telemetry::MotionTracker motionTracker;
 uint32_t lastCaptureAt = 0;
 uint32_t lastEvaluationAt = 0;
+uint32_t latestRmcAt = 0;
+uint32_t latestRmcStartedAt = 0;
+int64_t latestRmcReceiverUtcMs = 0;
 uint32_t lastNtpCrossCheckAt = 0;
 uint32_t lastHttpsFailureAt = 0;
 uint32_t httpsRetryDelayMs = 0;
 uint32_t lastRemoteDiagnosticAt = 0;
+eki::telemetry::FirstDiagnosticDelay firstDiagnosticDelay;
+int lastTelemetryResponseCode = 0;
 bool remoteDiagnosticPublished = false;
 uint32_t remoteDiagnosticRetryStartedAt = 0;
 uint32_t remoteDiagnosticRetryDelayMs = 0;
@@ -290,7 +328,16 @@ int64_t pendingNtpDivergenceMs = 0;
 bool latestGnssReferenceValid = false;
 bool pendingNtpCrossCheck = false;
 bool pendingNtpCrossCheckHasGnss = false;
-bool credentialFaultActive = false;
+SemaphoreHandle_t clockDisciplineMutex = nullptr;
+eki::clock::GnssCorroboration gnssCorroboration;
+int64_t ntpCandidateEpochMs = 0;
+uint32_t ntpCandidateAt = 0;
+std::atomic<bool> clockDisagreementActive{false};
+std::atomic<bool> credentialFaultActive{false};
+std::atomic<bool> firmwareCredentialRejected{false};
+portMUX_TYPE maintenanceSnapshotMux = portMUX_INITIALIZER_UNLOCKED;
+struct MaintenanceSnapshot { bool valid; bool stopped; uint32_t observedAt; };
+MaintenanceSnapshot maintenanceSnapshot{};
 bool gpsFixWasLost = false;
 bool trustworthyGpsFixObserved = false;
 bool wifiStatusKnown = false;
@@ -330,6 +377,8 @@ uint32_t lastCapturedEvidenceAt = 0;
 uint32_t lastAcceptedEvidenceAt = 0;
 bool captureEvidenceSeen = false;
 bool acceptedEvidenceSeen = false;
+bool diagnosticGnssAvailable = false;
+uint32_t diagnosticNoFixStartedAt = 0;
 
 struct HealthCounters {
   uint32_t uartBufferOverflows;
@@ -442,11 +491,27 @@ void notifyPublisher() {
   if (publisherTaskHandle != nullptr) xTaskNotifyGive(publisherTaskHandle);
 }
 
-void enqueueFix(TelemetryFix fix) {
+void enqueueFix(TelemetryFix fix, bool receiverBacked = true) {
   portENTER_CRITICAL(&telemetryQueueMux);
-  telemetryQueue.push(fix);
+  fix.sequence = telemetryQueue.push(fix);
   portEXIT_CRITICAL(&telemetryQueueMux);
+  const uint32_t enqueuedAt = millis();
+  // Release the network publisher before doing checkpoint encryption/I/O.
   notifyPublisher();
+  EKI_TRACE_PRINTF("[TelemetryTrace] {\"version\":2,\"event\":\"device_capture\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"receiverBacked\":%s,\"receiverUtcMs\":%lld,\"receiverStartedAtMonotonicMs\":%lu,\"receiverAtMonotonicMs\":%lu,\"evaluationAtMonotonicMs\":%lu,\"enqueuedAtMonotonicMs\":%lu}\n",
+    static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
+    receiverBacked ? "true" : "false", static_cast<long long>(latestRmcReceiverUtcMs),
+    static_cast<unsigned long>(latestRmcStartedAt), static_cast<unsigned long>(latestRmcAt),
+    static_cast<unsigned long>(lastEvaluationAt), static_cast<unsigned long>(enqueuedAt));
+  // Sole capture-task writer. Flash is outside the queue's critical section;
+  // the GNSS RX buffer continues collecting during a bounded sector erase.
+  if (checkpointReady && WiFi.getMode() != WIFI_MODE_NULL && (!checkpointWrittenThisBoot || elapsed(lastCheckpointAt) >= CHECKPOINT_INTERVAL_MS)) {
+    const uint32_t started = millis();
+    const bool committed = checkpointJournal.append(fix);
+    lastCheckpointAt = millis();
+    checkpointWrittenThisBoot = true;
+    Serial.printf("[PowerCheckpoint] committed=%s seq=%lu writeMs=%lu\n", committed ? "true" : "false", static_cast<unsigned long>(fix.sequence), static_cast<unsigned long>(millis() - started));
+  }
 }
 
 bool newestFreshFix(int64_t minimumTimestamp, TelemetryFix &fix, size_t &staleDrops) {
@@ -638,7 +703,7 @@ void expireGnssEpochReference(uint32_t now) {
 }
 
 bool clockIsSynchronized() {
-  return epochMilliseconds() >= eki::clock::TRUSTED_EPOCH_MIN_MS;
+  return !clockDisagreementActive && epochMilliseconds() >= eki::clock::TRUSTED_EPOCH_MIN_MS;
 }
 
 bool httpsRetryIsPending() {
@@ -704,13 +769,29 @@ void disciplineClockFromGnss() {
   };
   int64_t gnssEpochMs = 0;
   if (!eki::clock::utcToEpochMilliseconds(utc, gnssEpochMs)) return;
+  gnssEpochMs += gps.time.age();
+  xSemaphoreTake(clockDisciplineMutex, portMAX_DELAY);
+  const uint32_t observedAt = millis();
+  const bool corroborated = gnssCorroboration.observe(gnssEpochMs, observedAt);
+  int64_t peerEpochMs = 0;
+  const bool peerFresh = ntpCandidateEpochMs >= eki::clock::TRUSTED_EPOCH_MIN_MS &&
+    eki::clock::projectEpochMillisecondsIfFresh(ntpCandidateEpochMs, ntpCandidateAt,
+      observedAt, eki::clock::PEER_REFERENCE_MAX_AGE_MS, peerEpochMs);
+  if (!corroborated || !eki::clock::candidateSafe(systemEpochMilliseconds(), gnssEpochMs, peerFresh, peerEpochMs)) {
+    if (corroborated) {
+      clockDisagreementActive = true;
+      Serial.println("[Clock] GNSS correction rejected; TLS/telemetry paused pending corroboration.");
+    }
+    xSemaphoreGive(clockDisciplineMutex);
+    return;
+  }
+  clockDisagreementActive = false;
 
   // Keep a fresh, monotonic-time-anchored GNSS reference for the asynchronous
   // SNTP callback. TinyGPS++ age accounts for time since this sentence arrived.
-  const uint32_t timeAgeMs = gps.time.age();
   portENTER_CRITICAL(&clockCrossCheckMux);
   latestGnssEpochMs = gnssEpochMs;
-  latestGnssReferenceAt = millis() - timeAgeMs;
+  latestGnssReferenceAt = observedAt;
   latestGnssReferenceValid = true;
   portEXIT_CRITICAL(&clockCrossCheckMux);
 
@@ -722,6 +803,7 @@ void disciplineClockFromGnss() {
       );
       timeRangeWarningLogged = true;
     }
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
 
@@ -732,6 +814,7 @@ void disciplineClockFromGnss() {
     systemEpochMs,
     gnssEpochMs
   )) {
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
 
@@ -740,11 +823,13 @@ void disciplineClockFromGnss() {
   tv.tv_usec = static_cast<suseconds_t>((gnssEpochMs % 1000) * 1000);
   if (settimeofday(&tv, nullptr) != 0) {
     Serial.println("[Clock] GNSS UTC was valid but settimeofday failed.");
+    xSemaphoreGive(clockDisciplineMutex);
     return;
   }
   const bool initialSynchronization = !gnssClockApplied;
   gnssClockApplied = true;
   lastGnssClockAppliedAt = millis();
+  xSemaphoreGive(clockDisciplineMutex);
   if (!initialSynchronization) {
     Serial.printf(
       "[Clock] GNSS UTC corrected system clock by %lldms; NTP remains a cross-check.\n",
@@ -766,16 +851,34 @@ void configureStationRadio() {
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 }
 
+bool stationLinkPresent() {
+  // Arduino-ESP32's WL_CONNECTED is event-backed and can remain stale after
+  // an AP disappears. The driver must still know the associated access point.
+  wifi_ap_record_t accessPoint{};
+  return eki::connectivity::wifiLinkUsable(
+    WiFi.status() == WL_CONNECTED,
+    esp_wifi_sta_get_ap_info(&accessPoint) == ESP_OK
+  );
+}
+
 void attemptWifiConnection() {
   if (credentialFaultActive) return;
   getNetworkClient().stop();
   if (!wifiConfigured) {
     configureStationRadio();
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    const wl_status_t status = WiFi.begin(WIFI_SSID, WIFI_PASS);
     wifiConfigured = true;
-  } else {
-    WiFi.reconnect();
+    Serial.printf("[WiFi] Initial station attempt, status=%d.\n", static_cast<int>(status));
+    return;
   }
+  // WiFi.reconnect() returns early if esp_wifi_disconnect() fails. WiFi.begin()
+  // can also return early when its event-backed status is stale. Always issue
+  // the connect operation, including after an already-disconnected result.
+  const esp_err_t disconnectStatus = esp_wifi_disconnect();
+  const esp_err_t connectStatus = esp_wifi_connect();
+  Serial.printf("[WiFi] Station retry %u, disconnect=%d connect=%d.\n",
+    static_cast<unsigned>(wifiRetrySupervisor.completedAttempts() + 1),
+    static_cast<int>(disconnectStatus), static_cast<int>(connectStatus));
 }
 
 void updateConnectivityFault() {
@@ -815,7 +918,7 @@ void latchCredentialFault() {
 
 void serviceConnectivity() {
   const uint32_t now = millis();
-  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool connected = stationLinkPresent();
   if (!wifiStatusKnown || connected != lastWifiConnected) {
     wifiStatusKnown = true;
     lastWifiConnected = connected;
@@ -858,7 +961,7 @@ void configureWatchdog() {
 void synchronizeClock() {
   if (
     ntpCrossCheckStarted &&
-    elapsed(lastNtpCrossCheckAt) < NTP_CROSS_CHECK_INTERVAL_MS
+    elapsed(lastNtpCrossCheckAt) < (clockDisagreementActive ? 60000UL : NTP_CROSS_CHECK_INTERVAL_MS)
   ) return;
   lastNtpCrossCheckAt = millis();
   ntpCrossCheckStarted = true;
@@ -919,6 +1022,34 @@ void reportNtpCrossCheck() {
   }
 }
 
+// Called by the strong override of IDF's weak sntp_sync_time below. The normal
+// notification callback is too late: default SNTP has already set TLS time.
+void applyNtpCandidate(struct timeval *candidate) {
+  if (!clockDisciplineMutex || !candidate) return;
+  xSemaphoreTake(clockDisciplineMutex, portMAX_DELAY);
+  const uint32_t now = millis();
+  const int64_t epoch = static_cast<int64_t>(candidate->tv_sec) * 1000 + candidate->tv_usec / 1000;
+  int64_t peer = 0;
+  const bool peerFresh = gnssCorroboration.count >= 3 &&
+    eki::clock::projectEpochMillisecondsIfFresh(gnssCorroboration.epoch, gnssCorroboration.monotonic,
+      now, GNSS_UTC_MAX_AGE_MS * 2, peer);
+  if (epoch >= eki::clock::TRUSTED_EPOCH_MIN_MS && candidate->tv_usec >= 0 && candidate->tv_usec < 1000000) {
+    ntpCandidateEpochMs = epoch;
+    ntpCandidateAt = now;
+  }
+  const bool accepted = candidate->tv_usec >= 0 && candidate->tv_usec < 1000000 &&
+    eki::clock::candidateSafe(systemEpochMilliseconds(), epoch, peerFresh, peer);
+  if (accepted && settimeofday(candidate, nullptr) == 0) {
+    clockDisagreementActive = false;
+    sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
+    onNtpTimeSynchronized(candidate);
+  } else {
+    clockDisagreementActive = true;
+    Serial.println("[Clock] NTP correction rejected before changing TLS time.");
+  }
+  xSemaphoreGive(clockDisciplineMutex);
+}
+
 #if EKI_FLEET_BUILD
 bool decodeSha256(const char *hex, uint8_t output[32]) {
   if (!eki::update::sha256IsValid(hex)) return false;
@@ -977,7 +1108,7 @@ bool parseFirmwareManifest(HTTPClient &http, FirmwareManifest &manifest) {
   if (contentLength <= 0 || contentLength > 1024) return false;
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, http.getStream());
-  if (error) return false;
+  if (error || document.overflowed()) return false;
 
   const char *version = document["version"] | "";
   const char *url = document["url"] | "";
@@ -1008,6 +1139,38 @@ bool parseFirmwareManifest(HTTPClient &http, FirmwareManifest &manifest) {
   return true;
 }
 
+bool installationLocallySafe() {
+  portENTER_CRITICAL(&maintenanceSnapshotMux);
+  const MaintenanceSnapshot snapshot = maintenanceSnapshot;
+  portEXIT_CRITICAL(&maintenanceSnapshotMux);
+  return !credentialFaultActive && !otaValidationPending && clockIsSynchronized() &&
+    eki::update::installationSnapshotSafe(snapshot.valid, snapshot.stopped, snapshot.observedAt, millis());
+}
+
+
+bool reserveFirmwareMaintenance(bool acquire) {
+  char endpoint[ENDPOINT_MAX_LENGTH]{};
+  const char *query = strchr(firmwareEndpoint, '?');
+  const size_t baseLength = query ? static_cast<size_t>(query - firmwareEndpoint) : strlen(firmwareEndpoint);
+  const int length = snprintf(endpoint, sizeof(endpoint), "%.*s/installation", static_cast<int>(baseLength), firmwareEndpoint);
+  if (length <= 0 || static_cast<size_t>(length) >= sizeof(endpoint)) return false;
+  HTTPClient http;
+  http.setConnectTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
+  http.setTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
+  if (!http.begin(maintenanceTlsClient, endpoint)) return false;
+  http.addHeader("Authorization", authorizationHeader);
+  http.addHeader("Content-Type", "application/json");
+  const int status = http.POST(acquire ? "{\"action\":\"acquire\"}" : "{\"action\":\"release\"}");
+  JsonDocument acknowledgment;
+  const bool accepted = status == 200 && http.getSize() > 0 && http.getSize() <= 128 &&
+    !deserializeJson(acknowledgment, http.getStream()) && acknowledgment["acknowledged"] == true;
+  http.end();
+  maintenanceTlsClient.stop();
+  return accepted;
+}
+
+bool firmwareReservationMayBeHeld = false; // maintenance worker only
+
 bool installSignedFirmware(const FirmwareManifest &manifest) {
   const esp_partition_t *candidatePartition = esp_ota_get_next_update_partition(nullptr);
   if (candidatePartition == nullptr || manifest.size > candidatePartition->size) {
@@ -1036,7 +1199,7 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
     firmwareTlsClient.stop();
     return false;
   }
-  if (!Update.begin(manifest.size, U_FLASH)) {
+  if (!installationLocallySafe() || !Update.begin(manifest.size, U_FLASH)) {
     Serial.printf("[OTA] Inactive slot cannot accept image (error %u).\n", Update.getError());
     http.end();
     return false;
@@ -1058,6 +1221,7 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
   bool streamOk = true;
   while (received < manifest.size) {
     esp_task_wdt_reset();
+    if (!installationLocallySafe()) { streamOk = false; break; }
     const size_t available = stream->available();
     if (available == 0) {
       if (!http.connected() || elapsed(lastProgressAt) >= 15000) {
@@ -1126,12 +1290,14 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
     firmwareTlsClient.stop();
     return false;
   }
-  if (!Update.end(false) || !Update.isFinished()) {
+  if (!installationLocallySafe() || !Update.end(false) || !Update.isFinished()) {
+    Update.abort();
     Serial.printf("[OTA] Signed image was rejected (error %u).\n", Update.getError());
     http.end();
     return false;
   }
   http.end();
+  firmwareReservationMayBeHeld = !reserveFirmwareMaintenance(false);
   Serial.printf(
     "[OTA] Installed signed candidate %s (sequence %u); rebooting into rollback validation.\n",
     manifest.version,
@@ -1145,13 +1311,13 @@ bool installSignedFirmware(const FirmwareManifest &manifest) {
 void checkForSignedFirmware() {
   const TelemetryQueue::Stats queue = telemetryQueueStats();
   if (
-    WiFi.status() != WL_CONNECTED ||
+    !stationLinkPresent() ||
     !eki::update::locallySafeToUpdate(
       credentialFaultActive,
       clockIsSynchronized(),
       queue.depth,
-      hasCapturedLocation,
-      lastCapturedMotionState == MotionState::Stopped,
+      true,
+      installationLocallySafe(),
       otaValidationPending
     ) ||
     !eki::update::checkIsDue(
@@ -1176,9 +1342,9 @@ void checkForSignedFirmware() {
   http.addHeader("Authorization", authorizationHeader);
   http.addHeader("Cache-Control", "no-store");
   const int responseCode = http.GET();
-  if (responseCode == 401 || responseCode == 403) {
+  if (responseCode == 401) {
     http.end();
-    latchCredentialFault();
+    firmwareCredentialRejected = true;
     Serial.println("[OTA] Credential fault latched during release check.");
     return;
   }
@@ -1196,14 +1362,36 @@ void checkForSignedFirmware() {
   }
   http.end();
   maintenanceTlsClient.stop();
-  previousFirmwareCheckFailed = !installSignedFirmware(manifest);
+  if (!installationLocallySafe()) return;
+  firmwareReservationMayBeHeld = true; // unknown response may still commit
+  if (!reserveFirmwareMaintenance(true)) return;
+  // Reservation is durable, shared with ride startup and intentionally has
+  // no expiry while an installation can still be writing flash.
+  if (installationLocallySafe()) previousFirmwareCheckFailed = !installSignedFirmware(manifest);
+  firmwareReservationMayBeHeld = !reserveFirmwareMaintenance(false);
+}
+
+void firmwareMaintenanceWorker(void *) {
+  esp_task_wdt_add(nullptr);
+  bool recoveredReservation = false;
+  for (;;) {
+    esp_task_wdt_reset();
+    if (stationLinkPresent() && clockIsSynchronized()) {
+      if (!recoveredReservation || firmwareReservationMayBeHeld) {
+        recoveredReservation = reserveFirmwareMaintenance(false);
+        firmwareReservationMayBeHeld = !recoveredReservation;
+      }
+      if (recoveredReservation) checkForSignedFirmware();
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 }
 #endif
 
 PublishResult publishFix(const TelemetryFix &fix) {
   if (
     !fix.valid ||
-    WiFi.status() != WL_CONNECTED ||
+    !stationLinkPresent() ||
     !clockIsSynchronized()
   ) {
     return PublishResult::RetryLatest;
@@ -1211,6 +1399,16 @@ PublishResult publishFix(const TelemetryFix &fix) {
   if (httpsRetryIsPending()) return PublishResult::RetryLatest;
 
   const int64_t deviceSentAt = epochMilliseconds();
+  // The GNSS/NTP reference can change after dequeue. Recheck the exact clock
+  // value carried in the payload; never clamp send time to invent ordering.
+  if (!eki::telemetry::retryKeepsSampleFresh(
+    fix.timestamp, deviceSentAt, 0, eki::telemetry::TELEMETRY_FRESHNESS_MARGIN_MS
+  )) {
+    Serial.println("[HTTPS] Dropping sample outside send-time clock/freshness bounds.");
+    return PublishResult::Dropped;
+  }
+  const uint32_t jsonStartedAt = EKI_ENABLE_FLEET_TRACES ? micros() : 0;
+  const uint32_t heapBeforeJson = EKI_ENABLE_FLEET_TRACES ? ESP.getFreeHeap() : 0;
   JsonDocument document;
   document["deviceSentAt"] = deviceSentAt;
   document["lat"] = fix.lat;
@@ -1223,12 +1421,17 @@ PublishResult publishFix(const TelemetryFix &fix) {
   document["timestamp"] = fix.timestamp;
 
   char payload[512]{};
-  const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
+  const size_t payloadLength = eki::json::serializeCompletePayload(document, 9, payload, sizeof(payload));
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
-    Serial.println("[HTTPS] Refusing oversized telemetry payload.");
+    Serial.println("[HTTPS] Refusing incomplete or oversized telemetry payload.");
     scheduleHttpsRetry(eki::telemetry::HTTPS_REJECTED_SAMPLE_RETRY_MS);
     return PublishResult::Dropped;
   }
+  EKI_TRACE_PRINTF("[AllocationTiming] channel=telemetry jsonPrepareUs=%lu heapBefore=%lu heapAfter=%lu largestBlock=%lu stackHeadroomBytes=%lu\n",
+    static_cast<unsigned long>(micros() - jsonStartedAt), static_cast<unsigned long>(heapBeforeJson),
+    static_cast<unsigned long>(ESP.getFreeHeap()),
+    static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+    static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
 
   recordPublishAttempt();
   /* keep one parser so its destructor cannot close the reusable socket. */
@@ -1275,6 +1478,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
     payloadLength
   );
   const uint32_t httpDurationMs = elapsed(startedAt);
+  const uint32_t headersReceivedAt = millis();
   const int64_t deviceReceivedAt = epochMilliseconds();
   int64_t serverReceivedAt = 0;
   int64_t serverRespondedAt = 0;
@@ -1291,7 +1495,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
   const unsigned int attempt =
     static_cast<unsigned int>(consecutiveHttpsFailures) + 1U;
   if (hasServerTiming) {
-    Serial.printf(
+    EKI_TRACE_PRINTF(
       "[TelemetryTrace] {\"version\":1,\"event\":\"device_http\",\"deviceId\":\"%s\",\"seq\":%lu,\"motionState\":\"%s\",\"sampledAtDeviceMs\":%lld,\"deviceSentAtDeviceMs\":%lld,\"deviceReceivedAtDeviceMs\":%lld,\"serverReceivedAtMs\":%lld,\"serverRespondedAtMs\":%lld,\"httpDurationMs\":%lu,\"httpStatus\":%d,\"attempt\":%u}\n",
       DEVICE_ID,
       static_cast<unsigned long>(fix.sequence),
@@ -1306,7 +1510,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
       attempt
     );
   } else {
-    Serial.printf(
+    EKI_TRACE_PRINTF(
       "[TelemetryTrace] {\"version\":1,\"event\":\"device_http\",\"deviceId\":\"%s\",\"seq\":%lu,\"motionState\":\"%s\",\"sampledAtDeviceMs\":%lld,\"deviceSentAtDeviceMs\":%lld,\"deviceReceivedAtDeviceMs\":%lld,\"serverReceivedAtMs\":null,\"serverRespondedAtMs\":null,\"httpDurationMs\":%lu,\"httpStatus\":%d,\"attempt\":%u}\n",
       DEVICE_ID,
       static_cast<unsigned long>(fix.sequence),
@@ -1321,6 +1525,7 @@ PublishResult publishFix(const TelemetryFix &fix) {
   }
   const int policyResponseCode = eki::telemetry::classifyIngressResponse(
     responseCode, http.header("Ngrok-Error-Code").c_str());
+  lastTelemetryResponseCode = responseCode;
   const eki::telemetry::HttpResponseAction action =
     eki::telemetry::httpResponseAction(policyResponseCode);
   const uint32_t retryAfterMs = responseCode == 429
@@ -1351,8 +1556,10 @@ PublishResult publishFix(const TelemetryFix &fix) {
     );
     if (responseCode == 400 || responseCode == 413 || responseCode == 422) {
       Serial.println("[HTTPS] Check the telemetry payload and GNSS/NTP-disciplined timestamps.");
-    } else if (responseCode == 401 || responseCode == 403) {
-      Serial.println("[HTTPS] Credential fault latched; correct secrets.h and reflash the device.");
+    } else if (responseCode == 401) {
+      Serial.println("[HTTPS] Credential fault latched; repair registry or secrets.h, then restart. Changed secrets.h requires reflashing.");
+    } else if (responseCode == 403) {
+      Serial.println("[HTTPS] Device assignment unavailable; retrying without disabling Wi-Fi.");
     } else if (policyResponseCode == 408 && responseCode != 408) {
       Serial.println("[HTTPS] Tunnel or upstream is temporarily offline; retrying the latest fix.");
     } else if (responseCode == 404) {
@@ -1372,6 +1579,11 @@ PublishResult publishFix(const TelemetryFix &fix) {
   const bool responseComplete =
     action == eki::telemetry::HttpResponseAction::Accept &&
     eki::http::consumeAcceptedResponse<HttpClock>(http, responseCode);
+  const uint32_t drainCompletedAt = millis();
+  EKI_TRACE_PRINTF("[TelemetryTrace] {\"version\":2,\"event\":\"device_http_complete\",\"seq\":%lu,\"sampledAtDeviceMs\":%lld,\"sendAtMonotonicMs\":%lu,\"headersAtMonotonicMs\":%lu,\"drainCompletedAtMonotonicMs\":%lu,\"attempt\":%u,\"responseComplete\":%s}\n",
+    static_cast<unsigned long>(fix.sequence), static_cast<long long>(fix.timestamp),
+    static_cast<unsigned long>(startedAt), static_cast<unsigned long>(headersReceivedAt),
+    static_cast<unsigned long>(drainCompletedAt), attempt, responseComplete ? "true" : "false");
   if (!responseComplete) networkClient.stop();
   http.end();
   if (action != eki::telemetry::HttpResponseAction::Accept) {
@@ -1407,7 +1619,7 @@ bool remoteDiagnosticIsDue() {
   }
   return remoteDiagnosticPublished
     ? elapsed(lastRemoteDiagnosticAt) >= REMOTE_DIAGNOSTIC_INTERVAL_MS
-    : millis() >= FIRST_REMOTE_DIAGNOSTIC_DELAY_MS;
+    : firstDiagnosticDelay.due(millis(), FIRST_REMOTE_DIAGNOSTIC_DELAY_MS);
 }
 
 void scheduleRemoteDiagnosticRetry() {
@@ -1422,12 +1634,14 @@ void scheduleRemoteDiagnosticRetry() {
 }
 
 void publishRemoteDiagnostic() {
+  // Advance/latch the first deadline even while Wi-Fi or clock readiness blocks sending.
+  const bool diagnosticDue = remoteDiagnosticIsDue();
   if (
-    WiFi.status() != WL_CONNECTED ||
+    !stationLinkPresent() ||
     !clockIsSynchronized() ||
     credentialFaultActive ||
     diagnosticInFlight ||
-    !remoteDiagnosticIsDue()
+    !diagnosticDue
   ) return;
 
   const TelemetryQueue::Stats queue = telemetryQueueStats();
@@ -1479,14 +1693,25 @@ void publishRemoteDiagnostic() {
   document["flashEncryption"] = flashEncryptionActive;
   document["secureBoot"] = secureBootActive;
   document["timestamp"] = epochMilliseconds();
+  portENTER_CRITICAL(&healthMetricsMux);
+  const bool gnssAvailable = diagnosticGnssAvailable;
+  const uint32_t noFixStartedAt = diagnosticNoFixStartedAt;
+  portEXIT_CRITICAL(&healthMetricsMux);
+  document["gnssFixAvailable"] = gnssAvailable;
+  document["gnssNoFixMs"] = gnssAvailable ? 0 : elapsed(noFixStartedAt);
+  document["lastTelemetryResponseCode"] = lastTelemetryResponseCode;
 
   char payload[1024]{};
-  const size_t payloadLength = serializeJson(document, payload, sizeof(payload));
+  const size_t payloadLength = eki::json::serializeCompletePayload(document, 21, payload, sizeof(payload));
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
-    Serial.println("[Diagnostics] Refusing oversized health payload.");
+    Serial.println("[Diagnostics] Refusing incomplete or oversized health payload.");
     scheduleRemoteDiagnosticRetry();
     return;
   }
+  Serial.printf("[FirmwareResources] minimumHeap=%lu largestBlock=%lu publisherStackHeadroomBytes=%lu\n",
+    static_cast<unsigned long>(ESP.getMinFreeHeap()),
+    static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+    static_cast<unsigned long>(uxTaskGetStackHighWaterMark(publisherTaskHandle)));
 
   DiagnosticJob job{};
   memcpy(job.payload, payload, payloadLength);
@@ -1500,9 +1725,15 @@ void collectDiagnosticResult() {
   if (xQueueReceive(diagnosticResults, &result, 0) != pdTRUE) return;
   diagnosticInFlight = false;
   const int responseCode = result.status;
-  if (responseCode == 401 || responseCode == 403) {
+  if (responseCode == 401) {
     latchCredentialFault();
-    Serial.println("[Diagnostics] Credential fault latched; firmware reflash required.");
+    Serial.println("[Diagnostics] Credential fault latched; repair registry or secrets.h, then restart. Changed secrets.h requires reflashing.");
+    return;
+  }
+  if (responseCode == 403) {
+    remoteDiagnosticRetryStartedAt = millis();
+    remoteDiagnosticRetryDelayMs = eki::telemetry::HTTPS_CONFIGURATION_RETRY_MS;
+    Serial.println("[Diagnostics] Device assignment unavailable; retrying later.");
     return;
   }
   if (responseCode >= 200 && responseCode < 300) {
@@ -1538,7 +1769,7 @@ void diagnosticWorker(void *) {
     http.setConnectTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
     http.setTimeout(eki::telemetry::MAINTENANCE_HTTP_TIMEOUT_MS);
     int status = -1;
-    if (WiFi.status() == WL_CONNECTED && http.begin(
+    if (stationLinkPresent() && http.begin(
         eki::config::backendUrlUsesHttps(BACKEND_URL)
           ? static_cast<WiFiClient &>(secure) : plain, diagnosticsEndpoint)) {
       http.addHeader("Authorization", authorizationHeader);
@@ -1594,7 +1825,6 @@ TelemetryFix buildFixFromRmc() {
 }
 
 TelemetryFix latestRmcFix{};
-uint32_t latestRmcAt = 0;
 
 TelemetryFix currentFix() {
   TelemetryFix fix = latestRmcFix;
@@ -1638,11 +1868,13 @@ void processGpsByte(char byte) {
   }
   static char sentence[128]{};
   static size_t length = 0;
-  if (byte == '$') length = 0;
+  static uint32_t sentenceStartedAt = 0;
+  if (byte == '$') { length = 0; sentenceStartedAt = millis(); }
   if (length + 1 < sizeof(sentence)) sentence[length++] = byte;
   sentence[length] = '\0';
   const bool committed = gps.encode(byte);
   if (!committed || length < 7 || strncmp(sentence + 3, "RMC", 3) != 0) return;
+  const uint32_t receiverArrivedAt = millis();
   // TinyGPS++ commits all RMC fields only after a valid checksum. Snapshot
   // immediately, before a later GGA changes time/location independently.
   const char *timeEnd = strchr(sentence + 7, ',');
@@ -1650,10 +1882,15 @@ void processGpsByte(char byte) {
     latestRmcFix.valid = false;
     return;
   }
+  eki::clock::UtcDateTime receiverUtc{gps.date.year(), gps.date.month(), gps.date.day(),
+    gps.time.hour(), gps.time.minute(), gps.time.second(), gps.time.centisecond()};
+  latestRmcReceiverUtcMs = 0;
+  eki::clock::utcToEpochMilliseconds(receiverUtc, latestRmcReceiverUtcMs);
+  latestRmcAt = receiverArrivedAt;
+  latestRmcStartedAt = sentenceStartedAt;
   disciplineClockFromGnss();
   latestRmcFix = buildFixFromRmc();
-  latestRmcAt = millis();
-  Serial.printf("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
+  EKI_TRACE_PRINTF("[GnssTrace] utc=%lld system=%lld mono=%lu timeAge=%lu locationAge=%lu buffered=%d rmc=%.6s\n",
     static_cast<long long>(latestGnssEpochMs),
     static_cast<long long>(systemEpochMilliseconds()),
     static_cast<unsigned long>(latestRmcAt),
@@ -1722,8 +1959,15 @@ void rememberCapturedFix(const TelemetryFix &fix) {
 
 void evaluateTelemetry() {
   const TelemetryFix fix = currentFix();
+  portENTER_CRITICAL(&healthMetricsMux);
+  if (diagnosticGnssAvailable && !fix.valid) diagnosticNoFixStartedAt = millis();
+  diagnosticGnssAvailable = fix.valid;
+  portEXIT_CRITICAL(&healthMetricsMux);
+  portENTER_CRITICAL(&maintenanceSnapshotMux);
+  maintenanceSnapshot = {fix.valid, fix.motionState == MotionState::Stopped, millis()};
+  portEXIT_CRITICAL(&maintenanceSnapshotMux);
   if (
-    WiFi.status() == WL_CONNECTED &&
+    stationLinkPresent() &&
     (!gnssStatusKnown || fix.valid != lastGnssConnected)
   ) {
     gnssStatusKnown = true;
@@ -1748,7 +1992,7 @@ void evaluateTelemetry() {
       uncertain.motionState = MotionState::Uncertain;
       uncertain.timestamp = epochMilliseconds();
       uncertain.valid = true;
-      enqueueFix(uncertain);
+      enqueueFix(uncertain, false);
       lossMessageQueued = true;
     }
     return;
@@ -1778,6 +2022,7 @@ void publisherTask(void *) {
   for (;;) {
     esp_task_wdt_reset();
     serviceConnectivity();
+    if (firmwareCredentialRejected.exchange(false)) latchCredentialFault();
     collectDiagnosticResult();
     reportNtpCrossCheck();
 #if EKI_FLEET_BUILD
@@ -1786,7 +2031,7 @@ void publisherTask(void *) {
 
     bool drainedSample = false;
     bool freshTelemetryQueued = false;
-    if (WiFi.status() == WL_CONNECTED) {
+    if (stationLinkPresent()) {
       synchronizeClock();
       if (clockIsSynchronized()) {
         TelemetryFix fix{};
@@ -1828,13 +2073,6 @@ void publisherTask(void *) {
         if (remoteDiagnosticIsDue()) {
           publishRemoteDiagnostic();
         }
-#if EKI_FLEET_BUILD
-        else {
-          // Keep release checks separate from diagnostic preparation.
-          // The release check rechecks queue depth before starting.
-          checkForSignedFirmware();
-        }
-#endif
       }
     }
 
@@ -1847,6 +2085,10 @@ void publisherTask(void *) {
 }
 
 } // namespace
+
+extern "C" void sntp_sync_time(struct timeval *candidate) {
+  applyNtpCandidate(candidate);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -1915,8 +2157,24 @@ void setup() {
   }
 
   portENTER_CRITICAL(&telemetryQueueMux);
-  telemetryQueue.initializeOrRecover(configurationTag);
+  const bool rtcRecovered = telemetryQueue.initializeOrRecover(configurationTag);
   portEXIT_CRITICAL(&telemetryQueueMux);
+  checkpointReady = checkpointStorage.begin() && checkpointCodec.begin(DEVICE_SECRET, configurationTag);
+  bool flashRecovered = false;
+  if (checkpointReady) {
+    checkpointJournal.initialize();
+    checkpointReady = checkpointJournal.ready();
+    TelemetryFix saved{};
+    if (!rtcRecovered && checkpointJournal.newest(saved) &&
+        saved.sequence != 0 && saved.timestamp > 0 &&
+        std::isfinite(saved.lat) && saved.lat >= -90 && saved.lat <= 90 &&
+        std::isfinite(saved.lng) && saved.lng >= -180 && saved.lng <= 180 &&
+        eki::telemetry::speedIsPlausible(saved.speed) &&
+        saved.motionState <= MotionState::Uncertain) {
+      flashRecovered = telemetryQueue.restoreNewest(saved, configurationTag);
+    }
+  }
+  Serial.printf("[PowerCheckpoint] ready=%s recovered=%s slots=%u intervalMs=%lu\n", checkpointReady ? "true" : "false", flashRecovered ? "true" : "false", static_cast<unsigned>(checkpointStorage.recordCount()), static_cast<unsigned long>(CHECKPOINT_INTERVAL_MS));
   if (gpsRxBuffer != GPS_RX_BUFFER_BYTES) {
     Serial.printf(
       "[GPS] RX buffer setup returned %u bytes; expected %u.\n",
@@ -1939,8 +2197,19 @@ void setup() {
     Serial.println("[Boot] Compile-time request configuration is too long; halted.");
     haltWithStatusLed(2);
   }
-  sntp_set_time_sync_notification_cb(onNtpTimeSynchronized);
+  clockDisciplineMutex = xSemaphoreCreateMutex();
+  if (!clockDisciplineMutex) haltWithStatusLed(2);
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED || event == ARDUINO_EVENT_WIFI_STA_GOT_IP) dnsResolver.networkChanged();
+  });
   configureWatchdog();
+#if EKI_FLEET_BUILD
+  if (xTaskCreatePinnedToCore(firmwareMaintenanceWorker, "firmware-maintenance", 12288,
+      nullptr, PUBLISHER_TASK_PRIORITY, nullptr, 0) != pdPASS) {
+    Serial.println("[Boot] Unable to start firmware maintenance.");
+    haltWithStatusLed(2, true);
+  }
+#endif
   diagnosticJobs = xQueueCreate(1, sizeof(DiagnosticJob));
   diagnosticResults = xQueueCreate(1, sizeof(DiagnosticResult));
   if (diagnosticJobs == nullptr || diagnosticResults == nullptr ||

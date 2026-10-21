@@ -1,6 +1,6 @@
 # Stable ngrok tunnel for ESP32 bench testing
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This runbook replaces the rotating Cloudflare Quick Tunnel used during local
 hardware tests. It gives the laptop backend a reusable HTTPS origin so restarting
@@ -36,8 +36,8 @@ domain do not require another flash.
 ## 1. One-time ngrok setup
 
 Create an ngrok account and copy its assigned development domain from the ngrok
-dashboard. The free plan currently supplies one assigned development domain;
-it is stable across agent restarts when explicitly passed to `--url`.
+dashboard. Use the stable domain available to your account and pass it explicitly with
+`--url`; confirm current account eligibility and limits in the dashboard.
 Use the exact hostname shown by the dashboard or agent; ngrok may use suffixes
 such as `ngrok-free.dev`, and the suffix should not be assumed in advance.
 
@@ -54,7 +54,8 @@ screenshots, or test logs.
 
 ## 2. Start and verify the backend tunnel
 
-Start the local backend in Terminal 1:
+After setting backend `NODE_ENV=development` and `PORT=4000` as described in
+[local setup](../GETTING_STARTED.md#local-development), start Terminal 1:
 
 ```powershell
 npm run dev --workspace=backend
@@ -135,8 +136,7 @@ Use the same stable backend origin for the browser application:
 - Keep backend `CORS_ORIGIN` set to frontend origins, not the ngrok backend URL.
 - Never set `BACKEND_URL` in `backend/.env`; the backend still listens locally.
 
-Prefer Firebase Hosting for remote phones. A free ngrok account currently has
-only one assigned development domain, which should be reserved for the backend.
+Prefer Firebase Hosting for remote phones. Reserve the account's eligible backend domain for the tracker.
 Exposing a second local frontend requires another eligible stable domain and the
 corresponding Firebase Authentication/CORS configuration.
 
@@ -156,10 +156,10 @@ corresponding Firebase Authentication/CORS configuration.
 
 ## 6. Limits and failure handling
 
-The ngrok free plan is intended for development. Its documented limits include
-20,000 HTTP requests and 1 GB of outbound data per month. At a one-second moving
-telemetry cadence, 20,000 requests is only about 5.5 hours before health checks
-and other API traffic, so check dashboard usage before every field rehearsal.
+Check current request/data quotas and remaining dashboard usage before every
+field rehearsal. At one request per second, telemetry alone consumes about
+3,600 requests per hour, including while stopped under the current firmware
+policy; health checks and other API traffic add to that budget.
 
 The free-plan browser interstitial is documented as not affecting API or other
 programmatic requests. If a browser page is shown while manually opening the

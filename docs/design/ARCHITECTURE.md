@@ -1,6 +1,6 @@
 # Architecture and lifecycle summary
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 The authoritative design is split into [High-level design](HIGH_LEVEL_DESIGN.md), [Low-level design](LOW_LEVEL_DESIGN.md), [Firebase data model](../data/FIREBASE_DATA_MODEL.md), and [Hardware telemetry](../hardware/HARDWARE_TELEMETRY.md). This page is the short operational reference.
 
@@ -15,7 +15,7 @@ flowchart LR
   RTDB --> WORKER["Firestore-lease worker"]
   WORKER -->|"ordered lifecycle"| RTDB
   API & WORKER --> FS["Firestore durable state"]
-  RTDB -->|"onValue push"| WEB["Passenger / admin"]
+  RTDB -->|"shared Firebase subscription"| WEB["Passenger / admin"]
   FS -->|"onSnapshot / queries"| WEB
 ```
 
@@ -33,4 +33,34 @@ Admin route mutation uses `configVersion` for every edit and `geometryVersion` p
 
 Security boundaries: device assignment comes from protected Firestore; device secrets are independent salted scrypt verifiers; browser API calls use Firebase bearer tokens and server role/assignment checks; Firebase is default deny and live writes/internal collections are server-only. Authenticated/unknown network responses are not service-worker cached.
 
-Performance: one shared RTDB listener per browser, a one-second moving publish cadence, a five-second stationary heartbeat, seven-second HTTPS timeout, jittered backoff, bounded shared rate-limit token leases, Firestore only on lifecycle changes, and local polyline ETA math. Map matching keeps one in-flight plus one latest-pending sample per bus. Admin-only `GET /api/health` reports rolling processing, device-queue, network, device-to-server, RTDB-write, rate-limit decision and transaction-attempt latency plus shared limiter transactions/retries, coalesced route work and queue age; public `GET /health` is readiness-only. Physical-route latency and GNSS reliability still require the acceptance runbook.
+## Runtime budgets and recovery
+
+- Browser live state: one shared RTDB initial snapshot/delta pipeline, with
+  route-scoped delivery and local polyline ETA math.
+- Firmware capture: one-second evaluation and moving/stopped heartbeat;
+  separate one-second connect, 1.5-second HTTP request and ten-second TLS bounds.
+- Network recovery: bounded jittered retries and shared device rate-limit
+  token leases. No timeout value guarantees total end-to-end latency.
+- Device recovery: the 100-sample RTC queue survives warm resets; a compatible
+  encrypted flash checkpoint restores one committed fix after full power loss.
+  Checkpoints are scheduled every ten seconds, so newer uncommitted fixes can
+  be lost. Only the fresh subset is replayed.
+- Backend durability: Firestore records lifecycle/stop changes and recovery,
+  rather than every coordinate. Map matching holds one in-flight and one
+  latest-pending sample per bus.
+- Diagnostics: public `/health` exposes readiness; admin `/api/health` reports
+  bounded ingestion, rate-limit, queue, dependency and worker evidence.
+
+## Browser access and feedback
+
+- App Check and role verification complete before protected listeners open.
+  Failure/timeouts leave readiness closed.
+- Account changes/sign-out invalidate pending verification, shared caches and
+  old-session feedback requests, including same-account re-verification.
+- Both admin feedback views use the latest-200 HTTP list and acknowledged status
+  PATCH. Firestore feedback access remains restricted.
+- Passenger station/bus selection stays inside the app. Destination selection
+  updates the tracking target before boarding and carries into the join form.
+
+See [testing evidence](../testing/README.md) and [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
+for physical-route, GNSS, secure-fleet and infrastructure acceptance.

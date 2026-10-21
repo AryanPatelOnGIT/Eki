@@ -4,7 +4,42 @@ import {
   analyzeTelemetryTraces,
   estimateDeviceClockOffset,
   percentileSummary,
+  parseDeviceRecords,
+  formatTelemetryReport,
 } from "./analyze-telemetry-trace.mjs";
+
+test("recovers independently framed records from interleaved and concatenated serial output", () => {
+  const capture = { event: "device_capture", seq: 1, note: "escaped \\\" brace } [TelemetryTrace] marker" };
+  const http = { event: "device_http", seq: 1, httpStatus: 202 };
+  const records = parseDeviceRecords(`[TelemetryTrace] ${JSON.stringify(capture)}[TelemetryTrace] ${JSON.stringify(http)} trailing text\n`);
+  assert.deepEqual(records, [capture, http]);
+});
+
+test("retains malformed fragments without losing the next intact serial record", () => {
+  const complete = { event: "device_http", seq: 2, httpStatus: -11 };
+  const records = parseDeviceRecords(`[TelemetryTrace] {"event":"device_cap\n[TelemetryTrace] ${JSON.stringify(complete)}\n`);
+  assert.deepEqual(records, [{ event: "malformed_trace" }, complete]);
+});
+
+test("reports location-only browser samples separately from armed ride evidence", () => {
+  const listener = { event: "browser_listener", runId: "tab", nodeKey: "bus_route", seq: 1, sampledAtDeviceMs: 100 };
+  const result = analyzeTelemetryTraces([], [listener, listener, { ...listener, seq: 2, sessionId: "ride" }]);
+  assert.equal(result.counters.browserSamplesWithoutSession, 1);
+});
+
+test("does not interpret network-looking JSON string content as a second event", () => {
+  const record = { event: "device_capture", note: "[NetworkTiming] dnsMs=1 tlsConnectMs=20 timeoutMs=3000 handshakeMs=8000 result=1" };
+  assert.deepEqual(parseDeviceRecords(`[TelemetryTrace] ${JSON.stringify(record)}`), [record]);
+});
+
+test("accepts configured handshake limits and legacy labels without reporting them as measured duration", () => {
+  for (const label of ["handshakeMs", "configuredHandshakeTimeoutMs"]) {
+    const records = parseDeviceRecords(`[NetworkTiming] dnsMs=1 tlsConnectMs=20 timeoutMs=3000 ${label}=8000 result=1 channel=telemetry preparationMs=5`);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].tlsConnectMs, 20);
+    assert.equal(records[0].handshakeMs, undefined);
+  }
+});
 
 test("estimates clock offset and network uncertainty from four timestamps", () => {
   assert.deepEqual(estimateDeviceClockOffset({
@@ -61,6 +96,14 @@ test("correlates device, listener, and render phases without mixing clocks", () 
     motionState: "moving",
     attempts: 1,
     deviceQueueMs: 100,
+    receiverUtcMs: null,
+    receiverClockToCaptureMs: null,
+    rmcReadMs: null,
+    receiverToEvaluationMs: null,
+    evaluationToEnqueueMs: null,
+    enqueueToSendMs: null,
+    responseDrainMs: null,
+    completeDeviceCycleMs: null,
     httpRoundTripMs: 250,
     clockOffsetMs: 0,
     clockUncertaintyMs: 100,
@@ -69,12 +112,46 @@ test("correlates device, listener, and render phases without mixing clocks", () 
     backendToRtdbMs: 60,
     rtdbToBrowserListenerMs: 40,
     browserListenerToRenderMs: 30,
+    browserListenerToMarkerSettledMs: null,
+    markerAnimationMs: null,
+    endToEndMarkerSettledMs: null,
     endToEndMs: 330,
     captureUpdateGapMs: null,
     backendIngressUpdateGapMs: null,
     browserListenerUpdateGapMs: null,
     browserRenderUpdateGapMs: null,
   });
+});
+
+test("held targets do not count as arrivals and settled timing stays in the listener's run", () => {
+  const device = [{ seq: 1, sampledAtDeviceMs: 900, deviceSentAtDeviceMs: 1000, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150, deviceReceivedAtDeviceMs: 1250, httpStatus: 202 }];
+  const common = { seq: 1, sampledAtDeviceMs: 900, runId: "current", displayKind: "raw" };
+  const browser = [
+    { ...common, event: "browser_listener", browserMonotonicAtMs: 50 },
+    { ...common, event: "browser_render", displayKind: "held", browserMonotonicAtMs: 60 },
+    { ...common, event: "browser_render", browserMonotonicAtMs: 80 },
+    { ...common, event: "browser_marker_settled", runId: "other", browserMonotonicAtMs: 100 },
+    { ...common, event: "browser_marker_settled", displayKind: "held", browserMonotonicAtMs: 110 },
+    { ...common, event: "browser_marker_settled", browserMonotonicAtMs: 210, browserEstimatedServerAtMs: 1400 },
+  ];
+  const { rows } = analyzeTelemetryTraces(device, browser);
+  assert.equal(rows[0].browserListenerToRenderMs, 30);
+  assert.equal(rows[0].browserListenerToMarkerSettledMs, 160);
+  assert.equal(rows[0].markerAnimationMs, 130);
+  assert.equal(rows[0].endToEndMarkerSettledMs, 500);
+});
+
+test("does not mix another ride or route's arrival in the same browser run", () => {
+  const common = { seq: 8, sampledAtDeviceMs: 1900, runId: "browser", nodeKey: "bus_route", sessionId: "ride" };
+  const device = [{ ...common, deviceSentAtDeviceMs: 2000, serverReceivedAtMs: 2100, serverRespondedAtMs: 2150, deviceReceivedAtDeviceMs: 2250, httpStatus: 202 }];
+  const browser = [
+    { ...common, event: "browser_listener", browserMonotonicAtMs: 50 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", nodeKey: "bus_other_route", browserMonotonicAtMs: 55 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", sessionId: "old-ride", browserMonotonicAtMs: 60 },
+    { ...common, event: "browser_marker_settled", displayKind: "raw", browserMonotonicAtMs: 150 },
+  ];
+  assert.equal(analyzeTelemetryTraces(device, browser).rows[0].browserListenerToMarkerSettledMs, 100);
+  assert.equal(analyzeTelemetryTraces(device, browser.slice(0, 3)).rows[0].browserListenerToMarkerSettledMs, null);
 });
 
 test("uses nearest-rank percentiles", () => {
@@ -86,6 +163,20 @@ test("uses nearest-rank percentiles", () => {
     p99: 100,
     maximum: 100,
   });
+});
+
+test("correlates projected wire keys with logical map keys without crossing rides", () => {
+  const common = { seq: 8, sampledAtDeviceMs: 1900, runId: "browser", sessionId: "ride" };
+  const device = [{ ...common, httpStatus: 202 }];
+  const browser = [
+    { ...common, event: "browser_listener", nodeKey: "node:bus_route", browserMonotonicAtMs: 50 },
+    { ...common, event: "browser_render", nodeKey: "bus_route", displayKind: "raw", browserMonotonicAtMs: 75 },
+    { ...common, event: "browser_marker_settled", nodeKey: "bus_route", sessionId: "old", displayKind: "raw", browserMonotonicAtMs: 80 },
+    { ...common, event: "browser_marker_settled", nodeKey: "bus_route", displayKind: "raw", browserMonotonicAtMs: 150 },
+  ];
+  const row = analyzeTelemetryTraces(device, browser).rows[0];
+  assert.equal(row.browserListenerToRenderMs, 25);
+  assert.equal(row.browserListenerToMarkerSettledMs, 100);
 });
 
 test("pairs a listener with a render from the same browser run", () => {
@@ -146,8 +237,98 @@ test("reports failed requests and gaps without deleting timestamps early", () =>
   assert.equal(analysis.gaps.filter(gap => gap.metric === "backendIngressUpdateGapMs").length, 2);
 });
 
+test("measures browser cadence through a serial recording gap using every browser sample", () => {
+  const device = [0, 9000].map((offset, index) => ({
+    seq: index ? 10 : 1, sampledAtDeviceMs: 1000 + offset,
+    serverReceivedAtMs: 1100 + offset, httpStatus: 202,
+  }));
+  const browser = Array.from({ length: 10 }, (_, index) => ({
+    event: "browser_listener", runId: "tab", nodeKey: "node:bus_route", sessionId: "ride",
+    seq: index + 1, sampledAtDeviceMs: 1000 + index * 1000,
+    browserMonotonicAtMs: index * 1000, browserEstimatedServerAtMs: 1200 + index * 1000,
+  }));
+  const analysis = analyzeTelemetryTraces(device, [...browser, ...browser]);
+  assert.equal(analysis.rows[1].browserListenerUpdateGapMs, 1000);
+  assert.equal(analysis.browserUpdates.length, 10);
+  assert.equal(analysis.gaps.filter(gap => gap.metric === "browserListenerUpdateGapMs").length, 0);
+  assert.match(formatTelemetryReport(analysis), /serial-observed accepted samples/);
+  assert.match(formatTelemetryReport(analysis), /do not establish a backend outage/);
+});
+
+test("retains browser-only gaps and isolates tabs, routes, sessions and scenario transitions", () => {
+  const sample = (seq, time, overrides = {}) => ({
+    event: "browser_listener", runId: "tab", nodeKey: "bus_route", sessionId: "ride",
+    seq, sampledAtDeviceMs: seq * 1000, browserMonotonicAtMs: time,
+    browserEstimatedServerAtMs: 100000 - time, scenario: "moving", ...overrides,
+  });
+  const analysis = analyzeTelemetryTraces([], [
+    sample(1, 100), sample(2, 3100),
+    sample(3, 8000, { runId: "other" }),
+    sample(4, 9000, { nodeKey: "other_route" }),
+    sample(5, 10000, { sessionId: "other_ride" }),
+    sample(6, 11000, { scenario: "stopped" }), sample(7, 12000),
+    sample(8, 13000, { event: "browser_render", displayKind: "held" }),
+    sample(9, 14000, { browserMonotonicAtMs: undefined }),
+  ]);
+  assert.deepEqual(analysis.gaps.map(gap => [gap.seq, gap.metric, gap.milliseconds]),
+    [[2, "browserListenerUpdateGapMs", 3000]]);
+  assert.equal(analysis.browserUpdates.find(row => row.seq === 7).browserListenerUpdateGapMs, null);
+});
+
+test("reports browser-only render cadence without counting held markers as new arrivals", () => {
+  const sample = (seq, time, displayKind) => ({
+    event: "browser_render", runId: "tab", nodeKey: "bus_route", sessionId: "ride",
+    seq, sampledAtDeviceMs: seq * 1000, browserMonotonicAtMs: time, displayKind, scenario: "recovery",
+  });
+  const analysis = analyzeTelemetryTraces([], [
+    sample(1, 0, "raw"), sample(2, 2000, "held"), sample(3, 4000, "matched"),
+    sample(4, -1, "raw"), sample(5, Number.NaN, "raw"),
+  ]);
+  assert.equal(analysis.browserUpdates.length, 2);
+  assert.deepEqual(analysis.gaps.map(gap => [gap.metric, gap.milliseconds]),
+    [["browserRenderUpdateGapMs", 4000]]);
+  assert.match(formatTelemetryReport(analysis), /Scenario: recovery/);
+});
+
 test("rejects a wall-clock jump instead of calling it transport latency", () => {
   assert.equal(estimateDeviceClockOffset({ deviceSentAtDeviceMs: 1000,
     deviceReceivedAtDeviceMs: 8250, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150,
     httpDurationMs: 250 }), null);
+});
+
+test("retains receiver evaluation queue and body-drain delays across monotonic rollover", () => {
+  const common = { seq: 1, sampledAtDeviceMs: 900 };
+  const records = [
+    { ...common, event: "device_capture", receiverBacked: true,
+      receiverStartedAtMonotonicMs: 0xffffffd0, receiverAtMonotonicMs: 0xffffffe0,
+      evaluationAtMonotonicMs: 0xfffffff0, enqueuedAtMonotonicMs: 0xfffffff8 },
+    { ...common, httpStatus: 202, attempt: 2, deviceSentAtDeviceMs: 1000,
+      deviceReceivedAtDeviceMs: 1250, serverReceivedAtMs: 1100, serverRespondedAtMs: 1150 },
+    { ...common, event: "device_http_complete", attempt: 1, responseComplete: false,
+      sendAtMonotonicMs: 1, headersAtMonotonicMs: 2, drainCompletedAtMonotonicMs: 3 },
+    { ...common, event: "device_http_complete", attempt: 2, responseComplete: true,
+      sendAtMonotonicMs: 0x10, headersAtMonotonicMs: 0x110, drainCompletedAtMonotonicMs: 0x210 },
+  ];
+  const { rows, counters } = analyzeTelemetryTraces(records, []);
+  assert.equal(counters.requests, 1);
+  assert.equal(rows[0].attempts, 1);
+  assert.equal(rows[0].rmcReadMs, 16);
+  assert.equal(rows[0].receiverToEvaluationMs, 16);
+  assert.equal(rows[0].evaluationToEnqueueMs, 8);
+  assert.equal(rows[0].enqueueToSendMs, 24);
+  assert.equal(rows[0].responseDrainMs, 256);
+  assert.equal(rows[0].completeDeviceCycleMs, 560);
+});
+
+test("does not invent receiver or complete-cycle evidence for recovered fixes or incomplete bodies", () => {
+  const common = { seq: 1, sampledAtDeviceMs: 900 };
+  const { rows } = analyzeTelemetryTraces([
+    { ...common, event: "device_capture", receiverBacked: false, receiverAtMonotonicMs: 1, enqueuedAtMonotonicMs: 5 },
+    { ...common, httpStatus: 202 },
+    { ...common, event: "device_http_complete", responseComplete: false, sendAtMonotonicMs: 10,
+      headersAtMonotonicMs: 20, drainCompletedAtMonotonicMs: 30 },
+  ], []);
+  assert.equal(rows[0].receiverToEvaluationMs, null);
+  assert.equal(rows[0].completeDeviceCycleMs, null);
+  assert.equal(rows[0].responseDrainMs, null);
 });

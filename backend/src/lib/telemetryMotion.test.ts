@@ -71,6 +71,12 @@ describe("telemetry motion plausibility", () => {
       ),
     ).toBe(true);
   });
+  it("does not accept a large jump from one impossible speed reading", () => {
+    expect(isPlausibleTelemetryTransition(
+      { lat: 23, lng: 72.5, speed: 0, timestamp: 1_000, gpsHdop: 1 },
+      { lat: 23.01, lng: 72.5, speed: 10_000, timestamp: 4_000, gpsHdop: 1 },
+    )).toBe(false);
+  });
 
   it("keeps the quality error budget within the measured 15–50 m range", () => {
     expect(adaptiveGnssErrorMeters(0, 30, 30, 0)).toBe(15);
@@ -78,6 +84,13 @@ describe("telemetry motion plausibility", () => {
     expect(adaptiveGnssErrorMeters(4, 30, 30, 0)).toBe(43);
     expect(adaptiveGnssErrorMeters(null, 0, 0, 60_000)).toBe(50);
   });
+
+  it.each([null, undefined, Number.NaN, Infinity, -1])(
+    "falls back to HDOP when explicit accuracy is unavailable: %s",
+    accuracy => {
+      expect(adaptiveGnssErrorMeters(4, 30, 30, 0, accuracy)).toBe(43);
+    },
+  );
 
   it("rejects stationary multipath that exceeds the adaptive budget", () => {
     expect(

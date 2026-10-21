@@ -19,13 +19,16 @@ let originalBodyOverflow = "";
 export function useDialogFocus<T extends HTMLElement>(
   isOpen: boolean,
   onRequestClose: () => void,
+  returnFocusRef?: RefObject<HTMLElement | null>,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const closeRef = useRef(onRequestClose);
+  const fallbackFocusRef = useRef(returnFocusRef);
 
   useEffect(() => {
     closeRef.current = onRequestClose;
-  }, [onRequestClose]);
+    fallbackFocusRef.current = returnFocusRef;
+  }, [onRequestClose, returnFocusRef]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -83,7 +86,10 @@ export function useDialogFocus<T extends HTMLElement>(
       openDialogCount = Math.max(0, openDialogCount - 1);
       if (openDialogCount === 0) {
         document.body.style.overflow = originalBodyOverflow;
-        previouslyFocused?.focus();
+        const target = previouslyFocused?.isConnected
+          ? previouslyFocused
+          : fallbackFocusRef.current?.current;
+        target?.focus();
       }
     };
   }, [isOpen]);

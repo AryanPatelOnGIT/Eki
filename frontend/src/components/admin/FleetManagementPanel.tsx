@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { useBuses, BusData } from "@/hooks/useBuses";
 import { useDrivers, DriverData } from "@/hooks/useDrivers";
 import { useRoutes } from "@/hooks/useRoutes";
@@ -14,7 +14,7 @@ import {
 import CustomSelect from "@/components/ui/CustomSelect";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { errorMessage } from "@/lib/errors";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { validateOperatorInput, validateVehicleInput } from "@/lib/adminValidation";
 import {
   devicePresence,
@@ -33,6 +33,7 @@ async function fleetRequest(path: string, method: "PUT" | "DELETE", body?: objec
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
     fallbackError: "Fleet operation failed.",
+    validateResponse: value => acknowledgedField(value, method === "DELETE" ? "deleted" : "saved"),
   });
 }
 
@@ -67,10 +68,13 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
     error: busesError,
     retry: retryBuses,
   } = useBuses();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { drivers, loading: driversLoading, error: driversError, retry: retryDrivers } = useDrivers();
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
-  const activeEntries = useActiveBuses();
-  const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
+  const [liveReadFailed, setLiveReadFailed] = useState(false);
+  const onLiveReadError = useCallback(() => setLiveReadFailed(true), []);
+  const onLiveReadRecovered = useCallback(() => setLiveReadFailed(false), []);
+  const activeEntries = useActiveBuses({ onReadError: onLiveReadError, onReadRecovered: onLiveReadRecovered });
+  const [, setFreshnessNow] = useState(() => Date.now());
 
   useEffect(() => {
     const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000);
@@ -89,12 +93,26 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
     : activeEntries.filter((e) => registeredBusIds.has(e.busId)); // buses loaded — filter to registered only
   const onlineBusIds = new Set(
     filteredActiveEntries
-      .filter((entry) => devicePresence(entry, freshnessNow) === "online")
+      .filter((entry) => devicePresence(entry) === "online")
       .map((entry) => entry.busId),
   );
 
   // ── Error state ──────────────────────────────────────────────────────────
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [operatorError, setOperatorError] = useState<string | null>(null);
+  const operatorErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (operatorError) operatorErrorRef.current?.focus();
+  }, [operatorError]);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const runSave = async (work: () => Promise<void>) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try { await work(); }
+    finally { savingRef.current = false; setSaving(false); }
+  };
 
   // ── Modal confirmation states ──────────────────────────────────────────────
   const [confirmDeleteBusId, setConfirmDeleteBusId] = useState<string | null>(null);
@@ -144,11 +162,12 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       return;
     }
     try {
-      await fleetRequest(`/buses/${encodeURIComponent(newBusId.trim())}`, "PUT", {
-        name: newBusName.trim(),
-        assignedRoutes: newBusRoutes,
+      await runSave(async () => {
+        await fleetRequest(`/buses/${encodeURIComponent(newBusId.trim())}`, "PUT", {
+          name: newBusName.trim(), assignedRoutes: newBusRoutes,
+        });
+        setNewBusId(""); setNewBusName(""); setNewBusRoutes([]);
       });
-      setNewBusId(""); setNewBusName(""); setNewBusRoutes([]);
     } catch (error: unknown) { setErrorMsg("Failed to add Vehicle: " + errorMessage(error)); }
   };
 
@@ -184,11 +203,12 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       return;
     }
     try {
-      await fleetRequest(`/buses/${encodeURIComponent(id)}`, "PUT", {
-        name: editBusName.trim(),
-        assignedRoutes: editBusRoutes,
+      await runSave(async () => {
+        await fleetRequest(`/buses/${encodeURIComponent(id)}`, "PUT", {
+          name: editBusName.trim(), assignedRoutes: editBusRoutes,
+        });
+        setEditingBusId(null);
       });
-      setEditingBusId(null);
     } catch (error: unknown) { setErrorMsg("Failed to update Vehicle: " + errorMessage(error)); }
   };
 
@@ -196,18 +216,20 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const handleAddDriver = async () => {
     const validationError = validateOperatorInput(newDriverId, newDriverName, newDriverAuthUid);
     if (validationError) {
-      setErrorMsg(validationError);
+      setOperatorError(validationError);
+      operatorErrorRef.current?.focus();
       return;
     }
+    setOperatorError(null);
     const authUid = newDriverAuthUid.trim();
     try {
-      await fleetRequest(`/drivers/${encodeURIComponent(newDriverId.trim())}`, "PUT", {
-        name: newDriverName.trim(),
-        authUid,
-        assignedBusId: newDriverBusId || null,
+      await runSave(async () => {
+        await fleetRequest(`/drivers/${encodeURIComponent(newDriverId.trim())}`, "PUT", {
+          name: newDriverName.trim(), authUid, assignedBusId: newDriverBusId || null,
+        });
+        setNewDriverId(""); setNewDriverName(""); setNewDriverAuthUid(""); setNewDriverBusId("");
       });
-      setNewDriverId(""); setNewDriverName(""); setNewDriverAuthUid(""); setNewDriverBusId("");
-    } catch (error: unknown) { setErrorMsg("Failed to add Operator: " + errorMessage(error)); }
+    } catch (error: unknown) { setOperatorError("Failed to add Operator: " + errorMessage(error)); }
   };
 
   const handleDeleteDriver = (id: string) => {
@@ -244,12 +266,12 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
     }
     const authUid = editDriverAuthUid.trim();
     try {
-      await fleetRequest(`/drivers/${encodeURIComponent(id)}`, "PUT", {
-        name: editDriverName.trim(),
-        authUid,
-        assignedBusId: editDriverBusId || null,
+      await runSave(async () => {
+        await fleetRequest(`/drivers/${encodeURIComponent(id)}`, "PUT", {
+          name: editDriverName.trim(), authUid, assignedBusId: editDriverBusId || null,
+        });
+        setEditingDriverId(null);
       });
-      setEditingDriverId(null);
     } catch (error: unknown) { setErrorMsg("Failed to update Operator: " + errorMessage(error)); }
   };
 
@@ -262,17 +284,18 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const liveDrivers = drivers.filter((d) => liveDriverIds.has(d.id));
 
   // â”€â”€ Fleet summary stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  if (busesError || routesError) {
+  if (busesError || routesError || driversError) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-center gap-3 p-12 text-center text-red-300" role="alert">
         <AlertCircle className="size-9" aria-hidden="true" />
         <p className="text-sm font-semibold">Fleet data could not be loaded.</p>
-        <p className="text-xs text-red-300/70">{busesError || routesError}</p>
+        <p className="text-xs text-red-300/70">{busesError || routesError || driversError}</p>
         <button
           type="button"
           onClick={() => {
             if (busesError) retryBuses();
             if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
           }}
           className="mt-1 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white"
         >
@@ -284,6 +307,8 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
 
   return (
     <div className="w-full max-w-7xl mx-auto flex flex-col gap-5 p-3 md:p-6 animate-slide-up">
+
+      {liveReadFailed && <ErrorBanner message="Live vehicle updates are unavailable. Check your connection and reload to retry." onDismiss={() => setLiveReadFailed(false)} />}
 
       {/* â”€â”€ Global error banner â”€â”€ */}
       {errorMsg && (
@@ -359,9 +384,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
             <button
               onClick={handleAddBus}
               aria-label="Add new vehicle"
+              disabled={saving}
               className="btn-rc-primary h-11 flex items-center justify-center gap-2 font-semibold uppercase text-[11px] tracking-widest px-4"
             >
-              <Plus className="w-4 h-4" /> Add Vehicle
+              <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add Vehicle"}
             </button>
           </div>
 
@@ -484,9 +510,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
                             <button
                               onClick={() => handleSaveBus(bus.id)}
                               aria-label="Save vehicle changes"
+                              disabled={saving}
                               className="btn-rc-primary h-11 flex items-center justify-center gap-2 font-semibold uppercase text-[11px] tracking-widest px-4"
                             >
-                              <Check className="w-4 h-4" /> Save Changes
+                              <Check className="w-4 h-4" /> {saving ? "Saving…" : "Save Changes"}
                             </button>
                           </div>
                         )}
@@ -516,22 +543,30 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
           {/* Add form */}
           <div className="panel-rc p-6 flex flex-col gap-4">
             <p className="text-[9px] text-white/20 font-black uppercase tracking-[0.2em]">Register new operator</p>
+            {operatorError && (
+              <div ref={operatorErrorRef} id="operator-create-error" role="alert" tabIndex={-1} className="rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-200 focus:outline-2 focus:outline-red-300">
+                {operatorError}
+              </div>
+            )}
             <input
               value={newDriverId} onChange={(e) => setNewDriverId(e.target.value)}
               placeholder="Operator ID (e.g. drv_1)"
               aria-label="New operator ID"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <input
               value={newDriverName} onChange={(e) => setNewDriverName(e.target.value)}
               placeholder="Display Name (e.g. Ravi Kumar)"
               aria-label="New operator display name"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <input
               value={newDriverAuthUid} onChange={(e) => setNewDriverAuthUid(e.target.value)}
               placeholder="Firebase Auth UID"
               aria-label="Firebase Auth UID for new operator"
+              aria-describedby={operatorError ? "operator-create-error" : undefined}
               className="w-full h-11 bg-brand-dark/60 border border-white/10 rounded-xl px-3 text-sm text-white focus:border-white/40 outline-none transition-colors placeholder:text-white/20 font-semibold"
             />
             <CustomSelect
@@ -549,9 +584,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
             <button
               onClick={handleAddDriver}
               aria-label="Add new operator"
+              disabled={saving}
               className="btn-rc-primary h-11 flex items-center justify-center gap-2 font-semibold uppercase text-[11px] tracking-widest px-4"
             >
-              <Plus className="w-4 h-4" /> Add Operator
+              <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add Operator"}
             </button>
           </div>
 
@@ -674,9 +710,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
                             <button
                               onClick={() => handleSaveDriver(driver.id)}
                               aria-label="Save operator changes"
+                              disabled={saving}
                               className="h-11 bg-blue-500 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
                             >
-                              <Check className="w-4 h-4" /> Save Changes
+                              <Check className="w-4 h-4" /> {saving ? "Saving…" : "Save Changes"}
                             </button>
                           </div>
                         )}

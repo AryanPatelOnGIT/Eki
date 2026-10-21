@@ -68,7 +68,6 @@ if (process.env.EKI_STRICT_PRODUCTION_BUILD === "true") {
     "NEXT_PUBLIC_FIREBASE_APP_ID",
     "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY",
     "NEXT_PUBLIC_GOOGLE_MAP_ID",
-    "NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY",
     "NEXT_PUBLIC_BACKEND_URL",
   ];
   const missing = requiredPublicVariables.filter((name) => !process.env[name]?.trim());
@@ -106,7 +105,7 @@ const nextConfig: NextConfig = {
     // ~800ms extra dev startup cost with no tree-shaking gain.
     optimizePackageImports: ["lucide-react"],
   },
-  devIndicators: false,
+  devIndicators: process.env.EKI_DEVTOOLS === "true" ? { position: "bottom-left" } : false,
 };
 
 export default nextConfig;

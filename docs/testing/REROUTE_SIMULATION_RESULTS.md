@@ -1,5 +1,9 @@
 # Reroute latency simulation (2026-09-10)
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 This is deterministic pre-deployment evidence, not a substitute for the real-drive run in `LIVE_DEMO_RUNBOOK.md`. The cases are executable in `routeMatching.test.ts`, `latestPendingScheduler.test.ts`, `googleMaps.test.ts`, and `telemetryRouteService.test.ts`.
 
 ## Validated policy

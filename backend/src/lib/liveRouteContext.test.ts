@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { hasLiveRouteContext, withoutLiveRouteContext } from "./liveRouteContext";
 
 describe("withoutLiveRouteContext", () => {
+  it("retains only the revision counter for a direction reset within one session", () => {
+    expect(withoutLiveRouteContext({ sessionId: "s1", routeVersion: 7,
+      activeRoutePolyline: "old", matchedLocation: { lat: 23, lng: 72 } }, { preserveVersion: true }))
+      .toEqual({ sessionId: "s1", routeVersion: 7 });
+    expect(hasLiveRouteContext({ routeVersion: 7 }, { ignoreVersion: true })).toBe(false);
+    expect(hasLiveRouteContext({ routeVersion: 7, matchedLocation: null }, { ignoreVersion: true })).toBe(true);
+  });
+  it.each([undefined, null, 0, -1, 1.5, "7", Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "does not preserve invalid revision %s", routeVersion => {
+      expect(withoutLiveRouteContext({ sessionId: "s1", routeVersion }, { preserveVersion: true }))
+        .toEqual({ sessionId: "s1" });
+    },
+  );
   it("preserves physical telemetry and lifecycle state while removing route-session state", () => {
     const live = {
       busId: "bus_1",
@@ -20,6 +33,8 @@ describe("withoutLiveRouteContext", () => {
       routeMatchHistory: [{ lat: 23.2, lng: 72.7 }],
       offRouteSampleCount: 4,
       mapMatchUpdatedAt: 1_000,
+      mapMatchSeq: 4,
+      mapMatchSampledAt: 900,
       matchConfidence: 0.8,
       distanceToActiveRoute: 42,
       matchedLocation: { lat: 23.2, lng: 72.7 },
@@ -28,6 +43,7 @@ describe("withoutLiveRouteContext", () => {
       rerouteError: "old-error",
       rerouteCompletedAt: 950,
       rerouteFailedAt: 975,
+      rerouteRetry: { context: "old", failures: 4, nextAttemptAt: 100_000 },
     };
 
     expect(hasLiveRouteContext(live)).toBe(true);
@@ -42,5 +58,15 @@ describe("withoutLiveRouteContext", () => {
     });
     expect(hasLiveRouteContext(result)).toBe(false);
     expect(hasLiveRouteContext(null)).toBe(false);
+    expect(live.mapMatchSeq).toBe(4);
   });
+
+  it.each(["mapMatchSeq", "mapMatchSampledAt", "rerouteRetry"])(
+    "clears a leftover %s even when no other route context exists",
+    (field) => {
+      const live = { [field]: 123, sessionId: "s1", seq: 123, timestamp: 456 };
+      expect(hasLiveRouteContext(live)).toBe(true);
+      expect(withoutLiveRouteContext(live)).toEqual({ sessionId: "s1", seq: 123, timestamp: 456 });
+    },
+  );
 });

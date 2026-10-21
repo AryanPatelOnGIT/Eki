@@ -1,15 +1,17 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 type IngestResult =
   | { ok: true; duplicate: boolean }
-  | { ok: false; reason: "credentials" }
+  | { ok: false; reason: "credentials" | "unassigned" }
   | { ok: false; reason: "rate_limit"; retryAfterMs: number };
 
 const harness = vi.hoisted(() => ({
   result: { ok: true, duplicate: false } as IngestResult,
-  diagnosticsAccepted: true,
+  diagnosticsAccepted: "accepted" as "accepted" | "credentials" | "unassigned",
+  failure: undefined as Error | undefined,
 }));
 
 vi.mock("../middleware/requireAdmin", () => ({
@@ -36,7 +38,8 @@ vi.mock("../services/telemetryPayload", () => ({
 
 vi.mock("../services/deviceTelemetryService", () => ({
   authenticateDeviceCredentials: async () => null,
-  ingestDeviceTelemetry: async () => harness.result,
+  checkDeviceCredentials: async () => ({ status: "invalid" }),
+  ingestDeviceTelemetry: async () => { if (harness.failure) throw harness.failure; return harness.result; },
   invalidateDeviceCredentialCache: () => undefined,
   publishDeviceCredentialInvalidation: async () => undefined,
   parseDeviceAuthorization: (header: string | undefined) =>
@@ -53,6 +56,7 @@ vi.mock("../services/deviceDiagnostics", async (importOriginal) => {
 });
 
 import devicesRouter, { createTelemetryIngressLimiter } from "./devices";
+import { ExecutionDeadlineError } from "../lib/executionDeadline";
 
 let server: Server;
 let baseUrl = "";
@@ -79,11 +83,12 @@ afterAll(async () => {
 
 beforeEach(() => {
   harness.result = { ok: true, duplicate: false };
-  harness.diagnosticsAccepted = true;
+  harness.diagnosticsAccepted = "accepted";
+  harness.failure = undefined;
 });
 
 function sendTelemetry() {
-  return fetch(`${baseUrl}/api/devices/device_1/telemetry`, {
+  return contractFetch(`${baseUrl}/api/devices/device_1/telemetry`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -93,8 +98,8 @@ function sendTelemetry() {
   });
 }
 
-function sendDiagnostics() {
-  return fetch(`${baseUrl}/api/devices/device_1/diagnostics`, {
+function sendDiagnostics(extra = {}) {
+  return contractFetch(`${baseUrl}/api/devices/device_1/diagnostics`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -119,11 +124,24 @@ function sendDiagnostics() {
       flashEncryption: true,
       secureBoot: true,
       timestamp: 1_800_000_000_000,
+      ...extra,
     }),
   });
 }
 
 describe("device telemetry HTTP responses", () => {
+  it("accepts the complete diagnostic extension through the documented HTTP contract", async () => {
+    const response = await sendDiagnostics({ gnssFixAvailable: false, gnssNoFixMs: 60000, lastTelemetryResponseCode: 400 });
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ accepted: true });
+  });
+  it.each([false, true])("reports deadline commit uncertainty accurately: %s", async dispatched => {
+    harness.failure = new ExecutionDeadlineError("dependency", dispatched);
+    const response = await sendTelemetry();
+    expect(response.status).toBe(503); expect(response.headers.get("retry-after")).toBe("1");
+    await expect(response.json()).resolves.toEqual({ error: "Telemetry service unavailable.", retryAfterMs: 1_000,
+      commitState: dispatched ? "unknown" : "not_dispatched" });
+  });
   it("returns the accepted and duplicate statuses in the firmware contract", async () => {
     const accepted = await sendTelemetry();
     expect(accepted.status).toBe(202);
@@ -165,8 +183,15 @@ describe("device telemetry HTTP responses", () => {
   it("accepts authenticated remote diagnostics and rejects bad credentials", async () => {
     expect((await sendDiagnostics()).status).toBe(202);
 
-    harness.diagnosticsAccepted = false;
+    harness.diagnosticsAccepted = "credentials";
     expect((await sendDiagnostics()).status).toBe(401);
+  });
+
+  it("keeps authenticated but unassigned devices retryable on both ingress paths", async () => {
+    harness.result = { ok: false, reason: "unassigned" };
+    expect((await sendTelemetry()).status).toBe(403);
+    harness.diagnosticsAccepted = "unassigned";
+    expect((await sendDiagnostics()).status).toBe(403);
   });
 
   it("accepts two moving buses behind campus NAT without consuming the entire ingress budget", async () => {
@@ -232,8 +257,13 @@ it("uses a short recovery window without trusting supplied device IDs", async ()
 });
 
 it("keeps telemetry available after the diagnostics IP pool is exhausted", async () => {
-  let response: Response | undefined;
-  for (let index = 0; index < 205; index++) response = await sendDiagnostics();
-  expect(response?.status).toBe(429);
-  expect((await sendTelemetry()).status).toBe(202);
-});
+  // This checks separate admission pools, not wall-clock throughput. A busy
+  // worker may otherwise cross the shared ten-second window during the loop.
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+  try {
+    let response: Response | undefined;
+    for (let index = 0; index < 205; index++) response = await sendDiagnostics();
+    expect(response?.status).toBe(429);
+    expect((await sendTelemetry()).status).toBe(202);
+  } finally { clock.mockRestore(); }
+}, 15_000);

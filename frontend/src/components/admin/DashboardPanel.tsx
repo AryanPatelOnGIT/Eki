@@ -14,6 +14,8 @@ import { useActiveBuses, type ActiveBusEntry } from "@/hooks/useActiveBuses";
 import { useAuth } from "@/hooks/useAuth";
 import {
   hasValidBusCoordinates,
+  isLiveBusSignalLost,
+  liveBusFreshnessTimestamp,
 } from "@/lib/liveBusFreshness";
 import { MAP_OPTIONS, MAPS_MAP_ID, DEFAULT_CENTER } from "@/config/maps";
 import { errorMessage } from "@/lib/errors";
@@ -24,14 +26,16 @@ import {
 } from "lucide-react";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { apiRequest } from "@/lib/apiClient";
+import { ApiError, apiRequest, isApiRecord, acknowledgedField, type ApiRequestOptions } from "@/lib/apiClient";
 import CustomSelect from "@/components/ui/CustomSelect";
 import MessagingPanel from "@/components/shared/MessagingPanel";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
+import TrafficLayer from "@/components/maps/TrafficLayer";
 import { normalizeHeading, unwrapHeading } from "@/lib/markerHeading";
 import { useTelemetryRenderTrace } from "@/hooks/useTelemetryRenderTrace";
 import { useLiveBusMarkerPosition } from "@/hooks/useLiveBusMarkerPosition";
 import { useSmoothPosition } from "@/hooks/useSmoothPosition";
+import { publishedStopIndex } from "@/lib/publishedStopIndex";
 import {
   countActiveServices,
   devicePresence,
@@ -57,7 +61,7 @@ const TRIP_STATE: Record<string, { label: string; color: string; bg: string; dot
 const MOTION_STATE: Record<string, { label: string; color: string }> = {
   moving:    { label: "Moving",  color: "text-emerald-400" },
   stopped:   { label: "Stopped", color: "text-amber-400" },
-  uncertain: { label: "No GPS",  color: "text-red-400" },
+  uncertain: { label: "Motion uncertain",  color: "text-amber-400" },
 };
 function timeSince(t?: string | number): string {
   if (!t) return "—";
@@ -76,7 +80,7 @@ function assignedRouteIds(bus: { assignedRoutes?: string[]; assignedRouteId?: st
   return bus?.assignedRoutes ?? (bus?.assignedRouteId ? [bus.assignedRouteId] : []);
 }
 
-async function requestAdmin<T>(path: string, init: RequestInit): Promise<T> {
+async function requestAdmin<T>(path: string, init: ApiRequestOptions): Promise<T> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error("Administrator session is unavailable.");
   const token = await currentUser.getIdToken();
@@ -104,16 +108,19 @@ function MapCenter({ center }: { center: { lat: number; lng: number } | null }) 
 function LiveDetailsDrawer({
   entry,
   routeName,
+  nextStopIndex,
   onClose,
 }: {
   entry: ActiveBusEntry;
   routeName: string;
+  nextStopIndex: number | undefined;
   onClose: () => void;
 }) {
   const directionState = normalizeRideDirection(entry.direction);
   const directionPending = directionState === "pending";
   const [msg, setMsg] = useState("");
   const presence = devicePresence(entry);
+  const locationDelayed = isLiveBusSignalLost(liveBusFreshnessTimestamp(entry));
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -139,7 +146,7 @@ function LiveDetailsDrawer({
       if (!entry.sessionId) throw new Error("This vehicle has no active message session.");
       await requestAdmin(
         `/api/shifts/${encodeURIComponent(entry.sessionId)}/messages`,
-        { method: "DELETE" },
+        { method: "DELETE", validateResponse: value => isApiRecord(value) && Number.isSafeInteger(value.deleted) && Number(value.deleted) >= 0 },
       );
       setMsg("Messages cleared ✓");
       clearMessageLater();
@@ -175,17 +182,17 @@ function LiveDetailsDrawer({
               <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Signal</p>
               <p className="mt-1 text-sm font-semibold text-white">
                 {presence === "online"
-                  ? "Connected"
+                  ? locationDelayed ? "Live location updates delayed" : "Connected"
                   : presence === "offline"
                     ? "Offline"
                     : "Unknown / stale"}
               </p>
             </div>
             <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
-              <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Current stop</p>
+              <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Next stop</p>
               <p className="mt-1 text-sm font-semibold text-white">
-                {isActiveService(entry)
-                  ? Math.max(0, Number(entry.currentStopIndex ?? 0)) + 1
+                {nextStopIndex !== undefined
+                  ? nextStopIndex + 1
                   : "—"}
               </p>
             </div>
@@ -247,7 +254,7 @@ function LiveDetailsDrawer({
             or rerouting states fall back to the raw fix. Stop progress remains
             independent of route geometry changes.
           </p>
-          <button onClick={() => setShowWipeConfirm(true)} className="h-11 flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors">
+          <button disabled={!entry.sessionId} title={entry.sessionId ? undefined : "Messages are available after service starts"} onClick={() => setShowWipeConfirm(true)} className="h-11 flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors">
             <MessageCircle className="w-3.5 h-3.5" /> Clear Messages
           </button>
         </div>
@@ -285,7 +292,7 @@ function BusMarker({
 
   const markerSelection = useLiveBusMarkerPosition(entry);
   const markerPoint = useSmoothPosition(markerSelection.position);
-  useTelemetryRenderTrace(entry, "admin", markerPoint !== null);
+  useTelemetryRenderTrace(entry, "admin", markerPoint !== null, { position: markerPoint, selection: markerSelection });
 
   const [displayHeading, setDisplayHeading] = useState(() =>
     normalizeHeading(entry.heading),
@@ -300,9 +307,9 @@ function BusMarker({
 
   if (!markerPoint) return null;
   return (
-    <AdvancedMarker position={markerPoint} onClick={() => onClick(markerPoint)}>
+    <AdvancedMarker position={markerPoint} anchorLeft="-50%" anchorTop="-50%" onClick={() => onClick(markerPoint)}>
       <div
-        style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }}
+        style={{ position: "relative", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
         title={`${entry.busId} — ${ts.label}${markerSelection.decision === "match_pending" ? " — updating route position" : markerSelection.uncertain ? " — approximate GNSS position" : ""}`}
       >
         <div style={{
@@ -326,7 +333,7 @@ function BusMarker({
           />
         </div>
         <div style={{
-          marginTop: 4, padding: "2px 6px", borderRadius: 5,
+          position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)", padding: "2px 6px", borderRadius: 5,
           background: "rgba(9,9,11,0.9)", border: "1px solid rgba(255,255,255,0.1)",
           color: "white", fontSize: 9, whiteSpace: "nowrap", fontWeight: 700,
           letterSpacing: "0.08em",
@@ -366,9 +373,13 @@ function FleetCard({
   const driver = drivers.find(d => d.id === entry.driverId);
   const ts = TRIP_STATE[rideServiceState(entry)];
   const ms = MOTION_STATE[entry.motionState ?? "uncertain"] ?? MOTION_STATE.uncertain;
-  const stopIdx = (entry.currentStopIndex ?? 0) + 1;
   const stopCount = directedRoute?.stops?.length ?? 0;
+  const nextStopIndex = isActiveService(entry)
+    ? publishedStopIndex(entry.currentStopIndex, stopCount) : undefined;
+  const nextStop = nextStopIndex !== undefined ? directedRoute?.stops[nextStopIndex] : undefined;
+  const followingStop = nextStopIndex !== undefined ? directedRoute?.stops[nextStopIndex + 1] : undefined;
   const serviceState = rideServiceState(entry);
+  const locationDelayed = entry.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(entry));
   const canEndRide = Boolean(
     entry.sessionId && entry.driverId && entry.routeId &&
     (serviceState === "direction_pending" ||
@@ -382,6 +393,7 @@ function FleetCard({
         <LiveDetailsDrawer
           entry={entry}
           routeName={route?.name ?? entry.routeId ?? "—"}
+          nextStopIndex={nextStopIndex}
           onClose={() => setDetailsOpen(false)}
         />
       )}
@@ -405,6 +417,7 @@ function FleetCard({
               <p className="font-semibold text-white text-sm truncate">{bus?.name ?? entry.busId}</p>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span className={`text-[9px] font-black uppercase tracking-wider ${ts.color}`}>{ts.label}</span>
+                {locationDelayed && <span className="text-[9px] font-semibold text-amber-400">Live location updates delayed</span>}
                 <span className={`text-[9px] font-semibold ${ms.color}`}>{ms.label}</span>
                 {entry.speed != null && <span className="text-[9px] text-white/30 tabular-nums">{Math.round(entry.speed)} km/h</span>}
                 {(entry.delayMinutes ?? 0) > 0 && (
@@ -444,8 +457,8 @@ function FleetCard({
               {[
                 { label: "Speed", value: entry.speed != null ? `${Math.round(entry.speed)} km/h` : "—" },
                 { label: "Heading", value: headingLabel(entry.heading) },
-                { label: "Last Update", value: timeSince(entry.timestamp) },
-                { label: "Stop", value: stopCount > 0 ? `${stopIdx}/${stopCount}` : "—" },
+                { label: "Last Update", value: timeSince(liveBusFreshnessTimestamp(entry)) },
+                { label: "Next stop", value: nextStopIndex !== undefined ? `${nextStopIndex + 1}/${stopCount}` : "—" },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-white/3 border border-white/5 rounded-lg p-2 flex flex-col gap-0.5">
                   <span className="text-[8px] font-black uppercase tracking-wider text-white/25">{label}</span>
@@ -453,26 +466,26 @@ function FleetCard({
                 </div>
               ))}
             </div>
-            {stopCount > 0 && rideServiceState(entry) === "in_service" && (
+            {nextStopIndex !== undefined && rideServiceState(entry) === "in_service" && (
               <div>
                 <div className="flex justify-between mb-1">
                   <span className="text-[8px] font-black uppercase tracking-wider text-white/25">Route Progress</span>
-                  <span className="text-[9px] text-white/30 tabular-nums">{stopIdx}/{stopCount} stops</span>
+                  <span className="text-[9px] text-white/30 tabular-nums">{nextStopIndex}/{stopCount} passed</span>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full">
-                  <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.round((stopIdx / stopCount) * 100)}%` }} />
+                  <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.round((nextStopIndex / stopCount) * 100)}%` }} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {directedRoute?.stops?.[entry.currentStopIndex ?? 0] && (
+                  {nextStop && (
                     <div>
                       <span className="text-[8px] text-white/25 uppercase font-black">Next Stop</span>
-                      <p className="text-[10px] font-semibold text-white truncate">{directedRoute.stops[entry.currentStopIndex ?? 0].name}</p>
+                      <p className="text-[10px] font-semibold text-white truncate">{nextStop.name}</p>
                     </div>
                   )}
-                  {directedRoute?.stops?.[(entry.currentStopIndex ?? 0) + 1] && (
+                  {followingStop && (
                     <div>
                       <span className="text-[8px] text-white/25 uppercase font-black">Following Stop</span>
-                      <p className="text-[10px] font-semibold text-white/60 truncate">{directedRoute.stops[(entry.currentStopIndex ?? 0) + 1].name}</p>
+                      <p className="text-[10px] font-semibold text-white/60 truncate">{followingStop.name}</p>
                     </div>
                   )}
                 </div>
@@ -553,6 +566,9 @@ function FleetCard({
 /* â”€â”€ Main Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function DashboardPanel() {
   const { user } = useAuth();
+  const [liveReadFailed, setLiveReadFailed] = useState(false);
+  const onLiveReadError = useCallback(() => setLiveReadFailed(true), []);
+  const onLiveReadRecovered = useCallback(() => setLiveReadFailed(false), []);
   const {
     isResuming,
     connectionGeneration,
@@ -563,6 +579,8 @@ export default function DashboardPanel() {
     connectionGeneration,
     resumeGeneration,
     markSnapshotReceived,
+    onReadError: onLiveReadError,
+    onReadRecovered: onLiveReadRecovered,
   });
   const { buses, error: busesError, retry: retryBuses } = useBuses();
   const activeEntriesMap = useMemo(
@@ -570,7 +588,7 @@ export default function DashboardPanel() {
     [activeEntries],
   );
   const dynamicGeometries = useDynamicRouteGeometries(activeEntriesMap);
-  const { drivers } = useDrivers();
+  const { drivers, error: driversError, retry: retryDrivers } = useDrivers();
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
   const activeRouteOverlays = useMemo(() => {
     const overlays = new Map<string, {
@@ -581,6 +599,8 @@ export default function DashboardPanel() {
       polylineQuality?: "HIGH_QUALITY";
       direction: "forward" | "reverse";
       stops: Array<{ lat: number; lng: number }>;
+      nextStopIndices: number[];
+      firstStopIndex?: number;
     }>();
     for (const entry of activeEntries) {
       if (!entry.routeId || !isActiveService(entry) || !isRideDirection(entry.direction)) continue;
@@ -595,41 +615,47 @@ export default function DashboardPanel() {
           ? dynamicGeometries.get(entry.busId)
           : undefined;
       const hasDynamic = Boolean(geometry);
-      const overlayKey = hasDynamic
-        ? entry.activeRouteId ?? `${route.id}:${entry.routeVersion ?? 0}:${entry.busId}`
-        : `${route.id}:${direction}`;
-      if (overlays.has(overlayKey)) continue;
-      overlays.set(overlayKey, {
+      const overlayKey = `${route.id}:${direction}`;
+      const existing = overlays.get(overlayKey);
+      const naturalStops = route.stops ?? route.waypoints ?? [];
+      const nextStopIndex = publishedStopIndex(entry.currentStopIndex, naturalStops.length);
+      const indices = nextStopIndex === undefined ? [] : [nextStopIndex];
+      const orderedStops = (direction === "reverse" ? [...naturalStops].reverse() : naturalStops).map(({ lat, lng }) => ({ lat, lng }));
+      if (existing) {
+        if (entry.routeSource !== "dynamic-reroute") existing.nextStopIndices.push(...indices);
+      } else overlays.set(overlayKey, {
         key: overlayKey,
         routeId: route.id,
         color: route.color,
-        polyline: hasDynamic && geometry
-          ? geometry.polyline
-          : (direction === "reverse"
+        polyline: (direction === "reverse"
               ? route.reversePolyline
               : route.forwardPolyline ?? route.polyline),
-        polylineQuality: hasDynamic && geometry
-          ? "HIGH_QUALITY"
-          : hasDirectionalGeometry
+        polylineQuality: hasDirectionalGeometry
             ? route.polylineQuality
             : undefined,
         direction,
-        stops: (route.stops ?? route.waypoints ?? []).map(({ lat, lng }) => ({
-          lat,
-          lng,
-        })),
+        stops: orderedStops,
+        nextStopIndices: entry.routeSource === "dynamic-reroute" ? [] : [...indices],
       });
+      if (hasDynamic && geometry) {
+        const key = `${overlayKey}:${entry.busId}:${entry.routeVersion}`;
+        overlays.set(key, { key, routeId: route.id, color: route.color, polyline: geometry.polyline,
+          polylineQuality: "HIGH_QUALITY", direction, stops: orderedStops,
+          nextStopIndices: indices, firstStopIndex: geometry.firstStopIndex ?? -1 });
+      }
     }
     return [...overlays.values()];
   }, [activeEntries, routes, dynamicGeometries]);
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
-  const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
+  const [, setFreshnessNow] = useState(() => Date.now());
   const [driverId, setDriverId] = useState("");
   const [busId, setBusId] = useState("");
   const [routeId, setRouteId] = useState("");
   const [armStatus, setArmStatus] = useState("");
   const [armPending, setArmPending] = useState(false);
+  const startKeys = useRef(new Map<string, string>());
+  const startInFlight = useRef(false);
   const [delayPending, setDelayPending] = useState("");
   const [boardingCodes, setBoardingCodes] = useState<Record<string, string>>({});
   const [chatEntry, setChatEntry] = useState<ActiveBusEntry | null>(null);
@@ -642,20 +668,6 @@ export default function DashboardPanel() {
   }, []);
 
   // â”€â”€ Traffic layer rendered imperatively â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const TrafficLayer = () => {
-    const map = useMap();
-    const layerRef = useRef<google.maps.TrafficLayer | null>(null);
-
-    useEffect(() => {
-      if (!map) return;
-      layerRef.current = new google.maps.TrafficLayer();
-      layerRef.current.setMap(map);
-      return () => { layerRef.current?.setMap(null); };
-    }, [map]);
-
-    return null;
-  };
-
   const inService = countActiveServices(activeEntries, "in_service");
   const awaitingStart = countActiveServices(activeEntries, "pre_departure");
   const directionPending = new Set(
@@ -665,10 +677,10 @@ export default function DashboardPanel() {
       .filter((sessionId): sessionId is string => Boolean(sessionId)),
   ).size;
   const devicesOnline = activeEntries.filter(
-    (entry) => devicePresence(entry, freshnessNow) === "online",
+    (entry) => devicePresence(entry) === "online",
   ).length;
   const unavailableDevices = activeEntries.filter(
-    (entry) => devicePresence(entry, freshnessNow) !== "online",
+    (entry) => devicePresence(entry) !== "online",
   ).length;
   const activeServices = countActiveServices(activeEntries);
 
@@ -701,7 +713,11 @@ export default function DashboardPanel() {
   };
 
   const armRide = async () => {
-    if (!driverId || !busId || !routeId) return;
+    if (!driverId || !busId || !routeId || startInFlight.current) return;
+    startInFlight.current = true;
+    const assignment = JSON.stringify([driverId, busId, routeId]);
+    const key = startKeys.current.get(assignment) ?? crypto.randomUUID();
+    startKeys.current.set(assignment, key);
     setArmPending(true);
     setArmStatus("");
     try {
@@ -710,12 +726,15 @@ export default function DashboardPanel() {
         resumed?: boolean;
         direction?: unknown;
       }>(
-        "/api/shifts/start",
+        "/api/v2/ride-sessions",
         {
           method: "POST",
+          headers: { "Idempotency-Key": key },
           body: JSON.stringify({ driverId, busId, routeId }),
+          validateResponse: value => isApiRecord(value) && typeof value.sessionId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId),
         },
       );
+      startKeys.current.delete(assignment);
       const inferredDirection = normalizeRideDirection(result.direction);
       setArmStatus(
         result.resumed
@@ -725,8 +744,10 @@ export default function DashboardPanel() {
             : `Service started (${result.sessionId}) for ${directionLabelState(inferredDirection, routes.find((route) => route.id === routeId)?.stops ?? [])}.`,
       );
     } catch (error) {
+      if (error instanceof ApiError && !error.outcomeUnknown && error.status !== null && error.status < 500) startKeys.current.delete(assignment);
       setArmStatus(errorMessage(error));
     } finally {
+      startInFlight.current = false;
       setArmPending(false);
     }
   };
@@ -739,6 +760,7 @@ export default function DashboardPanel() {
     setArmStatus("");
     try {
       await requestAdmin<{ delayMinutes: number }>("/api/shifts/delay", {
+        validateResponse: value => acknowledgedField(value, "saved") && isApiRecord(value) && value.delayMinutes === delayMinutes,
         method: "PATCH",
         body: JSON.stringify({
           busId: entry.busId,
@@ -760,7 +782,7 @@ export default function DashboardPanel() {
     try {
       const result = await requestAdmin<{ boardingCode?: string }>(
         `/api/sessions/${encodeURIComponent(entry.sessionId)}/boarding-code`,
-        { method: "POST" },
+        { method: "POST", validateResponse: value => isApiRecord(value) && value.sessionId === entry.sessionId && typeof value.boardingCode === "string" && /^[A-Z0-9]{8}$/.test(value.boardingCode) },
       );
       if (!result.boardingCode) throw new Error("Boarding code was not returned.");
       setBoardingCodes((current) => ({ ...current, [entry.sessionId as string]: result.boardingCode as string }));
@@ -776,6 +798,7 @@ export default function DashboardPanel() {
     setArmStatus("");
     try {
       await requestAdmin("/api/shifts/stop", {
+        validateResponse: value => acknowledgedField(value, "stopped"),
         method: "POST",
         body: JSON.stringify({
           busId: entry.busId,
@@ -815,6 +838,8 @@ export default function DashboardPanel() {
               polylineQuality={route.polylineQuality}
               color={route.color || "#3b82f6"}
               hasBuses
+              nextStopIndices={route.nextStopIndices}
+              firstStopIndex={route.firstStopIndex}
               direction={route.direction}
             />
           ))}
@@ -829,18 +854,24 @@ export default function DashboardPanel() {
 
         {/* Map overlay stats */}
         <div className="absolute top-3 left-3 right-3 flex flex-col items-start gap-2 pointer-events-none">
-          {(busesError || routesError) && (
+          {liveReadFailed && (
+            <div className="pointer-events-auto w-full max-w-lg rounded-xl border border-amber-400/20 bg-zinc-950/95 px-3 py-2 text-xs text-amber-300 shadow-lg" role="alert">
+              Live vehicle updates are unavailable. Check your connection and reload to retry.
+            </div>
+          )}
+          {(busesError || routesError || driversError) && (
             <div
               className="pointer-events-auto flex w-full max-w-lg items-start gap-2 rounded-xl border border-red-400/20 bg-zinc-950/95 px-3 py-2 text-xs text-red-300 shadow-lg"
               role="alert"
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <span className="flex-1">Fleet metadata is unavailable. {busesError || routesError}</span>
+              <span className="flex-1">Fleet metadata is unavailable. {busesError || routesError || driversError}</span>
               <button
                 type="button"
                 onClick={() => {
                   if (busesError) retryBuses();
                   if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
                 }}
                 className="rounded-md bg-white/10 px-2 py-1 font-semibold text-white"
               >
@@ -870,7 +901,7 @@ export default function DashboardPanel() {
       </div>
 
       {/* â”€â”€ Sidebar â”€â”€ */}
-      <div className="flex max-h-[55%] min-h-0 w-full shrink-0 flex-col overflow-hidden border-t border-white/5 lg:max-h-none lg:w-[360px] lg:border-l lg:border-t-0">
+      <div className="flex max-h-[55%] min-h-0 w-full shrink-0 flex-col overflow-y-auto overscroll-contain border-t border-white/5 lg:max-h-none lg:w-[360px] lg:overflow-hidden lg:border-l lg:border-t-0">
         <section className="shrink-0 border-b border-white/5 p-3">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
@@ -949,7 +980,7 @@ export default function DashboardPanel() {
         </div>
 
         {/* Fleet list */}
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-3">
+        <div className="flex shrink-0 flex-col gap-2 p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
           <p className="text-[9px] font-black uppercase tracking-[0.25em] text-white/25 px-1">Live Fleet</p>
           {activeEntries.length === 0 ? (
             <div className={`flex flex-col items-center justify-center py-16 text-center gap-2 ${isResuming ? "text-amber-300" : "opacity-30"}`}>

@@ -1,5 +1,7 @@
 # Contributor Covenant Code of Conduct
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 ## Our Pledge
 
 We as members, contributors, and leaders pledge to make participation in our

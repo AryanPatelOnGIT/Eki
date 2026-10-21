@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { requireAuth } from "../middleware/requireAuth";
 import { db, rtdb } from "../lib/firebaseAdmin";
@@ -21,6 +21,7 @@ import {
 } from "../services/boardingPolicy";
 
 const router = Router();
+export const rideSessionBoardingRouter = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{16,128}$/;
 const BOARDING_STATUSES = new Set(["armed", "active"]);
@@ -109,10 +110,7 @@ function stableHash(value: string): string {
  * deliberately absent from RTDB and passenger-readable data. It supplies the
  * server-verifiable proof that browser geolocation alone cannot provide.
  */
-router.post("/:sessionId/boarding-code", requireAuth, async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
+async function issueBoardingCode(req: AuthenticatedRequest, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   const user = req.user;
   const isAdmin = user?.role === "admin" || user?.admin === true;
@@ -163,7 +161,7 @@ router.post("/:sessionId/boarding-code", requireAuth, async (
   } catch (error) {
     sendBoardingError(res, error, "Unable to issue the boarding code.");
   }
-});
+}
 
 /**
  * POST /api/sessions/:sessionId/join
@@ -173,10 +171,7 @@ router.post("/:sessionId/boarding-code", requireAuth, async (
  * attacker-controlled and therefore only defense in depth; the boarding code
  * is the server-verifiable authorization that closes public-session self-join.
  */
-router.post("/:sessionId/join", requireAuth, async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
+async function joinSession(req: AuthenticatedRequest, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   const user = req.user;
   if (sessionId === null || !SAFE_ID.test(sessionId)) {
@@ -238,9 +233,8 @@ router.post("/:sessionId/join", requireAuth, async (
       throw new BoardingPolicyError(400, "Location access is required to board this bus.");
     }
 
-    const [route, profile, liveSnapshot] = await Promise.all([
+    const [route, liveSnapshot] = await Promise.all([
       db.collection("routes").doc(routeId).get(),
-      db.collection("users").doc(user.uid).get(),
       requiresProximity
         ? rtdb.ref(`activeBuses/${busId}_${routeId}`).once("value")
         : Promise.resolve(null),
@@ -272,16 +266,6 @@ router.post("/:sessionId/join", requireAuth, async (
       }
     }
 
-    const profileName = profile.data()?.displayName;
-    const tokenName = user.name;
-    const userName = (
-      typeof profileName === "string" && profileName.trim()
-        ? profileName.trim()
-        : typeof tokenName === "string" && tokenName.trim()
-          ? tokenName.trim()
-          : "Passenger"
-    ).slice(0, 100);
-
     await db.runTransaction(async (transaction) => {
       const current = await transaction.get(sessionRef);
       const currentData = current.data();
@@ -296,6 +280,18 @@ router.post("/:sessionId/join", requireAuth, async (
       ) {
         throw new BoardingPolicyError(409, "Boarding authorization expired; ask the driver for the current code.");
       }
+      const profile = await transaction.get(db.collection("users").doc(user.uid));
+      if (!profile.exists) throw new BoardingPolicyError(403, "An active passenger profile is required.");
+      const profileName = profile.data()?.displayName;
+      const tokenName = user.name;
+      const userName = (
+        typeof profileName === "string" && profileName.trim()
+          ? profileName.trim()
+          : typeof tokenName === "string" && tokenName.trim()
+            ? tokenName.trim()
+            : "Passenger"
+      ).slice(0, 100);
+
       const passengers = passengerManifest(currentData.passengers);
       const passengerStillExists = hasPassenger(passengers, user.uid);
       if (
@@ -337,7 +333,7 @@ router.post("/:sessionId/join", requireAuth, async (
   } catch (error) {
     sendBoardingError(res, error, "Unable to join the ride.");
   }
-});
+}
 
 /**
  * POST /api/sessions/:sessionId/messages
@@ -346,7 +342,7 @@ router.post("/:sessionId/join", requireAuth, async (
  * rate-limit docs; the backend enforces membership, the 60/hr and 10/minute
  * rolling limits, the 3s gap, and Unicode-aware moderation before persisting.
  */
-router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+async function sendMessage(req: AuthenticatedRequest, res: Response) {
   try {
     const sessionId = singleRouteParam(req.params.sessionId);
     const uid = req.user?.uid;
@@ -391,8 +387,19 @@ router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedReques
         messageRef,
       );
 
-      if (existingMessage.exists) {
-        const previous = existingMessage.data();
+      const sessionData = session.data();
+      const privilegedSender = req.user?.role === "admin" || req.user?.admin === true ||
+        (req.user?.role === "driver" && sessionData?.driverId === req.user?.driverId && sessionData?.busId === req.user?.assignedBusId);
+      if (!privilegedSender) {
+        const profile = await transaction.get(db.collection("users").doc(uid));
+        if (!profile.exists) throw new ChatPolicyError(403, "An active passenger profile is required.");
+      }
+
+      const retainedMessage = existingMessage.exists ? existingMessage : await transaction.get(
+        sessionRef.collection("archivedMessages").doc(messageRef.id),
+      );
+      if (retainedMessage.exists) {
+        const previous = retainedMessage.data();
         if (previous?.senderId !== uid || previous?.requestHash !== requestHash) {
           throw new ChatPolicyError(409, "Message request ID was already used.");
         }
@@ -420,7 +427,7 @@ router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedReques
         throw new ChatPolicyError(403, "You are not part of this ride.");
       }
 
-      const from = isDriver || isAdmin ? "driver" : "passenger";
+      const from = isAdmin ? "admin" : isDriver ? "driver" : "passenger";
       const passengerName = passengerEntry?.userName;
       const tokenName = req.user?.name;
       const rawSenderName = (
@@ -502,6 +509,48 @@ router.post("/:sessionId/messages", requireAuth, async (req: AuthenticatedReques
     console.error("[Sessions] Failed to send message:", error);
     res.status(500).json({ error: "Unable to send message." });
   }
+}
+
+function privateResponse(_req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store");
+  next();
+}
+/** Closed recovery status and the requesting passenger's own stop choices. */
+router.get("/:sessionId/status", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const sessionId = singleRouteParam(req.params.sessionId);
+  res.setHeader("Cache-Control", "no-store");
+  if (!sessionId || !SAFE_ID.test(sessionId)) { res.status(400).json({ error: "Invalid session ID." }); return; }
+  try {
+    const snapshot = await db.collection("ride_sessions").doc(sessionId).get();
+    const data = snapshot.data(), user = req.user;
+    const entry = user ? passengerManifest(data?.passengers)[user.uid] : null;
+    const allowed = data && user && (user.admin === true ||
+      (user.role === "driver" && typeof user.driverId === "string" && SAFE_ID.test(user.driverId) && typeof user.assignedBusId === "string" && SAFE_ID.test(user.assignedBusId) && user.driverId === data.driverId && user.assignedBusId === data.busId) ||
+      ((user.role === undefined || user.role === "passenger") && hasPassenger(passengerManifest(data.passengers), user.uid) && entry && typeof entry === "object" && !Array.isArray(entry) && entry.userId === user.uid));
+    // Identical response for an unknown session and another passenger's ride.
+    if (!snapshot.exists || !allowed) { res.status(403).json({ error: "Ride status is unavailable for this account." }); return; }
+    if (user.admin !== true && (user.role === undefined || user.role === "passenger") &&
+        !(await db.collection("users").doc(user.uid).get()).exists) {
+      res.status(403).json({ error: "Ride status is unavailable for this account." }); return;
+    }
+    if (typeof data.busId !== "string" || !SAFE_ID.test(data.busId) || typeof data.routeId !== "string" || !SAFE_ID.test(data.routeId) || typeof data.status !== "string" || !["pending", "armed", "active", "completed", "interrupted", "failed"].includes(data.status)) {
+      res.status(503).json({ error: "Ride status is temporarily unavailable." }); return;
+    }
+    const ownBoarding = user.admin !== true && (user.role === undefined || user.role === "passenger") &&
+      entry && typeof entry === "object" && !Array.isArray(entry) && entry.userId === user.uid &&
+      typeof entry.boardingStopId === "string" && SAFE_ID.test(entry.boardingStopId) &&
+      (entry.alightingStopId === null || (typeof entry.alightingStopId === "string" && SAFE_ID.test(entry.alightingStopId)))
+      ? { boardingStopId: entry.boardingStopId, alightingStopId: entry.alightingStopId }
+      : undefined;
+    res.json({ sessionId, busId: data.busId, routeId: data.routeId, status: data.status,
+      ...(ownBoarding ? { boarding: ownBoarding } : {}) });
+  } catch { res.status(503).json({ error: "Ride status is temporarily unavailable." }); }
 });
+router.post("/:sessionId/boarding-code", requireAuth, issueBoardingCode);
+router.post("/:sessionId/join", requireAuth, joinSession);
+router.post("/:sessionId/messages", requireAuth, sendMessage);
+rideSessionBoardingRouter.post("/:sessionId/boarding-code", privateResponse, requireAuth, issueBoardingCode);
+rideSessionBoardingRouter.put("/:sessionId/passengers/me", privateResponse, requireAuth, joinSession);
+rideSessionBoardingRouter.post("/:sessionId/messages", privateResponse, requireAuth, sendMessage);
 
 export default router;

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useId } from "react";
 import {
   Map as GoogleMap, AdvancedMarker, useMap, type MapMouseEvent as VisMapMouseEvent,
 } from "@vis.gl/react-google-maps";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
+import TrafficLayer from "@/components/maps/TrafficLayer";
 import { useRoutes, RouteData, RouteStop } from "@/hooks/useRoutes";
 import { auth } from "@/lib/firebaseAuth";
 import {
@@ -16,7 +17,7 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import AlertModal from "@/components/ui/AlertModal";
 import { MAP_OPTIONS, MAPS_MAP_ID, DEFAULT_CENTER } from "@/config/maps";
 import { errorMessage } from "@/lib/errors";
-import { ApiError, apiRequest } from "@/lib/apiClient";
+import { ApiError, apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { placeSearchErrorMessage } from "@/lib/placeSearchErrors";
 import { newRouteSaveId, saveRoute } from "@/lib/routeSaveClient";
 import {
@@ -230,34 +231,64 @@ function StopItem({ stop, index, onRemove, onNameChange, onMoveUp, onMoveDown, c
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(stop.name);
+  const [nameError, setNameError] = useState("");
+  const nameErrorId = useId();
+  const committedRef = useRef(false);
+  const commitName = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const nextName = val.trim();
+    if (!nextName) {
+      setVal(stop.name);
+      setNameError("Stop name cannot be blank. Previous name kept.");
+      setEditing(false);
+      return;
+    }
+    setNameError("");
+    onNameChange(index, nextName);
+    setEditing(false);
+  };
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/5 bg-white/[0.02] p-1 sm:flex-nowrap">
       <span className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 font-black text-[9px] flex items-center justify-center shrink-0">
         {stopLabel(index)}
       </span>
-      {editing ? (
-        <input
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          onBlur={() => { onNameChange(index, val); setEditing(false); }}
-          onKeyDown={e => e.key === "Enter" && (onNameChange(index, val), setEditing(false))}
-          autoFocus
-          aria-label={`Rename stop ${stop.name}`}
-          className="flex-1 h-11 bg-white/5 border border-white/20 rounded-lg px-2 text-sm text-white focus:outline-none focus:border-white/40"
-        />
-      ) : (
-        <button
-          type="button"
-          className="flex-1 min-h-11 text-left cursor-text min-w-0"
-          onClick={() => setEditing(true)}
-          title="Click to rename"
-        >
-          <span className="block truncate text-sm text-white/80 font-medium">{stop.name}</span>
-          <span className="block text-[10px] tabular-nums text-white/35">
-            {Number(stop.lat).toFixed(6)}, {Number(stop.lng).toFixed(6)}
-          </span>
-        </button>
-      )}
+      <div className="min-w-0 flex-1">
+        {editing ? (
+          <input
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); commitName(); }
+              else if (e.key === "Escape") {
+                e.preventDefault();
+                // Fence a blur from the removed input so it cannot save the draft.
+                committedRef.current = true;
+                setVal(stop.name);
+                setEditing(false);
+              }
+            }}
+            autoFocus
+            aria-label={`Rename stop ${stop.name}`}
+            className="w-full min-w-0 h-11 bg-white/5 border border-white/20 rounded-lg px-2 text-sm text-white focus:outline-none focus:border-white/40"
+          />
+        ) : (
+          <button
+            type="button"
+            className="w-full min-h-11 text-left cursor-text min-w-0"
+            onClick={() => { committedRef.current = false; setNameError(""); setVal(stop.name); setEditing(true); }}
+            aria-describedby={nameError ? nameErrorId : undefined}
+            title="Click to rename"
+          >
+            <span className="block truncate text-sm text-white/80 font-medium">{stop.name}</span>
+            <span className="block text-[10px] tabular-nums text-white/35">
+              {Number(stop.lat).toFixed(6)}, {Number(stop.lng).toFixed(6)}
+            </span>
+          </button>
+        )}
+        {nameError && <p id={nameErrorId} role="alert" className="mt-1 text-pretty text-xs text-red-300">{nameError}</p>}
+      </div>
       <div className="ml-8 flex shrink-0 items-center gap-1 sm:ml-0">
         <button type="button" onClick={onMoveUp} disabled={!canMoveUp} aria-label={`Move stop ${stop.name} up`} className="size-11 rounded-lg text-white/65 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:text-white/30">
           <ChevronUp className="mx-auto size-4" aria-hidden="true" />
@@ -312,21 +343,7 @@ function RouteEditor({
   const [placingManualStop, setPlacingManualStop] = useState(false);
   const [routeIdEdited, setRouteIdEdited] = useState(Boolean(initial.routeId));
   const saveOperationRef = useRef<{ payload: string; saveId: string } | null>(null);
-
-  // ── Traffic layer rendered imperatively ──────────────────────────────────
-  const TrafficLayer = () => {
-    const map = useMap();
-    const layerRef = useRef<google.maps.TrafficLayer | null>(null);
-
-    useEffect(() => {
-      if (!map) return;
-      layerRef.current = new google.maps.TrafficLayer();
-      layerRef.current.setMap(map);
-      return () => { layerRef.current?.setMap(null); };
-    }, [map]);
-
-    return null;
-  };
+  const editorId = useId();
 
   const setField = <K extends keyof EditorState>(k: K, v: EditorState[K]) =>
     setState(s => ({ ...s, [k]: v }));
@@ -475,8 +492,9 @@ function RouteEditor({
         </button>
 
         <div className="flex flex-col gap-1 min-w-[110px]">
-          <label className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Route ID</label>
+          <label htmlFor={`${editorId}-route-id`} className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Route ID</label>
           <input
+            id={`${editorId}-route-id`}
             value={state.routeId}
             onChange={e => {
               setRouteIdEdited(true);
@@ -489,16 +507,19 @@ function RouteEditor({
         </div>
 
         <div className="flex flex-col gap-1 flex-1 min-w-[220px]">
-          <label className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Search Stop</label>
+          <span className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Search Stop</span>
           <PlacesSearchBox onPlaceSelect={handlePlaceSelect} />
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Colour</label>
-          <div className="flex items-center gap-1.5 h-11">
+          <span id={`${editorId}-colour`} className="text-[9px] text-white/30 font-black uppercase tracking-widest px-1">Colour</span>
+          <div role="group" aria-labelledby={`${editorId}-colour`} className="flex items-center gap-1.5 h-11">
             {ROUTE_COLORS.map(c => (
               <button
                 key={c}
+                type="button"
+                aria-label={`Route colour ${c}`}
+                aria-pressed={state.color === c}
                 onClick={() => setField("color", c)}
                 className="w-6 h-6 rounded-full border-2 transition-all"
                 style={{ background: c, borderColor: state.color === c ? "white" : "transparent" }}
@@ -591,8 +612,9 @@ function RouteEditor({
         <div className="w-full lg:w-[300px] shrink-0 flex flex-col border-t lg:border-t-0 lg:border-l border-white/5 bg-[#09090b]/40 backdrop-blur-xl">
           {/* Display Name field */}
           <div className="px-4 pt-4 pb-3 border-b border-white/5">
-            <label className="text-[9px] text-white/30 font-black uppercase tracking-widest block mb-1.5">Display Name</label>
+            <label htmlFor={`${editorId}-route-name`} className="text-[9px] text-white/30 font-black uppercase tracking-widest block mb-1.5">Display Name</label>
             <input
+              id={`${editorId}-route-name`}
               value={state.name}
               onChange={e => updateRouteName(e.target.value)}
               placeholder="e.g. Shela to LD"
@@ -712,6 +734,7 @@ export default function RouteManagementPanel() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
         fallbackError: "Unable to delete route.",
+        validateResponse: value => acknowledgedField(value, "deleted"),
       });
       setDeleteRouteId(null);
     } catch (error: unknown) {

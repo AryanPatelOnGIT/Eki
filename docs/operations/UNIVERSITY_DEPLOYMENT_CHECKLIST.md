@@ -1,6 +1,6 @@
 # University handover checklist
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-05 (Asia/Kolkata).
 
 This document separates university-owned production work from the student's
 local professor demonstration.
@@ -20,7 +20,10 @@ local professor demonstration.
   beyond that scale. The WAF provides the authoritative global cap (issue #28).
   Configure the load balancer to fail over on non-200
   `/health` (`/health` returns 200 only while both Firestore and RTDB probes
-  pass); the Firestore worker lease keeps lifecycle work single-leader across
+  are fresh and pass; RTDB must return a true connected snapshot). Configure
+  container restart/liveness probes on `/live`, which stays 200 while Firebase
+  is degraded. Do not restart healthy processes merely because a dependency
+  is unavailable. The Firestore worker lease keeps lifecycle work single-leader across
   replicas, so failover must not duplicate lifecycle transitions.
 - [ ] Use Workload Identity or Secret Manager for server credentials; never
   store service-account JSON or secrets in the repository or firmware build
@@ -32,17 +35,15 @@ local professor demonstration.
   in the controlled shell, set `RTDB_EXPECTED_REGION`, and run
   `npm run verify:rtdb-instance` before either deployment. Follow the
   [RTDB region decision and rollback plan](../design/RTDB_REGION_LATENCY_DECISION.md).
-- [ ] Enforce App Check (console toggle) on Firestore and Realtime Database in
-  both projects. Security Rules authorize Firebase Authentication identities
-  and roles; App Check is enforced by Firebase, not a `request.app` rule
-  predicate. The Admin SDK backend is unaffected. Emulator tests use isolated
-  temporary copies via `scripts/rules-for-emulator.mjs`.
+- [ ] Disable App Check enforcement on Firestore and Realtime Database in both
+  projects before publishing this browser. The deploy workflow applies and
+  verifies UNENFORCED mode. Security Rules retain Firebase Authentication
+  identity and role authorization; the Admin SDK backend is unaffected.
 
 ## Staging and deployment pipeline
 
 - [ ] Confirm the approved staging Firebase project configured in `.firebaserc`
-  and the deploy workflow, and configure it with App Check (ReCaptcha
-  Enterprise). Provision a separate university-owned production project before
+  and the deploy workflow. Provision a separate university-owned production project before
   enabling the manual production deploy job.
 - [ ] Configure the `staging` and `production` GitHub environments with
   `FIREBASE_TOKEN` plus all `NEXT_PUBLIC_*` build variables listed in
@@ -54,9 +55,13 @@ local professor demonstration.
   university handover record.
 - [ ] Verify the `Deploy` workflow promotes main to staging automatically after
   a green `Production verification` run, and that staging smoke checks (rules,
-  hosting headers, App Check) pass before any production dispatch.
+  hosting headers, Auth and role checks) pass before any production dispatch.
 - [ ] Deploy and monitor the committed `firestore.indexes.json`; retention and
   privacy deletion depend on those indexes.
+- [ ] Deploy `activeBuses/.indexOn: timestamp` from `database.rules.json`
+  before activating indexed stale scans. Verify the deployed instance and run
+  the [matching/lifecycle scan acceptance](MATCHING_AND_LIFECYCLE_SCANS.md),
+  including timestamp ties, session reuse, leader restart and stale backlogs.
 - [ ] Ensure exactly one healthy worker lease owner processes lifecycle,
   stale-state, and retention jobs. The Firestore lease is safe at any replica
   count, so this is about observing the lease, not limiting replicas.
@@ -87,7 +92,7 @@ local professor demonstration.
   environment, protect/delete plaintext `secrets.h` and unencrypted artifacts,
   and demonstrate independent signed-reflash secret rotation, revocation, and
   lost-device disablement.
-- [ ] Configure immutable HTTPS signed-firmware hosting and all five backend
+- [ ] Configure immutable HTTPS signed-firmware hosting and all six backend
   release fields; prove active-ride withholding, wrong-key/digest rejection,
   healthy confirmation and five-minute automatic rollback on spare boards.
 

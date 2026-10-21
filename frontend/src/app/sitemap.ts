@@ -1,9 +1,11 @@
 import { MetadataRoute } from 'next';
+import { siteOrigin, siteIndexingEnabled } from "@/lib/siteMetadata";
 
 export const dynamic = "force-static";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://bustrack-be165.web.app';
+  if (!siteIndexingEnabled()) return [];
+  const baseUrl = siteOrigin();
 
   return [
     {

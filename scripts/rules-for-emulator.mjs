@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 /**
  * Produces isolated copies of the security rules for the Firestore/RTDB
  * emulator integration suite, WITHOUT touching the deployable repository
- * files. App Check is enforced by Firebase at the product level; it is not a
+ * files. App Check is not used by the application; request.app is not a
  * Cloud Firestore Security Rules request property.
  *
  * This module writes copied rules plus a temporary firebase.json (which
@@ -23,7 +23,7 @@ const REPO_CONFIG = path.join(ROOT, "firebase.json");
 export function copyRulesText(firestoreText, databaseText) {
   if (firestoreText.includes("request.app")) {
     throw new Error(
-      "firestore.rules must not use request.app; configure App Check enforcement in Firebase.",
+      "firestore.rules must not use request.app; use supported identity and role checks.",
     );
   }
   return { firestore: firestoreText, database: databaseText };
@@ -72,6 +72,17 @@ export async function writeEmulatorRuleset() {
   if (config.database) {
     config.database.rules = databasePath;
   }
+  // The generated file is emulator-only: it cannot describe a hosting deploy.
+  delete config.hosting;
+  config.emulators = {
+    firestore: { host: '127.0.0.1', port: 8085 },
+    database: { host: '127.0.0.1', port: 9005 },
+    auth: { host: '127.0.0.1', port: 9095 },
+    hub: { host: '127.0.0.1', port: 4405 },
+    logging: { host: '127.0.0.1', port: 4505 },
+    ui: { enabled: false },
+    singleProjectMode: false, // Each sequential suite owns a separate demo namespace.
+  };
   const configPath = path.join(dir, "firebase.json");
   await writeFile(configPath, JSON.stringify(config, null, 2));
 

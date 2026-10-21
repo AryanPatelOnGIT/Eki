@@ -20,8 +20,9 @@ import {
   type RideHistoryDeletionState,
 } from "@/lib/rideHistory";
 import { auth } from "@/lib/firebaseAuth";
-import { apiRequest } from "@/lib/apiClient";
+import { apiRequest, acknowledgedField } from "@/lib/apiClient";
 import { errorMessage } from "@/lib/errors";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Bus, Loader2, MapPin, Trash2, User, Users, AlertCircle } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
@@ -46,12 +47,18 @@ interface RideSession {
   startTime?: TimestampValue;
   endTime?: TimestampValue;
   status: "pending" | "armed" | "active" | "completed" | "failed" | "interrupted";
+  interruptionReason?: string;
   passengers?: PassengerRecord[] | Record<string, PassengerRecord>;
   path?: { lat: number; lng: number; timestamp: TimestampValue }[];
   stopsReached?: RideStopRecord[] | Record<string, RideStopRecord>;
   direction?: "forward" | "reverse" | null;
   originStopId?: string | null;
   destinationStopId?: string | null;
+  lastKnownLocation?: { lat: number; lng: number; sampledAt: TimestampValue };
+  lastSignalLostAt?: TimestampValue;
+  firstTelemetryAt?: TimestampValue;
+  firstKnownLocation?: { lat: number; lng: number; sampledAt: TimestampValue };
+  connectionEvents?: Record<string, { type: string; observedAt: TimestampValue; location?: { lat: number; lng: number } }>;
 }
 
 const SERVICE_TIME_ZONE =
@@ -68,6 +75,14 @@ const STATUS_CONFIG: Record<
   failed: { label: "Failed", className: "bg-red-500/20 text-red-300" },
   interrupted: { label: "Ended early", className: "bg-amber-500/15 text-amber-300" },
 };
+
+function interruptionMessage(reason: RideSession["interruptionReason"]): string {
+  if (reason === "manual_end_early") return "Manually ended before the final stop.";
+  if (reason === "abandoned_session_timeout") return "Closed after the ride's inactivity limit was reached.";
+  return reason
+    ? "The interruption reason is unavailable."
+    : "The interruption reason was not recorded.";
+}
 
 function passengerRecords(passengers: RideSession["passengers"]): PassengerRecord[] {
   if (!passengers) return [];
@@ -115,11 +130,39 @@ async function deleteRideHistoryRequest(sessionId: string): Promise<void> {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
       fallbackError: "Unable to delete ride history.",
+      validateResponse: value => acknowledgedField(value, "deleted"),
     },
   );
 }
 
+/** Subscribe only while this ride is expanded; older messages remain accessible. */
+function RideHistoryMessages({ sessionId }: { sessionId: string }) {
+  const [messageLimit, setMessageLimit] = useState(100);
+  type HistoricalMessage = {
+    id: string; text: string; senderName?: string; from?: string; timestamp: TimestampValue;
+  };
+  const options = { maxResults: messageLimit, orderByField: "timestamp", orderByDirection: "desc" as const };
+  const live = useCollection<HistoricalMessage>(`ride_sessions/${sessionId}/messages`, options);
+  const archive = useCollection<HistoricalMessage>(`ride_sessions/${sessionId}/archivedMessages`, options);
+  const data = [...new Map([...archive.data, ...live.data].map(message => [message.id, message])).values()]
+    .sort((a, b) => (timestampDate(a.timestamp)?.getTime() ?? 0) - (timestampDate(b.timestamp)?.getTime() ?? 0));
+  const loading = live.loading || archive.loading, error = live.error ?? archive.error;
+  const retry = () => { live.retry(); archive.retry(); };
+  return <section className="mt-4 border-t border-white/10 pt-4" aria-label="Ride chat history">
+    <h4 className="mb-3 text-xs font-semibold uppercase text-white/50">Chat history</h4>
+    {loading ? <p role="status">Loading messages…</p> : error ? <div role="alert">Messages unavailable. <button type="button" onClick={retry}>Retry messages</button></div> : <>
+      {!data.length && <p className="text-xs text-white/50">No messages recorded.</p>}
+      <ol className="space-y-2">{data.map(message => <li key={message.id} className="rounded border border-white/10 p-3 text-sm text-white/80">
+        <p className="text-xs text-white/50">{message.senderName || message.from || "Unknown sender"} · {formatServiceTime(message.timestamp)}</p>
+        <p className="whitespace-pre-wrap break-words">{message.text}</p>
+      </li>)}</ol>
+      {(live.data.length === messageLimit || archive.data.length === messageLimit) && <button type="button" className="mt-3 min-h-10 text-sm text-sky-300" onClick={() => setMessageLimit(limit => limit + 100)}>Load older messages</button>}
+    </>}
+  </section>;
+}
+
 export default function RideHistoryPanel() {
+  const [historyLimit, setHistoryLimit] = useState(100);
   const {
     data: armedSessions,
     loading: armedSessionsLoading,
@@ -128,7 +171,7 @@ export default function RideHistoryPanel() {
   } = useCollection<RideSession>(
     "ride_sessions",
     {
-      maxResults: 100,
+      maxResults: historyLimit,
       orderByDirection: "desc",
       orderByField: "armedAt",
     },
@@ -141,14 +184,14 @@ export default function RideHistoryPanel() {
   } = useCollection<RideSession>(
     "ride_sessions",
     {
-      maxResults: 100,
+      maxResults: historyLimit,
       orderByDirection: "desc",
       orderByField: "startTime",
     },
   );
   const sessions = useMemo(
-    () => mergeRideHistorySessions(armedSessions, startedSessions),
-    [armedSessions, startedSessions],
+    () => mergeRideHistorySessions(armedSessions, startedSessions, historyLimit),
+    [armedSessions, startedSessions, historyLimit],
   );
   const sessionsLoading = armedSessionsLoading || startedSessionsLoading;
   const sessionsError = armedSessionsError ?? startedSessionsError;
@@ -158,11 +201,13 @@ export default function RideHistoryPanel() {
   };
   const { buses, loading: busesLoading, error: busesError, retry: retryBuses } = useBuses();
   const { routes, loading: routesLoading, error: routesError, retry: retryRoutes } = useRoutes();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { drivers, loading: driversLoading, error: driversError, retry: retryDrivers } = useDrivers();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteStates, setDeleteStates] = useState<Record<string, RideHistoryDeletionState>>({});
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
   const deletionInFlight = useRef(new Set<string>());
+  const historyHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const busNames = useMemo(
     () => new Map(buses.map((bus) => [bus.id, bus.name])),
@@ -189,6 +234,7 @@ export default function RideHistoryPanel() {
   };
 
   const openDeleteConfirmation = (sessionId: string) => {
+    setDeleteNotice(null);
     updateDeleteState(sessionId, "open");
     setDeleteErrors((current) => {
       const next = { ...current };
@@ -218,6 +264,7 @@ export default function RideHistoryPanel() {
     try {
       await deleteRideHistoryRequest(sessionId);
       updateDeleteState(sessionId, "success");
+      setDeleteNotice("Ride history deleted.");
       setExpandedId(null);
     } catch (error) {
       updateDeleteState(sessionId, "failure");
@@ -238,12 +285,12 @@ export default function RideHistoryPanel() {
     );
   }
 
-  if (sessionsError || busesError || routesError) {
+  if (sessionsError || busesError || routesError || driversError) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="space-y-2 text-sm text-red-400/80">
           <AlertCircle className="mx-auto size-8 opacity-70" />
-          <p>{sessionsError ?? busesError ?? routesError ?? "Could not load ride history."}</p>
+          <p>{sessionsError ?? busesError ?? routesError ?? driversError ?? "Could not load ride history."}</p>
           <p className="text-xs text-white/40">Ride history could not be loaded.</p>
           <button
             type="button"
@@ -251,6 +298,7 @@ export default function RideHistoryPanel() {
               if (sessionsError) retrySessions();
               if (busesError) retryBuses();
               if (routesError) retryRoutes();
+            if (driversError) retryDrivers();
             }}
             className="rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white"
           >
@@ -263,7 +311,8 @@ export default function RideHistoryPanel() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4 animate-slide-up sm:p-6">
-      <h2 className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
+      <h2 ref={historyHeadingRef} tabIndex={-1} className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
+      {deleteNotice && <p role="status" className="text-sm text-emerald-300">{deleteNotice}</p>}
       {sessions.length === 0 ? (
         <div className="py-10 text-center text-sm text-white/50">
           No rides recorded yet.
@@ -332,9 +381,10 @@ export default function RideHistoryPanel() {
                     </span>
                   </div>
                   {session.status === "interrupted" && (
-                    <p className="text-pretty text-xs text-amber-200/70">
-                      The ride ended before the final stop was recorded.
-                    </p>
+                    <div className="space-y-1 text-pretty text-xs text-amber-200/70">
+                      <p>The ride ended before the final stop was recorded.</p>
+                      <p>{interruptionMessage(session.interruptionReason)}</p>
+                    </div>
                   )}
                 </div>
 
@@ -348,6 +398,15 @@ export default function RideHistoryPanel() {
 
               {expandedId === session.id && (
                 <div id={`ride-history-details-${session.id}`} className="border-t border-white/10 bg-black/20 px-4 pt-4 pb-4">
+                  <div className="mb-4 space-y-1 text-xs text-white/60">
+                    <p>Service armed: {formatServiceTime(session.armedAt)}</p>
+                    <p>Journey started: {formatServiceTime(session.startTime)}</p>
+                    {session.firstKnownLocation && <p>First received GNSS: {session.firstKnownLocation.lat.toFixed(6)}, {session.firstKnownLocation.lng.toFixed(6)} · {formatServiceTime(session.firstKnownLocation.sampledAt)}</p>}
+                    {session.lastKnownLocation && <p>Last received GNSS: {session.lastKnownLocation.lat.toFixed(6)}, {session.lastKnownLocation.lng.toFixed(6)} · {formatServiceTime(session.lastKnownLocation.sampledAt)}</p>}
+                    {Object.entries(session.connectionEvents ?? {}).map(([id, event]) => <p key={id}>
+                      Signal lost: {formatServiceTime(event.observedAt)}{event.location ? ` · ${event.location.lat.toFixed(6)}, ${event.location.lng.toFixed(6)}` : ""}
+                    </p>)}
+                  </div>
                   <h4 className="mb-3 text-xs font-semibold uppercase text-white/50">
                     Passenger Manifest
                   </h4>
@@ -356,6 +415,11 @@ export default function RideHistoryPanel() {
                   ) : (
                     <div className="space-y-2">
                       {passengers.map((passenger, index) => {
+                        const boardingStopName = resolveArrivalStopName(
+                          passenger.boardingStopId,
+                          stopsReached,
+                          routeStops.get(session.routeId) ?? [],
+                        );
                         const arrivalStopName = resolveArrivalStopName(
                           passenger.alightingStopId,
                           stopsReached,
@@ -375,6 +439,10 @@ export default function RideHistoryPanel() {
                               {passenger.userName || "Unknown passenger"}
                             </span>
                             <div className="flex flex-col text-xs text-white/60 tabular-nums sm:items-end">
+                              <span>
+                                <span className="text-white/40">Boarding stop:</span>{" "}
+                                {boardingStopName === ARRIVAL_STOP_UNAVAILABLE ? "Unavailable" : boardingStopName}
+                              </span>
                               {arrivalStopName === ARRIVAL_STOP_UNAVAILABLE ? (
                                 <span>{ARRIVAL_STOP_UNAVAILABLE}</span>
                               ) : (
@@ -395,7 +463,7 @@ export default function RideHistoryPanel() {
                             </div>
                           </div>
                         );
-                      })}
+        })}
                     </div>
                   )}
 
@@ -430,63 +498,30 @@ export default function RideHistoryPanel() {
                       </div>
                     </div>
                   )}
+                  <RideHistoryMessages key={session.id} sessionId={session.id} />
                   {canDeleteRideHistory(session.status) && (
                     <div className="mt-4 border-t border-red-500/20 pt-4">
-                      {deleteState === "idle" ? (
                         <button
                           type="button"
+                          disabled={deleteState !== "idle"}
                           onClick={() => openDeleteConfirmation(session.id)}
                           className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20"
                         >
                           <Trash2 className="size-4" aria-hidden="true" />
                           Delete ride history
                         </button>
-                      ) : (
-                        <div
-                          className="rounded-lg border border-red-500/30 bg-red-500/10 p-3"
-                          role="alertdialog"
-                          aria-labelledby={`delete-history-title-${session.id}`}
-                          aria-describedby={`delete-history-warning-${session.id}`}
-                        >
-                          <h5
-                            className="text-balance text-sm font-semibold text-red-200"
-                            id={`delete-history-title-${session.id}`}
-                          >
-                            Permanently delete ride history?
-                          </h5>
-                          <p
-                            className="mt-1 text-pretty text-xs text-red-200/70"
-                            id={`delete-history-warning-${session.id}`}
-                          >
-                            {RIDE_HISTORY_DELETE_WARNING}
-                          </p>
-                          <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                            <button
-                              type="button"
-                              onClick={() => cancelDeleteConfirmation(session.id)}
-                              disabled={deleteState === "deleting"}
-                              className="min-h-10 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteHistory(session.id)}
-                              disabled={deleteState === "deleting"}
-                              className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-500/40 bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {deleteState === "deleting" && (
-                                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                              )}
-                              {deleteState === "deleting" ? "Deleting…" : "Permanently delete"}
-                            </button>
-                          </div>
-                          {deleteErrors[session.id] && (
-                            <p className="mt-2 text-pretty text-xs text-red-200" role="alert">
-                              {deleteErrors[session.id]}
-                            </p>
-                          )}
-                        </div>
+                      {deleteState !== "idle" && (
+                        <ConfirmModal
+                          isOpen
+                          title="Permanently delete ride history?"
+                          description={[RIDE_HISTORY_DELETE_WARNING, deleteErrors[session.id]].filter(Boolean).join(" ")}
+                          confirmText="Permanently delete"
+                          variant="danger"
+                          loading={deleteState === "deleting"}
+                          returnFocusRef={historyHeadingRef}
+                          onCancel={() => cancelDeleteConfirmation(session.id)}
+                          onConfirm={() => handleDeleteHistory(session.id)}
+                        />
                       )}
                     </div>
                   )}
@@ -496,6 +531,10 @@ export default function RideHistoryPanel() {
           );
         })
       )}
+      {(armedSessions.length === historyLimit || startedSessions.length === historyLimit) && <button
+        type="button" className="min-h-10 text-sm text-sky-300" onClick={() => setHistoryLimit(limit => limit + 100)}>
+        Load older rides
+      </button>}
     </div>
   );
 }

@@ -1,0 +1,184 @@
+# Testing and acceptance evidence
+
+Last updated: 2026-10-21 04:44 IST (UTC+05:30).
+
+The [deterministic acceptance catalog](../../qa/README.md) imports the full
+A-Z requirements and current source census, preserves historical evidence
+separately, and defines the PR coverage-budget/safety checks. Its static report
+does not certify application, provider or physical acceptance.
+
+The [Antigravity browser testing skill](EKI_Antigravity_Webapp_Testing_Skill.md)
+provides a standalone playbook for PR #323 and current Eki checkouts. Its
+[installable skill](skills/eki-antigravity-webapp-audit/SKILL.md) includes source
+census and evidence validation helpers. Both require actual browser actions and
+separate synthetic/emulator results from provider, deployment and hardware gates.
+
+## Start with the current gates
+
+- [21 October Downloads review and open-issue disposition](OPEN_ACCEPTANCE_DISPOSITION_2026_10_21.md):
+  archive/checksum verification, deduplicated telemetry, bounded access-recovery
+  patch and the outstanding proof/decision for each of the 64 acceptance rows.
+- [21 October ride evidence and issue follow-up](MOVING_GNSS_CAPTURE_2026_10_21.md):
+  verified private archive, recorder status-file failure, discontinuous recovery,
+  missing profiling exports and all 64 remaining acceptance requirements.
+- [20 October ride lifecycle and telemetry validation](RIDE_LIFECYCLE_VALIDATION_2026_10_20.md):
+  manual-end versus device presence, automatic-arrival conditions, shared delayed
+  telemetry presentation and continued-ingestion/recovery regressions for PR #344.
+- [20 October production audit claim validation](PRODUCTION_AUDIT_VALIDATION_2026_10_20.md):
+  three confirmed UI repairs, claim-by-claim triage, actual browser regressions
+  and explicit limits on map-performance, contrast and release-readiness claims.
+- [20 October armed moving capture](MOVING_GNSS_CAPTURE_2026_10_20.md):
+  one forward service, serial/cloud/browser evidence and an explicit allocation
+  for all 64 open requirements. USB/ceiling gaps, unknown acknowledgements,
+  unavailable saved DevTools traces and missing truth/role/lifecycle acceptance
+  remain visible; no complete field gate is marked passed.
+- [19 October short moving GNSS capture](MOVING_GNSS_CAPTURE_2026_10_19.md):
+  299 raw fixes, 202 accepted serial moving samples, role-specific browser timing,
+  actual transport timeouts and owner-confirmed final power-off. No service was
+  armed, so lifecycle/full-route acceptance remains pending. The
+  [field recording guide](../operations/FIELD_CAPTURE.md) includes the required
+  service-start check, exact serial evidence and verified archival.
+- [11 October stationary GNSS and hotspot recovery](STATIONARY_GNSS_HOTSPOT_2026_10_11.md):
+  three captured phone-hotspot outages, receiver-backed stationary fixes,
+  redacted cloud/browser correlation, and a serial control-line capture fix.
+  Repeated HTTPS refusals and moving/physical gates remain open.
+- [9 October non-moving software verification](NON_MOVING_READINESS_2026_10_09.md):
+  remaining chat/diagnostic/API boundary repairs, immediate reassignment
+  retirement, passenger reload recovery, full local suites and explicit
+  physical/deployment evidence limits. This supersedes earlier descriptions
+  of these software fixes as uncommitted or still unimplemented.
+- [9 October webapp readiness](WEBAPP_READINESS_2026_10_09.md): actual Chrome
+  port-3000 passenger boarding, repeat/reload recovery and populated admin History;
+  both chosen stops are visible. Local repairs and current tests passed. Full
+  live-provider feature and physical moving-route gates retain their recorded
+  limits; reassignment retirement now has HTTP and real emulator coverage.
+- [8 October webapp readiness](WEBAPP_READINESS_2026_10_08.md): actual browser
+  route/stop/admin/History checks, stationary QA service, frontend repairs and
+  database-to-browser timing. Passenger location, intermittent sign-in and populated manifest acceptance
+  remain open; this is not full feature or field sign-off.
+- [8 October balcony readiness](BALCONY_READINESS_2026_10_08.md): 20-minute
+  stationary capture, complete issue inventory, measured authority/public-path
+  latency and locally verified repair of continuous-update restart readiness.
+  The fix is local and uncommitted; moving/browser/firmware identity and release
+  acceptance remain explicit follow-ups.
+- [Current A–Z execution ledger](WEBAPP_A_Z_AB_TESTING.md): all 351 feature
+  cases, actual localhost outcomes, software evidence and pending gates.
+- [Full supplied A–Z plan](WEBAPP_A_Z_AB_TESTING_PLAN.md): preserved historical
+  inventories, control/API/race matrices and current contract overrides.
+- [Test strategy](TEST_STRATEGY.md): software, rules, browser, firmware and
+  physical checks; required commands and their limits.
+- [3 October acceptance](TESTING_ACCEPTANCE_2026_10_03.md): later consolidated
+  browser, journal installation, physical cuts and short moving evidence.
+- [Cold-power/motion audit](COLD_POWER_MOTION_AUDIT_2026_10_03.md): source and
+  physical evidence for checkpoint recovery, motion and remaining gates.
+- [Issue completion record](ISSUE_COMPLETION_2026_10_03.md): issue-specific
+  outcomes and qualifications at the recorded baseline.
+
+These are evidence records. Read each commit/build, run window, conditions and
+limitations before relying on a result. An editorial update timestamp does not
+mean the test was rerun. CI success, synthetic browser tests, stationary traces,
+short motion traces and a full observed route are different kinds of evidence.
+
+## Latest source changes after the recorded acceptance
+
+The [4 October selected-part record](ISSUE_246_SELECTED_PARTS_2026_10_04.md)
+describes map/ETA, firmware maintenance, clock, timing, allocation and canonical
+configuration changes for [issue #246](https://github.com/notnamansinha/Eki/issues/246).
+Use that issue's merged PR checklist and exact-head CI for current implementation
+status. R34 and the physical/deployment gates in issue #245 remain open.
+
+The [5 October priority record](ISSUE_246_PRIORITY_PARTS_2026_10_05.md) covers
+the subsequent R01–R11/R25 continuation. R01 ([#254](https://github.com/notnamansinha/Eki/pull/254))
+and R04 ([#255](https://github.com/notnamansinha/Eki/pull/255)) are merged into
+`testing`, followed by R05 ([#256](https://github.com/notnamansinha/Eki/pull/256))
+and R06 ([#257](https://github.com/notnamansinha/Eki/pull/257)), then R25
+([#258](https://github.com/notnamansinha/Eki/pull/258)) at `c9bfee7`, with their
+exact-head checks. Follow #246 for later merges;
+the record names software tests and separates stationary GNSS baseline evidence
+from acceptance of newly installed firmware.
+R25's [bounded DNS guide](../hardware/DNS_COLD_CONNECT.md) and
+[PR #258](https://github.com/notnamansinha/Eki/pull/258) include native/SDK checks
+and 5 October stationary installed-image evidence for controlled DNS, Wi-Fi and
+TLS failure/recovery. The priority record names the final image hash, cold/warm
+timings, GNSS continuity and the remaining physical/moving gates.
+
+The historical admin baseline `abd45a6` (4 October 2026) includes PR #205: App Check readiness,
+the development-only opt-out, admin feedback HTTP loading/status and pending
+verification/session guards during sign-out. PR #244 adds passenger in-app
+station/bus dropdowns. Their behavior is maintained in [frontend guide](../../frontend/README.md),
+[configuration](../CONFIGURATION.md) and [API reference](../../backend/API.md).
+
+Use current test/CI output to validate newer commits. `npm run test:e2e:admin`
+uses synthetic Firebase adapters; it cannot certify live provider enforcement.
+
+## Evidence catalog
+
+R08's [worker leadership guide](../operations/WORKER_LEADERSHIP.md) defines
+independent expiry, the 2-second clock tolerance, destination checks and
+cross-store limits. The priority record and #246 track its actual verification;
+software/emulator checks do not close #245's live replica and route gates.
+
+| Record | Purpose |
+|---|---|
+| [Full-feature QA](FULL_FEATURE_QA_2026_10_03.md) | Feature coverage at the recorded software baseline |
+| [Passenger preview QA](PASSENGER_PREVIEW_QA_2026_10_03.md) | Route preview, stationary bus and destination behavior |
+| [RTDB field audit](RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md) | Field necessity and compatibility decisions |
+| [Live latency/recovery audit](LIVE_LATENCY_RECOVERY_AUDIT_2026_10_02.md) | Trace classification, recovery and latency limits |
+| [GNSS trace validation](ADAPTIVE_GNSS_TRACE_VALIDATION.md) | Adaptive jump and recovery evidence |
+| [Reroute simulations](REROUTE_SIMULATION_RESULTS.md) | Deterministic route/matching scenarios; not field latency |
+| [Return-route acceptance](RETURN_ROUTE_ACCEPTANCE.md) | Direction/turnaround evidence and open physical cases |
+| [Stationary readiness](STATIONARY_READINESS_REPORT.md) | Stationary runtime checks at its recorded build |
+| [11 October stationary recovery](STATIONARY_GNSS_HOTSPOT_2026_10_11.md) | Live GNSS/hotspot cycles and serial capture control-line validation |
+| [Non-moving recovery](NON_MOVING_RECOVERY_REPORT.md) | Backend/tunnel/reboot recovery window |
+| [Live ESP32 latency](LIVE_ESP32_LATENCY_RESULT.md) | Actual device/backend measurements and TLS profile |
+| [Transport evidence audit](REALTIME_TRANSPORT_EVIDENCE_AUDIT.md) | Available transport evidence and missing same-window usage/paint data |
+| [Postfix stationary trace](POSTFIX_STATIONARY_TRACE.md) | A later stationary delivery window |
+| [Earlier audit summary](AUDIT_STATUS_SUMMARY.md) | Historical fixes/readiness; superseded as a current status page |
+
+## Browser fixtures
+
+| Fixture | Runbook | Scope |
+|---|---|---|
+| Admin access | [Admin fixture](../../e2e/admin-access/README.md) | Real auth/guard/admin/feedback modules; synthetic SDK and backend data |
+| Passenger/responsive | [UI fixture](../../e2e/fixtures/README.md) | Real passenger/settings/map logic; synthetic hooks and map SDK |
+| Motion | [Motion fixture](../../e2e/motion/README.md) | Render/interpolation behavior; synthetic input |
+
+## Remaining acceptance
+
+Use the latest consolidated report and [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
+to track full-route/turnaround, weak-network and off-route paint evidence,
+long soak, secure fleet first boot/OTA, monitoring and institutional approval.
+Do not close a gate from source review or mock data alone.
+
+R02's [work admission guide](../operations/WORK_ADMISSION.md) documents bounded
+queues, current-state replay and the reproducible stalled-helper memory check.
+The priority record reports measured heap/RSS and emulator ordering evidence;
+it does not certify live fleet throughput or moving-route recovery.
+
+R03's [telemetry deadline guide](../operations/TELEMETRY_DEADLINES.md) records
+response/dependency/queue budgets and held-acknowledgement acceptance. Software
+checks continue with the GNSS/ESP32 disconnected; field/live gates stay in #245.
+
+## R07 operation recovery (5 October 2026)
+
+[Operation resources](../api/OPERATION_RESOURCES.md) records the current bounds
+and stop/audit/recovery procedure. Regressions reproduce unbounded independent
+executors and stranded expired claims. `httpOperations.integration.test.ts`
+kills a disposable child after actual emulator claim/effect commits, discovers
+and abandons its unknown outcome, releases its lock with an atomic audit, and
+proves same-key submission does not replay effects. A second emulator case
+finds 31 expired claims across 25-record pages. These are software fault tests;
+Google billing, Auth revocation uncertainty and replica supervisor termination
+need suitable staging evidence. No physical GNSS or production mutation occurs.
+
+## R10 privacy recovery (5 October 2026)
+
+[Privacy deletion recovery](../operations/PRIVACY_DELETION.md) records bounded pagination/chunks, retry history, current passenger eligibility and admin monitoring/recovery. Emulator cases use actual Firestore SDKs and a killed disposable worker with synthetic Auth. They cover 1001 feedback records, indexed/legacy manifests and personal collection groups; no physical telemetry or live Auth is required. Staging and institutional privacy sign-off remain #245.
+
+## R12 route catalog (5 October 2026)
+
+[The telemetry route catalog](../operations/ROUTE_CATALOG.md) documents watcher-populated bounded state, shared freshness reads and edit/deletion fencing. Actual Firestore/RTDB cases process sixty unchanged pending fixes without explicit route point reads, preserve armed direction binding, refuse delayed-watcher stale direction and recover a real committed direction after injected acknowledgement loss. Coordinates/Google are synthetic; live/moving/replica acceptance remains open.
+
+Passenger geometry reads are cached and read-only; explicit versioned admin saves perform legacy repair through bounded computation. See [geometry read/repair contract](../operations/ROUTE_GEOMETRY_READS.md) for fixed bounds, independent quotas and staging limits.
+
+- [20 October expanded re-verification](REVERIFICATION_2026_10_20.md) — observed checks, repaired defects and remaining release gates.

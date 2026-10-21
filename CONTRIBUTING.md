@@ -1,79 +1,60 @@
 # Contributing to Eki
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
-We welcome contributions to the Eki ecosystem. This document outlines the
-standard procedures for contributing code, reporting issues, and proposing
-new features.
+## Create a branch and PR
 
-## Development Workflow
+1. Fetch the target branch and start from its latest commit. Current integration work targets `testing`; `main` is the controlled release branch.
+2. Use a focused branch (`codex/<task>` for Codex work; `feat/`, `fix/` or `chore/` for other contributions).
+3. Keep changes scoped. Preserve existing uncommitted work; use an isolated worktree when needed.
+4. Commit with a clear Conventional Commit message, such as `docs: refresh onboarding` or `fix: guard stale feedback responses`.
+5. Open the PR against the intended base (`testing` for integration), describe the user-visible result and list actual validation and remaining limits.
+6. Obtain maintainer review and green required checks before merging. UI changes should include appropriate screenshots with sensitive data removed.
 
-1. **Branching Strategy**
-   - `main`: Production-ready code. Always deployable.
-   - `feat/<feature-name>`: For new features (e.g., `feat/admin-analytics`).
-   - `fix/<bug-name>`: For bug fixes (e.g., `fix/socket-timeout`).
-   - `chore/<task>`: For maintenance tasks (e.g., `chore/deps-update`).
+Example from a clean checkout:
 
-2. **Commit Conventions**
-   We follow Conventional Commits. Your commit messages must be structured as
-   follows:
-   - `feat: add passenger request queue`
-   - `fix: resolve memory leak in trackingGateway`
-   - `docs: update hardware flashing instructions`
-   - `refactor: extract eta computation logic`
+```powershell
+git fetch origin testing
+git switch -c codex/my-task origin/testing
+npm ci
+```
 
-3. **Pull Request Process**
-   - Ensure your code passes all linting (`npm run lint`).
-   - Ensure the build succeeds (`npm run build`).
-   - Provide a clear PR description detailing *why* the change was made,
-     not just *what* was changed.
-   - If the PR changes UI, include screenshots.
-   - Require at least one approving review from a core maintainer before merging.
-   - Run `npm run verify`; firmware changes must also pass
-     `platformio test --project-dir hardware -e native` and
-     `platformio run --project-dir hardware -e esp32dev`. Rule changes must run the Firebase
-     emulator suite in a Java-enabled environment.
-   - Update the HLD/LLD, Firebase data dictionary, API, hardware and test docs
-     whenever their contracts change. Do not leave behavior documented only in
-     a PR description.
+Follow [getting started](docs/GETTING_STARTED.md) for configuration. Use Node.js 24 to match CI.
 
-## Local Environment
+## Verify the affected behavior
 
-- Never commit `.env` or `.env.local` files.
-- If your PR introduces a new environment variable, you must update
-  the applicable template (`backend/.env.example` for backend changes or
-  `frontend/env.production.example` for frontend changes),
-  [CONFIGURATION.md](docs/CONFIGURATION.md), and the respective `README.md` file
-  immediately.
-- If your PR changes a user-visible workflow, update
-  [GETTING_STARTED.md](docs/GETTING_STARTED.md) and the relevant operational
-  or frontend document.
-- Keep documentation public-safe: use placeholders and redacted examples;
-  never include service-account JSON, device/Wi-Fi credentials, signing keys,
-  App Check debug tokens, bearer tokens, personal records, or unredacted logs.
+- Software changes: run `npm run verify` (lint, tests, builds, packaging and dependency audit).
+- Auth/admin/browser changes: run `npm run test:e2e:admin`; install Chromium with `npx playwright install chromium` if needed.
+- Firebase rules changes: run `npm run test:rules` with Java 21 and the emulator prerequisites.
+- Firmware changes: run native PlatformIO tests and the affected build target. Timing, power, GNSS, TLS and radio claims also need recorded physical evidence.
+- Documentation-only changes: sync mirrors, run the documentation mirror test and check relative links/commands. Record any broader CI result separately.
 
-## Hardware Contributions
+The [test strategy](docs/testing/TEST_STRATEGY.md) states what these checks prove. Report skipped or unavailable checks explicitly. A compile does not establish physical acceptance.
 
-If you are contributing to the `hardware/` (ESP32) firmware:
+## Maintain documentation and configuration
 
-- Test your changes on physical hardware before opening a PR.
-- Ensure that the Smart Transmission thresholds (`DISTANCE_THRESHOLD_M`, etc.)
-  are not arbitrarily changed without real-world validation to prevent
-  database write spikes.
-- Record real bench/route evidence for timing, GNSS, TLS, power, reconnect and
-  watchdog changes. A successful compile is not a physical acceptance test.
-- Never enable insecure TLS, commit credential/signing material, or upload the
-  irreversible fleet environment outside the approved witnessed procedure.
+1. Update the authoritative guide in the same change as its behavior. Use the [documentation index](docs/index/README.md) to choose the page.
+2. Put `Last updated: YYYY-MM-DD HH:mm IST (UTC+05:30).` directly below the title. Use the actual edit time. For historical evidence, keep the original run date, commit, measurements and limitations.
+3. Prefer numbered procedures, short bullets and comparison tables. Explain prerequisites before commands and expected outcomes after them.
+4. Update the relevant tracked environment template and [configuration reference](docs/CONFIGURATION.md) when adding/changing variables. Never commit filled `.env`, `secrets.h` or signing material.
+5. Edit root/package source documents, then run `npm run docs:sync`. Their `docs/` copies are required by `backend/src/docsMirror.test.ts`; do not edit a generated mirror independently.
+6. Remove completed plans or scratch notes after moving useful behavior into maintained guides. Keep distinct acceptance evidence and architectural decisions traceable.
 
-## Documentation map
+Documentation check from the repository root:
 
-Use [the documentation index](docs/index/README.md) to find the authoritative
-reference for a change. API contract changes belong in `backend/API.md` and
-its mirrored copy; data/rules changes belong in
-`docs/data/FIREBASE_DATA_MODEL.md`; lifecycle changes belong in the HLD/LLD;
-firmware changes belong in `docs/hardware/HARDWARE_TELEMETRY.md`; and test or
-acceptance changes belong in `docs/testing/TEST_STRATEGY.md`.
+```powershell
+npm run docs:sync
+npm exec --workspace=backend -- vitest run src/docsMirror.test.ts
+git diff --check
+```
 
-Run `npm run verify` before requesting review. The documentation mirror test
-fails when a tracked root/package Markdown document and its copy under `docs/`
-diverge.
+Use placeholders in examples. Keep service-account JSON, device/Wi-Fi credentials, App Check debug tokens, bearer tokens, signing keys and personal/location evidence out of source control and PR output.
+
+## Firmware contribution rules
+
+- Preserve fail-closed TLS, credential rejection and fleet security gates.
+- Document the effect of cadence/threshold changes on writes, freshness and recovery. Do not change policy based solely on a successful build.
+- Record commit/build, board profile, conditions and redacted timing/recovery results for hardware claims.
+- Use the [witnessed fleet procedure](docs/operations/HARDWARE_SECURITY_PROVISIONING.md) for protected fleet artifacts and irreversible provisioning.
+
+See [security policy](SECURITY.md) for vulnerability reporting and [code of conduct](CODE_OF_CONDUCT.md) for collaboration expectations.

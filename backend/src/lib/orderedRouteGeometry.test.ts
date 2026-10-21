@@ -25,4 +25,23 @@ describe("long ordered route geometry", () => {
       return { polyline: encodePolyline(chunk), distanceMeters: 100, duration: "10s" };
     })).rejects.toThrow("upstream timeout");
   });
+
+  it("waits for outstanding billable chunks before reporting failure", async () => {
+    const points = Array.from({ length: 30 }, (_, lat) => ({ lat, lng: 72 }));
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    let settled = false;
+    const result = computeOrderedRouteGeometry(points, async chunk => {
+      if (chunk[0].lat === 0) throw new Error("upstream failure");
+      await pending;
+      return { polyline: encodePolyline(chunk), distanceMeters: 100, duration: "10s" };
+    });
+    const assertion = expect(result).rejects.toThrow("upstream failure");
+    void result.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    finish();
+    await assertion;
+    expect(settled).toBe(true);
+  });
 });

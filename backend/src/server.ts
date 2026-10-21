@@ -11,7 +11,9 @@
  * - Authenticated API routes require a valid Firebase ID token
  */
 
+import { getRouteMatchingWork } from "./services/routeMatching";
 import "dotenv/config";
+import { createRouteComputeLimiter } from "./lib/routeComputeLimiter";
 
 import express from "express";
 import http from "http";
@@ -30,29 +32,37 @@ import {
   getRouteProcessingStatus,
   startTelemetryRouteWatcher,
 } from "./services/telemetryRouteService";
+import { OPERATION_EXECUTOR_ID, drainHttpOperations } from "./services/httpOperations";
+import { drainDurableRideRecovery } from "./services/durableRideRecovery";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
 import { createHealthState } from "./lib/healthState";
 import { createHttpMetricsMiddleware, registerOperationalMetrics } from "./lib/metrics";
-import { createIdentityAwareLimiter } from "./lib/rateLimitIdentity";
+import { createBrowserAdmission, createBrowserIngressLimiter } from "./lib/browserAdmission";
+import { verifiedUserKeyGenerator } from "./lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "./lib/rateLimitShard";
 import { requireAdmin } from "./middleware/requireAdmin";
 import { assertRetentionConfiguration } from "./services/retentionSweeper";
 import { startWorkerCoordinator } from "./services/workerCoordinator";
+import { getTripStateQueueStatus } from "./services/tripStateEngine";
+import { getLiveBusProjectionStatus } from "./services/liveBusProjection";
 import busRoutes from "./routes/buses";
+import { apiCompatibilityStatus, createApiCompatibilityTraffic } from "./lib/apiCompatibilityTraffic";
+import { apiReadCacheStatus } from "./services/apiReadCache";
 import analyticsRoutes from "./routes/analytics";
 import requestRoutes from "./routes/requests";
-import polylineRoutes from "./routes/polyline";
-import planRoutes from "./routes/plan";
-import routesListRoutes from "./routes/routesList";
-import devicesRoutes from "./routes/devices";
+import polylineRoutes, { routeSaveResourcesRouter, routeGeometryPreviewsRouter } from "./routes/polyline";
+import planRoutes, { segmentRoutes } from "./routes/plan";
+import routesListRoutes, { routesCollectionRoutes } from "./routes/routesList";
+import devicesRoutes, { devicesV2Router } from "./routes/devices";
 import placesRoutes from "./routes/places";
-import shiftsRoutes from "./routes/shifts";
-import sessionsRoutes from "./routes/sessions";
-import feedbackRoutes from "./routes/feedback";
+import shiftsRoutes, { rideSessionsRouter } from "./routes/shifts";
+import sessionsRoutes, { rideSessionBoardingRouter } from "./routes/sessions";
+import feedbackRoutes, { feedbackV2Router } from "./routes/feedback";
 import usersRoutes from "./routes/users";
-import settingsRoutes from "./routes/settings";
-import fleetRoutes from "./routes/fleet";
-import privacyRoutes from "./routes/privacy";
+import settingsRoutes, { settingsV2Router } from "./routes/settings";
+import fleetRoutes, { drainFleetMutations, fleetReconciliationJobsRouter } from "./routes/fleet";
+import privacyRoutes, { privacyDeletionRequestsRouter } from "./routes/privacy";
+import { drainPrivacyDeletions } from "./services/privacyDeletionWorker";
 
 const PORT = process.env.PORT || 4000;
 // Expected replica count behind the load balancer. Every in-memory limiter
@@ -67,6 +77,7 @@ const configuredCorsOrigins = (process.env.CORS_ORIGIN || "")
 
 const app = express();
 app.use(createHttpMetricsMiddleware());
+app.use(createApiCompatibilityTraffic());
 if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
   // Fail closed (issue #39 D6): a production API with no configured browser
@@ -102,33 +113,6 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-function isDeviceIngressRequest(req: express.Request): boolean {
-  return (
-    ((req.method === "POST" && /\/(telemetry|diagnostics)$/.test(req.path)) ||
-      (req.method === "GET" && /\/firmware$/.test(req.path))) &&
-    /^\/api\/devices\/[A-Za-z0-9_-]{1,128}\/(telemetry|diagnostics|firmware)$/.test(req.path)
-  );
-}
-
-// Global HTTP rate limiter — prevents DoS on all REST endpoints. Buckets are
-// keyed by the authenticated uid when a Bearer token is presented and by IP
-// for anonymous traffic: on campus many browsers share one NAT egress IP, so
-// an IP-only budget would 429 an entire lecture demo (issue #74).
-const globalLimiter = createIdentityAwareLimiter({
-  windowMs: 60 * 1000,  // 1 minute window
-  limit: shardedLimit(200, RATE_LIMIT_SHARD_FACTOR), // 200/identity/minute ÷ replicas
-  message: { error: "Too many requests, please slow down." },
-  skip: isDeviceIngressRequest,
-});
-app.use(globalLimiter);
-
-// Tighter limit for write-heavy mutation endpoints, keyed the same way.
-const writeLimiter = createIdentityAwareLimiter({
-  windowMs: 60 * 1000,
-  limit: shardedLimit(30, RATE_LIMIT_SHARD_FACTOR),
-  message: { error: "Write rate limit exceeded." },
-});
-
 // ── CORS ──────────────────────────────────────────────────────────────────────
 // Browser origins come exclusively from the CORS_ORIGIN env var (issue #39
 // D6): no hardcoded project-specific defaults. Production fails closed above.
@@ -136,7 +120,8 @@ const CORS_ORIGINS = [...new Set([
   ...configuredCorsOrigins,
   ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
 ])];
-app.use(cors({ origin: CORS_ORIGINS, credentials: false }));
+app.use(cors({ origin: CORS_ORIGINS, credentials: false, exposedHeaders: ["Location", "Retry-After", "X-Reconciliation-Complete", "X-Next-Cursor"] }));
+app.use(createBrowserIngressLimiter(RATE_LIMIT_SHARD_FACTOR));
 app.use((req, res, next) => {
   if (req.method === "TRACE" || req.method === "CONNECT") {
     res.status(405).json({ error: "Method not allowed." });
@@ -148,22 +133,13 @@ app.use((req, res, next) => {
 // Route computation calls a billable upstream API. The admin-only route editor
 // normally sends one request per save, so this guard leaves normal use ample
 // headroom while limiting accidental loops and compromised admin sessions.
-const routeComputeLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: shardedLimit(10, RATE_LIMIT_SHARD_FACTOR),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Route computation rate limit exceeded." },
-  // Reconciliation is a cheap Firestore read and may poll while a save lease
-  // is active. It remains under the global limiter but must not consume the
-  // scarce billable-routing budget.
-  skip: (req) => req.method === "GET" && /\/save-operations\//.test(req.originalUrl),
-});
+const routeComputeLimiter = createRouteComputeLimiter(RATE_LIMIT_SHARD_FACTOR);
 const routePlanLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: shardedLimit(30, RATE_LIMIT_SHARD_FACTOR),
+  limit: shardedLimit(30, RATE_LIMIT_SHARD_FACTOR),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: verifiedUserKeyGenerator,
   message: { error: "Route planning rate limit exceeded." },
 });
 // Enforce the hardware contract against the original request bytes before the
@@ -185,32 +161,39 @@ app.use(
   express.json({ limit: "1kb", strict: true }),
 );
 app.use(express.json({ limit: "16kb", strict: true })); // Prevent request body size attacks
+app.use("/api", createBrowserAdmission(RATE_LIMIT_SHARD_FACTOR));
 
 // ── REST Routes ───────────────────────────────────────────────────────────────
-app.use("/api/buses", writeLimiter, busRoutes);
+app.use("/api/buses", busRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/requests", writeLimiter, requestRoutes);
+app.use("/api/requests", requestRoutes);
 app.use("/api/routes", routeComputeLimiter, polylineRoutes);
+app.use(
+  "/api/v2/routes",
+  (req, res, next) => req.method === "PUT" ? routeComputeLimiter(req, res, next) : next(),
+  routeSaveResourcesRouter,
+);
+app.use("/api/v2/route-geometry-previews", routeComputeLimiter, routeGeometryPreviewsRouter);
+app.use("/api/v2/fleet-reconciliation-jobs", fleetReconciliationJobsRouter);
 // Route planner — zero Google Maps API cost at runtime
 app.use("/api/plan", routePlanLimiter, planRoutes);
 app.use("/api/routes-list", routesListRoutes);
-app.use(
-  "/api/devices",
-  (req, res, next) =>
-    (req.method === "POST" && /\/(telemetry|diagnostics)$/.test(req.path)) ||
-      (req.method === "GET" && /\/firmware$/.test(req.path))
-      ? next()
-      : writeLimiter(req, res, next),
-  devicesRoutes,
-);
+app.use("/api/v2/routes", routesCollectionRoutes);
+app.use("/api/v2/routes", routePlanLimiter, segmentRoutes);
+app.use("/api/devices", devicesRoutes);
+app.use("/api/v2/devices", devicesV2Router);
 app.use("/api/places", placesRoutes);
-app.use("/api/shifts", writeLimiter, shiftsRoutes);
-app.use("/api/sessions", writeLimiter, sessionsRoutes);
-app.use("/api/feedback", writeLimiter, feedbackRoutes);
-app.use("/api/users", writeLimiter, usersRoutes);
-app.use("/api/settings", writeLimiter, settingsRoutes);
-app.use("/api/fleet", writeLimiter, fleetRoutes);
-app.use("/api/privacy", writeLimiter, privacyRoutes);
+app.use("/api/shifts", shiftsRoutes);
+app.use("/api/sessions", sessionsRoutes);
+app.use("/api/v2/ride-sessions", rideSessionsRouter, rideSessionBoardingRouter);
+app.use("/api/feedback", feedbackRoutes);
+app.use("/api/v2/feedback", feedbackV2Router);
+app.use("/api/users", usersRoutes);
+app.use("/api/settings", settingsRoutes);
+app.use("/api/v2/settings/global", settingsV2Router);
+app.use("/api/fleet", fleetRoutes);
+app.use("/api/privacy", privacyRoutes);
+app.use("/api/v2/privacy-deletion-requests", privacyDeletionRequestsRouter);
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 const health = createHealthState();
@@ -229,7 +212,12 @@ healthProbeTimer.unref();
 
 // Return only cached readiness publicly, so load balancers can probe the
 // service without learning internal dependency, telemetry, or failure data.
+app.get("/live", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.status(200).json({ status: "alive" });
+});
 app.get("/health", (_req, res) => {
+  res.set("Cache-Control", "no-store");
   const state = health.snapshot();
   res.status(state.ready ? 200 : 503).json({
     status: state.ready ? "ok" : "degraded",
@@ -240,6 +228,7 @@ app.get("/health", (_req, res) => {
 // the same cached probes as /health, so monitoring cannot amplify billable
 // Firebase reads.
 app.get("/api/health", requireAdmin, (_req, res) => {
+  res.set("Cache-Control", "no-store");
   const telemetry = getHttpsTelemetryStatus();
   const routeProcessing = getRouteProcessingStatus();
   const backgroundTasks = backgroundFailures.snapshot();
@@ -255,14 +244,19 @@ app.get("/api/health", requireAdmin, (_req, res) => {
       lastAcceptedAt: telemetry.lastAcceptedAt,
       lastRejectedAt: telemetry.lastRejectedAt,
       credentialCacheHitRate: telemetry.credentialCacheHitRate,
+      credentialFills: telemetry.credentialFills,
+      workQueues: { kdf: telemetry.kdfExecution, ingestion: telemetry.ingestionExecution, ...getTripStateQueueStatus(), publicProjection: getLiveBusProjectionStatus() },
       processingLatencyMs: telemetry.processingLatencyMs,
       deviceQueueLatencyMs: telemetry.deviceQueueLatencyMs,
       networkLatencyMs: telemetry.networkLatencyMs,
       deviceToServerLatencyMs: telemetry.deviceToServerLatencyMs,
       rtdbWriteLatencyMs: telemetry.rtdbWriteLatencyMs,
       rtdbTransactionAttempts: telemetry.rtdbTransactionAttempts,
+      routeMatching: getRouteMatchingWork(),
       rateLimit: telemetry.rateLimit,
       serverIngressGapMs: telemetry.serverIngressGapMs,
+      apiReads: apiReadCacheStatus(),
+      apiCompatibility: apiCompatibilityStatus(),
       routeProcessing,
       metricWindow: {
         scope: "process",
@@ -326,6 +320,7 @@ app.use((
 let stopWorkers: (() => Promise<void>) | null = null;
 let stopTelemetryRouteWatcher: (() => void) | null = null;
 httpServer.listen(Number(PORT), "0.0.0.0", () => {
+  console.log(`[Operations] Executor identity: ${OPERATION_EXECUTOR_ID}`);
   console.log(`✅ BusTrack backend running on port ${PORT} (0.0.0.0)`);
   stopTelemetryRouteWatcher = startTelemetryRouteWatcher();
   stopWorkers = startWorkerCoordinator();
@@ -350,12 +345,16 @@ async function shutdown(signal: string) {
     httpServer.close((error) => error ? reject(error) : resolve());
     httpServer.closeIdleConnections();
   });
-  const stopBackgroundWorkers = stopWorkers?.() ?? Promise.resolve();
+  const stopBackgroundWorkers = Promise.all([stopWorkers?.() ?? Promise.resolve(), drainHttpOperations(), drainFleetMutations(), drainPrivacyDeletions()]);
   const [serverResult, workerResult] = await Promise.allSettled([
     closeServer,
     stopBackgroundWorkers,
   ]);
   const routingResult = await drainTelemetryRouteProcessing().then(
+    () => ({ status: "fulfilled" as const }),
+    (reason: unknown) => ({ status: "rejected" as const, reason }),
+  );
+  const recoveryResult = await drainDurableRideRecovery().then(
     () => ({ status: "fulfilled" as const }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
   );
@@ -374,6 +373,7 @@ async function shutdown(signal: string) {
     workerResult,
     telemetryResult,
     routingResult,
+    recoveryResult,
     firebaseResult,
   ].filter((result) => result.status === "rejected");
   for (const failure of failures) {

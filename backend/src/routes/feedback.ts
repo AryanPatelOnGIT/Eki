@@ -8,6 +8,7 @@ import { singleRouteParam } from "../lib/requestParams";
 import { evaluateFeedback } from "../services/feedbackService";
 
 const router = Router();
+export const feedbackV2Router = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{16,128}$/;
 const FEEDBACK_STATUSES = new Set(["new", "reviewed", "resolved"]);
@@ -147,6 +148,8 @@ router.post("/", requireAuth, async (req: AuthenticatedRequest, res: Response) =
         : await transaction.getAll(cooldownRef, profileRef, feedbackRef);
       const [cooldownSnap, profileSnap, existingFeedback, sessionSnap] = snapshots;
 
+      if (!profileSnap.exists) throw new FeedbackPolicyError(403, "An active profile is required.");
+
       if (existingFeedback.exists) {
         const existing = existingFeedback.data();
         if (existing?.userId !== uid || existing?.requestHash !== requestHash) {
@@ -236,11 +239,49 @@ router.post("/", requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 });
 
+/** GET /api/v2/feedback — admin-only feedback review list. */
+feedbackV2Router.get("/", requireAdmin, async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const snapshot = await db
+      .collection("feedbacks")
+      .orderBy("timestamp", "desc")
+      .limit(200)
+      .get();
+    res.json({
+      feedbacks: snapshot.docs.map((document) => {
+        const data = document.data();
+        const timestamp = data.timestamp;
+        return {
+          id: document.id,
+          userId: typeof data.userId === "string" ? data.userId : "",
+          userName: typeof data.userName === "string" ? data.userName : "Passenger",
+          type: data.type === "ride" ? "ride" : "general",
+          busId: typeof data.busId === "string" ? data.busId : null,
+          driverId: typeof data.driverId === "string" ? data.driverId : null,
+          sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
+          rating: typeof data.rating === "number" && Number.isFinite(data.rating) ? data.rating : null,
+          comment: typeof data.comment === "string" ? data.comment : "",
+          status: data.status === "reviewed" || data.status === "resolved" ? data.status : "new",
+          timestamp: timestamp && Number.isSafeInteger(timestamp.seconds) &&
+            Number.isInteger(timestamp.nanoseconds) && timestamp.nanoseconds >= 0 && timestamp.nanoseconds < 1e9
+            ? { seconds: timestamp.seconds, nanoseconds: timestamp.nanoseconds }
+            : null,
+        };
+      }),
+    });
+  } catch (error) {
+    console.error("[Feedback] Failed to load feedback:", error);
+    res.status(500).json({ error: "Unable to load feedback." });
+  }
+});
+
 /** PATCH /api/feedback/:feedbackId/status — admin-only review workflow. */
-router.patch("/:feedbackId/status", requireAdmin, async (
+const updateFeedbackStatus = async (
   req: AuthenticatedRequest,
   res: Response,
 ) => {
+  res.set("Cache-Control", "no-store");
   const feedbackId = singleRouteParam(req.params.feedbackId);
   const body = req.body;
   const status = body?.status;
@@ -280,6 +321,9 @@ router.patch("/:feedbackId/status", requireAdmin, async (
     console.error("[Feedback] Failed to update status:", error);
     res.status(500).json({ error: "Unable to update feedback status." });
   }
-});
+};
+
+router.patch("/:feedbackId/status", requireAdmin, updateFeedbackStatus);
+feedbackV2Router.patch("/:feedbackId", requireAdmin, updateFeedbackStatus);
 
 export default router;

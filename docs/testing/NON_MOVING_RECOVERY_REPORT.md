@@ -1,5 +1,9 @@
 # Non-moving recovery verification
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Updated: 2026-09-14. Tests used the connected stationary ESP32/GNSS, local backend, and public tunnel. Raw serial logs remain under ignored `hardware/.pio`.
 
 ## Backend outage and recovery

@@ -1,5 +1,7 @@
 # Test strategy and failure matrix
 
+Last updated: 2026-10-06 00:35 IST (UTC+05:30).
+
 ## Quality gates
 
 Run from the repository root:
@@ -18,16 +20,23 @@ emulator or PlatformIO; run those commands separately. A production release
 additionally runs `npm run build:production` with actual deployment variables;
 it intentionally fails closed when required public configuration is missing.
 
-Last verified 2026-09-14 against the current default branch: 33 repository
-script tests (including CSP and web/backend contract assertions), 446 backend
-tests with 7 environment-dependent cases skipped, and 215 frontend tests
-(including same-origin Firebase Auth domain resolution) passed. Backend
-TypeScript, the frontend production build/CSP generation, and the production
-dependency audit passed with zero vulnerabilities. PlatformIO native tests
-passed all 35 cases, and the development ESP32 build used 15.3% RAM and 30.5%
-flash. The secure fleet build, Firebase rules emulator, and physical device
-matrix remain separate gates. Re-run rather than trusting these historical
-numbers.
+## Choose the right check
+
+| Change | Additional command or evidence |
+|---|---|
+| Documentation | `npm run docs:sync`, targeted `src/docsMirror.test.ts`, relative-link review and `git diff --check` |
+| Auth/admin/feedback | `npm run test:e2e:admin` (Chromium mobile and desktop, synthetic Firebase adapters) |
+| General responsive/motion UI | `npm run test:e2e` (see fixture and motion READMEs) |
+| Firebase rules | `npm run test:rules` with Java 21; isolated emulator configuration |
+| Firmware | Native policies and affected `esp32dev`, `esp32dev-journal` or secure build profile |
+| Provider/enforcement, device movement, power or live latency | Dedicated live/physical procedure and redacted evidence |
+
+Install Chromium with `npx playwright install chromium` before local browser
+runs when needed. CI installs it with Linux dependencies.
+
+Use current runner output for test counts and audit results. Dated results in
+[the acceptance index](README.md) apply to their recorded commits and conditions;
+they are not a claim that a newer head or production deployment passed.
 
 ## Test layers
 
@@ -50,7 +59,7 @@ numbers.
 
 - Authorization accepts only `Device ` and a 20–512 character secret.
 - Secret hashing is salted scrypt, nondeterministic, plaintext-free and mismatch-safe.
-- Body is at most 512 bytes, exact six fields, finite/ranged coordinate/speed/heading, enumerated motion, and fresh timestamp.
+- Body is at most 512 bytes: current nine-field, previous eight-field sequenced or legacy six-field schema; finite/ranged coordinate/speed/heading, enumerated motion, and fresh timestamp.
 - Duplicate/older RTDB timestamp is idempotent; new timestamp commits.
 - Invalid/disabled/unknown device and invalid bus/route binding fail.
 - Positive/negative credential caches and device/IP limits are bounded.
@@ -75,7 +84,7 @@ numbers.
 ### Routes, privacy and retention
 
 - Stored route segment works forward/reverse, orders stops, rejects coincident endpoints and rejects an out-of-segment via.
-- Route saves replay identical operation IDs, reject changed-payload reuse/stale versions, coalesce concurrent routing work, reuse valid geometry for metadata-only edits, and abort commit when an active ride appears during calculation.
+- Route saves replay identical operation IDs, reject changed-payload reuse/stale versions, coalesce concurrent routing work, reuse valid geometry for metadata-only edits, and abort commit when an active ride appears during calculation. Browser regressions first reproduced a committed save failing after one transient 503/network status poll, then the protected status GET failing on `AUTH_BUSY` before the handler ran; they verify bounded retry and Retry-After, stable `saveId`, no extra PUT, abort and late-result fencing, deadline unknown outcome, and immediate terminal 401/403/stored 5xx propagation on the legacy GET.
 - Place search distinguishes validation, authentication, configuration, upstream/rate-limit, body-timeout and genuine empty-result outcomes.
 - Terminal history deletion deduplicates projections and rejects active status.
 - Retention is disabled for missing/false/misspelled values and enabled only by explicit `true`.
@@ -87,13 +96,37 @@ numbers.
 - Device presence requires an explicit online flag plus a fresh timestamp; missing, stale, and contradictory flags are reported as offline/unknown without changing ride truth.
 - Passenger route visibility and service counts require the complete active-session tuple; device-only, malformed, duplicated-session, completed, and direction-pending nodes cannot inflate service.
 - Active sessions remain visible while stale non-active locations expire.
-- One RTDB listener fans out to subscribers, prunes on the nearest expiry, and tears down at zero subscribers.
-- Visibility/online resume state signals reconnect and clears after a snapshot.
+- One shared RTDB snapshot/delta pipeline fans out to subscribers, prunes on the nearest expiry, and tears down at zero subscribers.
+- Healthy short tab switches and unrelated online events preserve data and
+  subscriptions. Meaningful suspension/confirmed disconnect recovery debounces,
+  jitters and clears only after connection plus authoritative snapshot. See
+  [browser recovery bounds](../operations/RTDB_RECONNECT_RECOVERY.md).
 - Polyline distance index and snapping choose the correct segment/direction.
+- Passenger map synthetic counters verify that a tick for one bus skips unchanged peers' marker renders and stop projections; route version, direction, path and stop edits invalidate projections, and route switches/unmount clear local cache state. ETA values are compared with the uncached calculation. See [R18 evidence](PASSENGER_MAP_PER_BUS_WORK.md); moving-device render latency and road confidence require separate live acceptance in #245.
 - Ride feedback eligibility requires completed session/passenger identity.
 - Ride-history timestamp/status/stop normalization handles legacy forms.
 
 Build/lint also validate that authenticated Firebase/API requests are `NetworkOnly`, protected metadata is no-index, dialogs/hooks obey React constraints, and every static route exports.
+
+### Authentication and feedback regressions
+
+The [local admin recovery evidence](ADMIN_PERMISSION_RECOVERY.md) distinguishes
+software regression checks from the remaining affected-browser acceptance.
+
+- App Check: missing provider, explicit development-only opt-out, debug exchange,
+  production rejection, token/error validation, forced recovery refresh and
+  token deadline with a shared raw acquisition retained until settlement.
+- Auth readiness: user/role publication only after verification; timeout,
+  current ID token claims (including the admin bit), account switch and pending
+  verification after sign-out cannot grant access. Concurrent permission
+  retries share verification and cannot attach listeners before it completes.
+- Listener disposal: collections/settings/live buses detach and clear old
+  caches when protected readiness closes.
+- Admin feedback: actual middleware denies non-admins; bounded HTTP list schema,
+  shared standalone/tab behavior, retry, status acknowledgement, abort and
+  generation guards reject stale reads/writes, including same-account reverify.
+- Passenger: destination selection before service, directional stop order,
+  boarding carryover, map target and in-app bus/station listbox behavior.
 
 ## Simulation scenarios
 
@@ -112,7 +145,7 @@ Use Firebase emulators for repeatable state injection; never point destructive s
 | SIM-09 | Rotate/reassign device during active lock | Provision/admin update returns conflict |
 | SIM-10 | Invalid tokens/roles/direct Firebase writes | 401/403 or rule denial; no state mutation |
 | SIM-11 | 61 messages/hour or <3-second gap | Message/rate transaction denied |
-| SIM-12 | Feedback twice within 24 hours | Second transaction denied/cooldown shown |
+| SIM-12 | Feedback twice within 24 hours | Second submission returns 429/cooldown shown |
 | SIM-13 | Retention env unset | No deletion job is started |
 | SIM-14 | Service worker with account A then account B | No authenticated response exists in runtime caches |
 | SIM-15 | Reverse route plan with via | Ordered reverse stops and continuous reverse polyline |
@@ -148,8 +181,8 @@ Key expected HTTP families:
 | UART wiring/overflow | GNSS simulator/real module during 7 s network stall | NMEA continues; no no-data warning/drop-induced loss |
 | Cold/warm fix | Power cycle indoors edge/outdoors | Time-to-first-trusted-fix recorded; HDOP gate works |
 | Motion hysteresis | Replay speeds around 1.5–2.5 | No rapid state flapping; three readings required |
-| Adaptive rate | Replay stationary/moving path | ≥3 s changes, 30/60 s heartbeats, thresholds correct |
-| Payload | Capture backend request in controlled test | Exact six fields, ≤512 bytes, `Device` header, no secrets logged |
+| Adaptive rate | Replay stationary/moving path | One-second evaluation and moving/stopped capture/heartbeat, thresholds correct |
+| Payload | Capture backend request in controlled test | Current nine fields (including seq, deviceSentAt and gpsHdop), ≤512 bytes, `Device` header, no secrets logged |
 | TLS | Correct/wrong CA, hostname and clock | Correct succeeds; every wrong case fails closed |
 | GNSS clock | Block NTP with fresh and stale/invalid GNSS UTC | Fresh UTC establishes TLS-valid time; invalid/stale UTC never changes clock; NTP cross-check is non-blocking |
 | Retry | Drop backend for 2 minutes | 1–30 s jittered attempts, bounded newest-first RTC queue, recovery |
@@ -185,7 +218,7 @@ With passenger and admin sessions, plus an admin-managed assigned operator recor
 
 ## Accessibility and UX acceptance
 
-Keyboard-only test every route: visible focus, native selects, tab order, admin tabs, collapsibles, dialogs, Escape, focus containment/restoration, and no focus behind modal. Test screen-reader names/status announcements, 200% zoom, 320 px width, high contrast, slow 3G/offline, empty/error/loading states, and `prefers-reduced-motion`. Maps need equivalent textual status/route information; color must not be the only state cue.
+Keyboard-only test every route: visible focus, in-app listbox open/select/escape behavior, tab order, admin tabs, collapsibles, dialogs, Escape, focus containment/restoration, and no focus behind modal. Test screen-reader names/status announcements, 200% zoom, 320 px width, high contrast, slow 3G/offline, empty/error/loading states, and `prefers-reduced-motion`. Maps need equivalent textual status/route information; color must not be the only state cue.
 
 ## Performance/load test
 
@@ -194,3 +227,19 @@ Use a staging project/runtime near production topology. Ramp realistic devices a
 ## Release evidence
 
 Archive commit/branch, environment class (no secrets), `npm run verify` log, firmware build/size/hash, emulator output, dependency/SAST results, route/device IDs, latency percentiles, failure-injection results, screenshots/serial extracts, known risks, rollback plan and approver/date. Physical tests and skipped emulator cases must never be described as passed unless actually run.
+
+### Privacy deletion recovery (R10)
+
+Run privacy route, manifest and queue regressions plus `privacyDeletion.integration.test.ts` through the loopback rules-integration command. Verify resubmission preserves failure history; twenty poison/backoff records do not starve later users; 1001-record histories continue in bounded turns; operators/recreated identities are refused; held raw Auth retains the mutex/permit; and stopped-executor claim recovery precedes lock recovery. The child-process crash uses actual Firestore and synthetic Auth. Live Auth/index/supervisor/quiescence acceptance remains #245.
+
+### Versioned telemetry route catalog (R12)
+
+Run `telemetryRouteCatalog.test.ts`, route service/live-routing cases and `telemetryCatalog.integration.test.ts` in the rules-integration command. Check sixty unchanged pending fixes do not reread a watched route, shared expired fills, observed edit/deletion and delayed subscription/RTDB callbacks, read-only missing geometry, armed direction transaction binding, definitive stale refusal and actual committed direction with lost acknowledgement. Physical/provider/replica edit timing stays #245.
+
+### Read-only passenger geometry (R13)
+
+Run route geometry reads, route compute limiter and polyline HTTP suites. Check legacy enumeration and administrator GET invoke no Google/write, sixty stored reads share one document read, authorized versioned saves refresh the cache, bounded raw/waiting computation survives stalled dependencies, and read quotas do not spend computation tokens. The catalog emulator suite additionally verifies actual watcher cache invalidation. Live provider/replica/road acceptance remains #245.
+
+## Bus edit metadata regression (R21)
+
+`routes/fleetOperations.test.ts` exercises HTTP bus edit/create, preserving existing timestamps/nested metadata, ignoring injected request fields, explicitly deleting legacy `assignedRouteId`, and retaining all fields when an active ride blocks removal. `reconciliation.integration.test.ts` repeats edit/create through real loopback Firestore merge/delete transforms with actual Timestamp fields. The integration case requires local emulators; synthetic HTTP tests alone do not certify deployed behavior. Browser acceptance should edit a disposable bus and verify the original server metadata and assignment mirrors, then verify active-ride/bound-device conflict outcomes.

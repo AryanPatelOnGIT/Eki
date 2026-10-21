@@ -22,7 +22,7 @@ describe("passenger bus availability", () => {
       "bus_1_route_1",
       onlineDevice(),
       now,
-    )).toEqual({ busId: "bus_1", routeId: "route_1" });
+    )).toMatchObject({ busId: "bus_1", routeId: "route_1", speed: 0, deviceState: "online" });
   });
 
   it("does not duplicate an active ride as device-only availability", () => {

@@ -13,11 +13,64 @@ function input(overrides: Partial<Parameters<typeof reduceTripState>[0]> = {}) {
     currentStopIndex: 0,
     stops: [origin, about200mNorth],
     hasDepartedOrigin: false,
+    timestamp: 10_000, gpsHdop: 1, speed: 0,
+    terminalArrival: { startedAt: 8_000, lastSampledAt: 9_000 },
     ...overrides,
   };
 }
 
 describe("reduceTripState", () => {
+  it.each([
+    { motionState: "moving" as const }, { motionState: "uncertain" as const },
+    { gpsHdop: null }, { gpsHdop: 4.1 }, { speed: 2.6 },
+    { timestamp: 9_000 }, { timestamp: 9_999 },
+    { now: 70_001 }, { now: -1 },
+  ])("does not complete at the final stop without reliable confirmed arrival: %j", overrides => {
+    const result = reduceTripState(input({ lat: about200mNorth.lat, currentStopIndex: 1,
+      hasDepartedOrigin: true, ...overrides }));
+    expect(result.tripState).toBe("in_service");
+  });
+  it("uses a 10m arrival circle in both directions without advancing at 11m", () => {
+    const metersToLatitude = (meters: number) => meters / 6_371_000 * 180 / Math.PI;
+    const middle = about200mNorth;
+    const terminal = { lat: origin.lat + 0.004, lng: origin.lng };
+    for (const stops of [[origin, middle, terminal], [terminal, middle, origin]]) {
+      for (const [distance, expectedIndex] of [[11, 1], [15, 1], [9, 2]] as const) {
+        const result = reduceTripState(input({ stops, lat: middle.lat + metersToLatitude(distance),
+          currentStopIndex: 1, hasDepartedOrigin: true }));
+        expect(result.currentStopIndex).toBe(expectedIndex);
+        expect(result.tripState).toBe("in_service");
+      }
+    }
+  });
+
+  it("limits between-fix stop crossings to the same 10m circle", () => {
+    const middle = about200mNorth;
+    const terminal = { lat: origin.lat + 0.004, lng: origin.lng };
+    for (const [distance, expectedIndex] of [[11, 1], [9, 2]] as const) {
+      const lngOffset = distance / (111_320 * Math.cos(middle.lat * Math.PI / 180));
+      const result = reduceTripState(input({ stops: [origin, middle, terminal],
+        previousPosition: { lat: middle.lat - 0.0003, lng: middle.lng + lngOffset },
+        lat: middle.lat + 0.0003, lng: middle.lng + lngOffset,
+        currentStopIndex: 1, hasDepartedOrigin: true }));
+      expect(result.currentStopIndex).toBe(expectedIndex);
+    }
+  });
+
+  it("clears terminal confirmation outside 10m and requires fresh evidence on reentry", () => {
+    const terminal = about200mNorth;
+    const outside = reduceTripState(input({ lat: terminal.lat + 11 / 6_371_000 * 180 / Math.PI,
+      currentStopIndex: 1, hasDepartedOrigin: true }));
+    expect(outside.tripState).toBe("in_service");
+    expect(outside.terminalArrival).toBeUndefined();
+    const reentry = reduceTripState(input({ ...outside, lat: terminal.lat, timestamp: 11_000,
+      terminalArrival: outside.terminalArrival }));
+    expect(reentry.tripState).toBe("in_service");
+    expect(reentry.terminalArrival).toEqual({ startedAt: 11_000, lastSampledAt: 11_000 });
+    const confirmed = reduceTripState(input({ ...reentry, lat: terminal.lat, timestamp: 13_000 }));
+    expect(confirmed.tripState).toBe("completed");
+  });
+
   it("does not complete repeatedly when a route revisits its origin", () => {
     const stops = [origin, origin];
     const first = reduceTripState(input({ stops }));
@@ -218,7 +271,7 @@ describe("reduceTripState", () => {
     expect(recovered.tripState).toBe("in_service");
   });
 
-  it("starts only when a trustworthy fix enters the origin geofence", () => {
+  it("keeps a parked armed ride ready until observed departure", () => {
     const waiting = reduceTripState(
       input({
         currentTripState: "pre_departure",
@@ -237,7 +290,7 @@ describe("reduceTripState", () => {
 
     expect(waiting.tripState).toBe("pre_departure");
     expect(uncertainAtOrigin.tripState).toBe("pre_departure");
-    expect(arrived.tripState).toBe("in_service");
+    expect(arrived.tripState).toBe("pre_departure");
   });
 });
 
@@ -252,7 +305,8 @@ it("completes 100 stops in both travel orders without skipping an intermediate s
     expect(state.currentStopIndex).toBe(1);
     for (let i = 1; i < stops.length; i++) {
       state = reduceTripState({ ...stops[i], stops, motionState: "stopped", currentTripState: state.tripState,
-        currentStopIndex: state.currentStopIndex, hasDepartedOrigin: state.hasDepartedOrigin });
+        currentStopIndex: state.currentStopIndex, hasDepartedOrigin: state.hasDepartedOrigin,
+        timestamp: 10_000, gpsHdop: 1, speed: 0, terminalArrival: { startedAt: 8_000, lastSampledAt: 9_000 } });
       expect(state.currentStopIndex).toBe(Math.min(i + 1, stops.length - 1));
       expect(state.tripState).toBe(i === stops.length - 1 ? "completed" : "in_service");
     }

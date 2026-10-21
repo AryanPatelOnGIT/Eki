@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import {
   AuthVerificationCapacityError,
-  verifyRevocationAwareIdToken,
 } from "../services/authTokenVerifier";
+import { verifyRequestToken } from "./verifiedRequest";
 import { recordAuthAttempt } from "../lib/metrics";
 
 /**
@@ -27,7 +27,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     // Check revocation as well as signature/expiry. The shared verifier keeps
     // only a short hashed-token cache to avoid repeated Auth network trips.
-    const decoded = await verifyRevocationAwareIdToken(idToken);
+    const decoded = await verifyRequestToken(req, idToken);
 
     // Attach user info to request for downstream handlers
     req.user = decoded;

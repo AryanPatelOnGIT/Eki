@@ -1,5 +1,9 @@
 # Eki audit fixes and physical-test readiness
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
 Updated: 2026-09-14. Implementation commit `c9e5940` is pushed to `testing`; subsequent branch `codex/rtdb-region-decision` adds RTDB region evaluation, same-origin Firebase Auth helper domain resolution, and CSP frame-src contract verification.
 
 ## Corrected

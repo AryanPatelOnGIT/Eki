@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { RouteData } from '@/hooks/useRoutes';
 import {
   routeInRideDirectionState,
@@ -8,23 +8,13 @@ import {
 interface RouteCarouselProps {
   routes: RouteData[];
   selectedRouteId: string;
-  onSwipe?: (id: string) => void;
   onClick: (id: string) => void;
   getActiveBusesCount: (routeId: string) => number;
   getAvailableBusesCount: (routeId: string) => number;
-  getDirectionState: (routeId: string) => RideDirectionState;
+  getDirectionState: (routeId: string) => RideDirectionState | "unknown";
 }
 
 export default function RouteCarousel({ routes, selectedRouteId, onClick, getActiveBusesCount, getAvailableBusesCount, getDirectionState }: RouteCarouselProps) {
-  const [now, setNow] = useState<number | null>(null);
-
-  useEffect(() => {
-    const refresh = () => setNow(Date.now());
-    refresh();
-    const intervalId = window.setInterval(refresh, 60_000);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
   const liveRoutes = routes.filter((route) =>
     getActiveBusesCount(route.id) > 0 || getAvailableBusesCount(route.id) > 0
   );
@@ -45,67 +35,62 @@ export default function RouteCarousel({ routes, selectedRouteId, onClick, getAct
         const availableCount = getAvailableBusesCount(route.id);
         const hasService = activeCount > 0;
         const directionState = getDirectionState(route.id);
-        const directedRoute = hasService
+        const directedRoute = hasService && directionState !== "unknown"
           ? routeInRideDirectionState(route, directionState)
           : null;
-        const stops = directedRoute?.stops ?? [];
-        const durationMins = directedRoute?.duration
-          ? Math.round(parseInt(directedRoute.duration) / 60)
-          : (stops.length * 2);
-        const scheduleTime = directedRoute && now
-          ? new Date(now + durationMins * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : '--:--';
+        const stops = directedRoute?.stops ?? route.stops ?? [];
+        const durationSeconds = Number.parseFloat(directedRoute?.duration ?? route.duration ?? "");
+        const durationMins = Number.isFinite(durationSeconds) && durationSeconds > 0
+          ? Math.max(1, Math.round(durationSeconds / 60)) : null;
 
         return (
           <button
             type="button"
             key={route.id}
-            className="w-full flex items-stretch text-left transition-all duration-300 ease-out disabled:cursor-default"
-            onClick={() => hasService && onClick(route.id)}
-            aria-label={hasService
-              ? `Track ${route.name}`
-              : `${route.name}: ${availableCount} vehicle available, service not started`}
+            className="w-full min-w-0 flex items-stretch text-left transition-all duration-300 ease-out disabled:cursor-default"
+            onClick={() => onClick(route.id)}
+            aria-label={`Track ${route.name}`}
           >
             <div
-              className="w-full text-left transition-all duration-300 rounded-[20px] p-5 border relative overflow-hidden flex flex-col min-h-[170px]"
+              className="w-full min-w-0 text-left transition-all duration-300 rounded-[20px] p-4 border relative overflow-hidden flex flex-col min-h-[140px]"
               style={{
                 background: "var(--surface-3)",
                 borderColor: route.id === selectedRouteId ? "var(--accent)" : "var(--border-subtle)",
                 boxShadow: "0 4px 12px rgba(0, 0, 0, 0.05)",
               }}
             >
-              <div className="pl-2 flex flex-col h-full justify-between">
+              <div className="min-w-0 pl-2 flex flex-col h-full justify-between">
                 <div>
                   <h3
-                    className="text-[22px] font-black tracking-tight line-clamp-1"
+                    className="text-balance break-words text-[22px] font-black tracking-tight"
                     style={{ color: "var(--text-primary)" }}
                   >
                     {route.name}
                   </h3>
                   {directedRoute && stops.length > 0 ? (
-                    <p className="text-[14.5px] font-bold mt-2 line-clamp-1" style={{ color: "var(--text-secondary)" }}>
+                    <p className="mt-2 break-words text-pretty text-[14.5px] font-bold" style={{ color: "var(--text-secondary)" }}>
                       {stops[0].name.split(',')[0]} <span className="mx-1 opacity-60">&rarr;</span> {stops[stops.length - 1].name.split(',')[0]}
                     </p>
                   ) : (
                     <p className="text-[14.5px] font-bold mt-2" style={{ color: "var(--text-secondary)" }}>
-                      {hasService ? "Direction pending" : "Vehicle available — service not started"}
+                      {hasService ? directionState === "unknown" ? "Open for live status" : "Direction pending" : "Vehicle available — service not started"}
                     </p>
                   )}
                 </div>
 
-                <div className="flex items-baseline w-full mt-6 gap-3">
+                <div className="flex flex-wrap items-baseline w-full mt-4 gap-3">
                   <div className="flex items-center gap-2">
 
                     <div className="flex items-baseline gap-1.5 text-[11.5px] font-black whitespace-nowrap" style={{ color: "var(--text-tertiary)" }}>
-                      <span>{directedRoute ? `${stops.length} stops` : "Stops pending"}</span>
+                      <span>{stops.length ? `${stops.length} stops` : "Stops pending"}</span>
                       <span className="text-[10px] opacity-30 self-center">&bull;</span>
-                      <span className="text-white">Scheduled: {scheduleTime}</span>
+                      <span className="text-white">{durationMins ? `${durationMins} min route` : "Duration pending"}</span>
                     </div>
                   </div>
                   
                   <div className="flex items-baseline gap-1.5 text-[13px] font-black tracking-wider uppercase transition-opacity shrink-0" style={{ color: "var(--accent)" }}>
                     {directedRoute ? "TRACK ROUTE" : hasService ? "VIEW STATUS" : `${availableCount} AVAILABLE`}
-                    {hasService && <span className="text-[15px]">&rarr;</span>}
+                    <span className="text-[15px]">&rarr;</span>
                   </div>
                 </div>
               </div>

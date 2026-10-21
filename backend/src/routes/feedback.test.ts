@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ const harness = vi.hoisted(() => ({
   cooldown: undefined as Record<string, unknown> | undefined,
   feedbacks: new Map<string, Record<string, unknown>>(),
   profile: { displayName: "Verified Profile" } as Record<string, unknown>,
+  profileExists: true,
   session: {} as Record<string, unknown>,
   user: { uid: "passenger_1", name: "Token Name" },
 }));
@@ -43,7 +45,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     if (ref.collection === "feedbackCooldowns") {
       return snapshot(Boolean(harness.cooldown), harness.cooldown);
     }
-    if (ref.collection === "users") return snapshot(true, harness.profile);
+    if (ref.collection === "users") return snapshot(harness.profileExists, harness.profile);
     if (ref.collection === "ride_sessions") return snapshot(true, harness.session);
     const feedback = harness.feedbacks.get(ref.id);
     return snapshot(Boolean(feedback), feedback);
@@ -78,7 +80,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import feedbackRouter from "./feedback";
+import feedbackRouter, { feedbackV2Router } from "./feedback";
 
 let server: Server;
 let baseUrl = "";
@@ -87,6 +89,7 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/feedback", feedbackRouter);
+  app.use("/api/v2/feedback", feedbackV2Router);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -104,7 +107,7 @@ afterAll(async () => {
 beforeEach(() => {
   harness.cooldown = undefined;
   harness.feedbacks = new Map();
-  harness.profile = { displayName: "Verified Profile" };
+  harness.profile = { displayName: "Verified Profile" }; harness.profileExists = true;
   harness.user = { uid: "passenger_1", name: "Token Name" };
   harness.session = {
     status: "completed",
@@ -117,7 +120,7 @@ beforeEach(() => {
 });
 
 async function submit(overrides: Record<string, unknown> = {}) {
-  return fetch(`${baseUrl}/api/feedback`, {
+  return contractFetch(`${baseUrl}/api/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -134,6 +137,61 @@ async function submit(overrides: Record<string, unknown> = {}) {
 }
 
 describe("feedback routes", () => {
+  it("rejects cached-token feedback after profile retirement without recreating cooldowns", async () => {
+    harness.profileExists = false; expect((await submit()).status).toBe(403);
+    expect(harness.feedbacks.size).toBe(0); expect(harness.cooldown).toBeUndefined();
+  });
+  it("enforces the literal 24-hour cooldown boundary without writing rejected feedback", async () => {
+    const now = 2_000_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      for (const [age, status] of [[86_399_999, 429], [86_400_000, 201], [86_400_001, 201]]) {
+        harness.feedbacks.clear();
+        const prior = { lastSubmittedAt: new Date(now - age) };
+        harness.cooldown = prior;
+        const response = await submit();
+        expect(response.status).toBe(status);
+        if (status === 429) {
+          expect((await response.json()).retryAfterMs).toBe(1);
+          expect(response.headers.get("retry-after")).toBe("1");
+          expect(harness.feedbacks.size).toBe(0);
+          expect(harness.cooldown).toBe(prior);
+        } else {
+          expect((await response.json()).submitted).toBe(true);
+          expect(harness.feedbacks.size).toBe(1);
+        }
+      }
+    } finally { clock.mockRestore(); }
+  });
+
+  it("enforces rating endpoints and rejects malformed ratings with no write", async () => {
+    for (const rating of [1, 5]) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      const response = await submit({ rating, comment: "" });
+      expect(response.status).toBe(201);
+      expect([...harness.feedbacks.values()][0].rating).toBe(rating);
+    }
+    for (const rating of [0, 6, 1.5, "5", null]) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      expect((await submit({ rating, comment: "" })).status).toBe(400);
+      expect(harness.feedbacks.size).toBe(0); expect(harness.cooldown).toBeUndefined();
+    }
+  });
+
+  it("enforces the general-comment word and character limits without changing cooldown on rejection", async () => {
+    for (const [comment, status] of [
+      [Array(199).fill("word").join(" "), 201], [Array(200).fill("word").join(" "), 201],
+      [Array(201).fill("word").join(" "), 400], ["a".repeat(1999), 201],
+      ["a".repeat(2000), 201], ["a".repeat(2001), 400], ["   ", 400],
+    ] as const) {
+      harness.feedbacks.clear(); harness.cooldown = undefined;
+      const response = await submit({ type: "general", comment, rating: null });
+      expect(response.status).toBe(status);
+      expect(harness.feedbacks.size).toBe(status === 201 ? 1 : 0);
+      if (status === 400) expect(harness.cooldown).toBeUndefined();
+    }
+  });
+
   it("derives identity and atomically creates feedback plus cooldown", async () => {
     const response = await submit();
 
@@ -188,7 +246,7 @@ describe("feedback routes", () => {
   it("updates feedback status through the admin route", async () => {
     harness.feedbacks.set("feedback_1", { status: "new", comment: "Keep me" });
 
-    const response = await fetch(`${baseUrl}/api/feedback/feedback_1/status`, {
+    const response = await contractFetch(`${baseUrl}/api/feedback/feedback_1/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "reviewed" }),
@@ -201,7 +259,7 @@ describe("feedback routes", () => {
       reviewedBy: "admin_1",
     });
 
-    const retry = await fetch(`${baseUrl}/api/feedback/feedback_1/status`, {
+    const retry = await contractFetch(`${baseUrl}/api/feedback/feedback_1/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "reviewed" }),
@@ -209,11 +267,30 @@ describe("feedback routes", () => {
     expect(retry.status).toBe(200);
     await expect(retry.json()).resolves.toEqual({ updated: false, status: "reviewed" });
 
-    const extraField = await fetch(`${baseUrl}/api/feedback/feedback_1/status`, {
+    const extraField = await contractFetch(`${baseUrl}/api/feedback/feedback_1/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "resolved", comment: "overwrite" }),
     });
     expect(extraField.status).toBe(400);
+  });
+
+  it("applies the same status-only update through the v2 resource", async () => {
+    harness.feedbacks.set("feedback_2", { status: "new", comment: "Keep me" });
+    const response = await contractFetch(`${baseUrl}/api/v2/feedback/feedback_2`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    expect(response.status).toBe(200);
+    expect(harness.feedbacks.get("feedback_2")).toMatchObject({
+      status: "resolved", comment: "Keep me", reviewedBy: "admin_1",
+    });
+    const invalid = await contractFetch(`${baseUrl}/api/v2/feedback/feedback_2`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "new", comment: "overwrite" }),
+    });
+    expect(invalid.status).toBe(400);
   });
 });

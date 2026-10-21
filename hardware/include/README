@@ -1,5 +1,7 @@
 # Firmware policy and configuration headers
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 `firmware_config.h` validates the compile-time Wi-Fi, device identity/secret,
 backend origin, and root CA supplied by the ignored `secrets.h` file.
 `secrets.example.h` is the tracked template. Changing configuration requires a

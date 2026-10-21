@@ -4,7 +4,7 @@ import Image from "next/image";
 import { Loader2, LogIn } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 const WORKSPACES = ["/admin", "/passenger"] as const;
 
@@ -17,16 +17,26 @@ export default function HomePage() {
   const {
     user,
     loading,
+    roleError,
     loginReady,
     loginError,
+    loginFallbackAvailable,
     loginLoading,
     loginWithGoogle,
     loginWithGoogleRedirect,
+    refreshAccess,
   } = useAuth();
   const router = useRouter();
+  const [redirectDelayed, setRedirectDelayed] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!user) return;
+    const timer = window.setTimeout(() => setRedirectDelayed(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [user]);
+
+  useEffect(() => {
+    if (!loading && user && !roleError) {
       const savedPath = window.localStorage.getItem("eki:last-workspace");
       const fallbackPath = user.role === "admin" ? "/admin" : "/passenger";
       router.replace(
@@ -35,7 +45,17 @@ export default function HomePage() {
           : fallbackPath,
       );
     }
-  }, [user, loading, router]);
+  }, [user, loading, roleError, router]);
+
+  if (!loading && roleError) {
+    return (
+      <main className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center bg-black text-white" role="alert">
+        <h1 className="text-xl font-semibold">Access could not be verified</h1>
+        <p>{roleError}</p>
+        <button type="button" className="btn-primary px-5 py-2.5" onClick={() => void refreshAccess()}>Try again</button>
+      </main>
+    );
+  }
 
   // Only replace the page with a redirect spinner once we KNOW there's a
   // signed-in user. Do NOT block on `loading` — that hides the hero and
@@ -47,6 +67,11 @@ export default function HomePage() {
         <p className="text-sm text-white/80">
           {loading ? "Finishing your sign-in…" : "Opening your workspace…"}
         </p>
+        {redirectDelayed && (
+          <button type="button" className="text-sm underline underline-offset-4" onClick={() => window.location.reload()}>
+            Try reloading
+          </button>
+        )}
       </main>
     );
   }
@@ -106,15 +131,16 @@ export default function HomePage() {
 
         <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-4">
           <button
+            type="button"
             onClick={loginWithGoogle}
-            disabled={loginLoading || loading || !loginReady}
+            disabled={loginLoading || !loginReady}
             className="flex items-center justify-center gap-3 px-10 py-5 text-lg font-bold bg-white text-black rounded-full hover:bg-gray-200 active:scale-95 transition-transform disabled:opacity-60 shadow-xl"
           >
             {loginLoading ? <Loader2 className="size-6 animate-spin" /> : <LogIn className="size-6" />}
             {loginLoading ? "Opening Google…" : "Sign In with Google"}
           </button>
         </div>
-        {loginReady && (
+        {loginReady && loginFallbackAvailable && (
           <button
             type="button"
             onClick={loginWithGoogleRedirect}
@@ -131,7 +157,7 @@ export default function HomePage() {
       </section>
 
       <footer className="relative z-10 w-full pb-8 px-6 md:px-12 flex justify-between items-center text-white/70">
-        <span className="text-xs font-bold uppercase tracking-widest drop-shadow-md">© 2026 Eki Transit</span>
+        <span className="text-xs font-bold drop-shadow-md">© 2026 Eki Transit</span>
         <span className="text-xs font-bold uppercase tracking-widest drop-shadow-md">Ahmedabad, India</span>
       </footer>
     </main>

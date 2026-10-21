@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { backendOriginFromUrl } from "./csp-backend-origin.mjs";
 import { parseRtdbInstanceUrl } from "./rtdb-instance-config.mjs";
+import { inlineScriptHashes } from "./inline-script-hashes.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const output = path.join(root, "frontend", "out");
@@ -21,10 +21,7 @@ async function htmlFiles(directory) {
 const hashes = new Set();
 for (const file of await htmlFiles(output)) {
   const html = await readFile(file, "utf8");
-  for (const match of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    if (/\bsrc\s*=/.test(match[1]) || match[2].length === 0) continue;
-    hashes.add(`'sha256-${createHash("sha256").update(match[2]).digest("base64")}'`);
-  }
+  for (const hash of inlineScriptHashes(html)) hashes.add(hash);
 }
 
 if (hashes.size === 0) throw new Error("No inline Next.js scripts found; refusing to write an empty CSP.");
@@ -37,10 +34,9 @@ if (!csp) throw new Error("Global Content-Security-Policy header not found.");
 const backendOrigin = backendOriginFromUrl(process.env.NEXT_PUBLIC_BACKEND_URL);
 // RTDB's long-poll fallback loads /.lp through script elements, so connect-src
 // alone does not allow it. Production builds use the configured instance.
-const databaseHostname = parseRtdbInstanceUrl(
-  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ||
-    "https://bustrack-be165-default-rtdb.firebaseio.com",
-).hostname;
+const databaseHostname = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+  ? parseRtdbInstanceUrl(process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL).hostname
+  : null;
 
 const sources = [
   "'self'",
@@ -49,7 +45,7 @@ const sources = [
   "https://www.gstatic.com",
   "https://www.google.com",
   "https://maps.googleapis.com",
-  `https://${databaseHostname}`,
+  ...(databaseHostname ? [`https://${databaseHostname}`] : []),
 ].join(" ");
 csp.value = csp.value.replace(/script-src [^;]+;/, `script-src ${sources};`);
 const connectSources = [
@@ -60,7 +56,6 @@ const connectSources = [
   "https://*.firebaseio.com",
   "https://*.firebasedatabase.app",
   "https://*.firebaseapp.com",
-  "https://www.google.com/recaptcha/",
   "wss://*.firebaseio.com",
   "wss://*.firebasedatabase.app",
   ...(backendOrigin ? [backendOrigin] : []),
@@ -80,8 +75,6 @@ const frameSources = [
   "'self'",
   "https://accounts.google.com",
   "https://*.firebaseapp.com",
-  "https://www.google.com/recaptcha/",
-  "https://recaptcha.google.com/recaptcha/",
 ].join(" ");
 csp.value = csp.value.replace(/frame-src [^;]+;/, `frame-src ${frameSources};`);
 await writeFile(firebasePath, `${JSON.stringify(firebase, null, 2)}\n`);

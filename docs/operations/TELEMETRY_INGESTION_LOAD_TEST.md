@@ -1,6 +1,6 @@
 # Telemetry ingestion load test
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 Use this staging-only procedure to compare request acknowledgement latency and
 rate-limit transaction contention before and after the token-lease change. The

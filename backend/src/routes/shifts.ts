@@ -1,11 +1,13 @@
+import { createHash } from "node:crypto";
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
-import { Router, type Request, type Response } from "express";
-import { FieldValue } from "firebase-admin/firestore";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { FieldValue, type DocumentReference, type Transaction } from "firebase-admin/firestore";
 import { requireAuth } from "../middleware/requireAuth";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { inferRideDirectionFromTelemetry } from "../lib/automaticRideDirection";
 import { withoutLiveRouteContext } from "../lib/liveRouteContext";
+import { newerJourneyLocation } from "../services/journeyLocation";
 import { singleRouteParam } from "../lib/requestParams";
 import {
   isRideDirection,
@@ -17,12 +19,85 @@ import {
 } from "../services/rideHistoryDeletion";
 
 const router = Router();
+export const rideSessionsRouter = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+class SessionCreationConflict extends Error {}
+
+async function runSessionTransaction<T>(work: (transaction: Transaction) => Promise<T>): Promise<T> {
+  try {
+    return await db.runTransaction(work);
+  } catch (error) {
+    // The SDK retries expired transaction IDs, but not this closed-ID response.
+    // Start one fresh transaction; every ownership/lifecycle read runs again.
+    // Callers keep session IDs and idempotency keys outside the retry callback.
+    if (typeof error !== "object" || error === null ||
+        !("code" in error) || error.code !== 3 ||
+        !("details" in error) || error.details !== "Transaction is invalid or closed.") throw error;
+    console.warn("[Shifts] Retrying a closed Firestore transaction once.");
+    return db.runTransaction(work);
+  }
+}
+
+type SessionProjection = { ref: DocumentReference; data: Record<string, unknown>; merge?: boolean };
+
+// Protect terminal transitions and newer telemetry/delay projections when a
+// creation retry races another writer. All reads precede transaction writes.
+async function commitCreationProjections(writes: SessionProjection[]) {
+  await runSessionTransaction(async transaction => {
+    const session = await transaction.get(writes[0].ref);
+    const stored = session.data();
+    if (!session.exists || ["completed", "interrupted", "failed"].includes(stored?.status)) {
+      throw new SessionCreationConflict("Session ended while starting; retry the same key.");
+    }
+    const live = (await rtdb.ref(`activeBuses/${stored!.busId}_${stored!.routeId}`).once("value"))
+      .val() as Record<string, unknown> | null;
+    if (live?.sessionId !== writes[0].ref.id || live.status !== "active" || live.tripState === "completed") {
+      throw new SessionCreationConflict("Live session changed while starting; retry the same key.");
+    }
+    const active = writes[1] ? await transaction.get(writes[1].ref) : null;
+    const activeData = active?.data();
+    if (active?.exists && activeData?.sessionId !== writes[0].ref.id) {
+      throw new SessionCreationConflict("A different session owns the live projection.");
+    }
+    const sessionData = { ...writes[0].data };
+    if (stored?.status === "active") sessionData.status = "active";
+    if (stored?.status === "armed" && sessionData.status === "pending") sessionData.status = "armed";
+    if (isRideDirection(stored?.direction)) {
+      for (const field of ["direction", "directionState", "directionEndpointVersion", "originStopId", "destinationStopId"]) {
+        if (stored[field] !== undefined) sessionData[field] = stored[field];
+      }
+    }
+    for (const field of ["startTime", "activatedAt", "stopsReached"]) {
+      if (stored?.[field] !== undefined &&
+          (field !== "stopsReached" || Object.keys(stored[field] ?? {}).length > 0)) {
+        sessionData[field] = stored[field];
+      }
+    }
+    transaction.set(writes[0].ref, sessionData, { merge: true });
+    if (writes[1]) {
+      const data = { ...writes[1].data };
+      if (activeData && normalizedDelayRevision(activeData.delayUpdatedAt) > normalizedDelayRevision(data.delayUpdatedAt)) {
+        data.delayMinutes = activeData.delayMinutes;
+        data.delayUpdatedAt = activeData.delayUpdatedAt;
+      }
+      if (normalizedDelayRevision(live.delayUpdatedAt) > normalizedDelayRevision(data.delayUpdatedAt)) {
+        data.delayMinutes = normalizedDelayMinutes(live.delayMinutes);
+        data.delayUpdatedAt = normalizedDelayRevision(live.delayUpdatedAt);
+      }
+      if (activeData?.tripState === "in_service") data.tripState = "in_service";
+      if (Number.isInteger(activeData?.currentStopIndex) && Number(activeData?.currentStopIndex) > Number(data.currentStopIndex)) {
+        data.currentStopIndex = activeData?.currentStopIndex;
+      }
+      if (activeData?.hasDepartedOrigin === true) data.hasDepartedOrigin = true;
+      transaction.set(writes[1].ref, data, { merge: true });
+    }
+  });
+}
 
 function activeRideId(busId: string, routeId: string): string {
   return `${busId}_${routeId}`;
 }
-
 
 function normalizedDelayRevision(value: unknown): number {
   return Number.isSafeInteger(value) && Number(value) >= 0
@@ -42,7 +117,7 @@ function activeBusLockRef(busId: string) {
 
 async function releaseActiveBusLock(busId: string, sessionId: string): Promise<void> {
   const lockRef = activeBusLockRef(busId);
-  await db.runTransaction(async (transaction) => {
+  await runSessionTransaction(async (transaction) => {
     const lock = await transaction.get(lockRef);
     if (lock.data()?.sessionId === sessionId) transaction.delete(lockRef);
   });
@@ -95,7 +170,20 @@ type AuthenticatedRequest = Request & {
   };
 };
 
-async function authorizeOperator(
+type Assignment = { driverId: string; busId: string; routeId: string };
+const requestAssignments = new WeakMap<Request, Map<string, Promise<Assignment | null>>>();
+async function authorizeOperator(req: AuthenticatedRequest, busId: unknown, routeId: unknown, requestedDriverId: unknown) {
+  // Only reuse checks inside this request. Each later request reads current
+  // assignment documents; reassignment/revocation never waits for a TTL.
+  const key = JSON.stringify([req.user, busId, routeId, requestedDriverId]);
+  let checks = requestAssignments.get(req);
+  if (!checks) { checks = new Map(); requestAssignments.set(req, checks); }
+  const existing = checks.get(key); if (existing) return existing;
+  const check = readOperatorAssignment(req, busId, routeId, requestedDriverId);
+  checks.set(key, check); return check;
+}
+
+async function readOperatorAssignment(
   req: AuthenticatedRequest,
   busId: unknown,
   routeId: unknown,
@@ -144,7 +232,7 @@ async function authorizeOperator(
   return { driverId, busId, routeId };
 }
 
-router.patch("/delay", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+async function updateDelay(req: AuthenticatedRequest, res: Response) {
   try {
     const assignment = await authorizeOperator(
       req,
@@ -165,6 +253,10 @@ router.patch("/delay", requireAuth, async (req: AuthenticatedRequest, res: Respo
     const nodeRef = rtdb.ref(`activeBuses/${assignment.busId}_${assignment.routeId}`);
     const requestedAt = Date.now();
     const liveUpdate = await nodeRef.transaction((value) => {
+      // A cold SDK cache can supply null before the server value is known.
+      // Returning null sends the compare-and-set and lets the SDK retry with
+      // server data; undefined would abort locally without checking the ride.
+      if (value === null) return null;
       const current = value as Record<string, unknown> | null;
       if (
         !current ||
@@ -174,7 +266,8 @@ router.patch("/delay", requireAuth, async (req: AuthenticatedRequest, res: Respo
         current.status !== "active" ||
         (current.tripState !== "pre_departure" && current.tripState !== "in_service") ||
         typeof current.sessionId !== "string" ||
-        !SAFE_ID.test(current.sessionId)
+        !SAFE_ID.test(current.sessionId) ||
+        (res.locals.expectedSessionId && current.sessionId !== res.locals.expectedSessionId)
       ) {
         return;
       }
@@ -251,9 +344,9 @@ router.patch("/delay", requireAuth, async (req: AuthenticatedRequest, res: Respo
     console.error("[Shifts] Failed to update delay:", error);
     res.status(500).json({ error: "Unable to update delay." });
   }
-});
+}
 
-router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+async function startShift(req: AuthenticatedRequest, res: Response) {
   try {
     const assignment = await authorizeOperator(
       req,
@@ -266,8 +359,47 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
       return;
     }
 
+    const key = res.locals.idempotencyKey as string | undefined;
+    const keyRef = key ? db.collection("_ride_session_creation_keys").doc(
+      createHash("sha256").update(`${req.user!.uid}\0${key}`).digest("hex"),
+    ) : null;
+    const matchesAssignment = (value: Record<string, unknown>) =>
+      value.busId === assignment.busId && value.routeId === assignment.routeId &&
+      value.driverId === assignment.driverId;
+    const bindingData = (sessionId: string) => ({
+      ...assignment, sessionId, createdAt: FieldValue.serverTimestamp(),
+    });
+    const priorBinding = keyRef ? await keyRef.get() : null;
+    const prior = priorBinding?.data();
+    if (priorBinding?.exists && (!prior || !matchesAssignment(prior))) {
+      res.status(409).json({ error: "Idempotency key belongs to a different assignment." });
+      return;
+    }
+    const pinnedSessionId = prior?.sessionId as string | undefined;
+    if (pinnedSessionId) {
+      const pinned = await db.collection("ride_sessions").doc(pinnedSessionId).get();
+      if (!pinned.exists) {
+        res.status(410).json({ error: "The session for this idempotency key was deleted." });
+        return;
+      }
+      const data = pinned.data();
+      if (["completed", "interrupted", "failed"].includes(data?.status)) {
+        const direction = isRideDirection(data?.direction) ? data.direction : null;
+        res.json({ sessionId: pinnedSessionId, resumed: true, direction, pending: !direction });
+        return;
+      }
+    }
     const nodeRef = rtdb.ref(`activeBuses/${assignment.busId}_${assignment.routeId}`);
     const current = (await nodeRef.once("value")).val() as Record<string, unknown> | null;
+    if (keyRef && pinnedSessionId && pinnedSessionId === current?.sessionId && current?.tripState === "completed") {
+      res.status(409).json({ error: "The original session is awaiting completion recovery." });
+      return;
+    }
+    if (pinnedSessionId && current?.status === "active" &&
+        current.tripState !== "completed" && current.sessionId !== pinnedSessionId) {
+      res.status(409).json({ error: "The original session is awaiting lifecycle recovery." });
+      return;
+    }
     if (
       current?.status === "active" &&
       current?.tripState !== "completed" &&
@@ -280,9 +412,14 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
         ? current.tripState === "pre_departure" ? "armed" : "active"
         : "pending";
       const lockRef = activeBusLockRef(assignment.busId);
-      const lockClaimed = await db.runTransaction(async (transaction) => {
+      const lockClaimed = await runSessionTransaction(async (transaction) => {
+        const binding = keyRef ? await transaction.get(keyRef) : null;
         const lock = await transaction.get(lockRef);
+        const session = await transaction.get(db.collection("ride_sessions").doc(current.sessionId as string));
+        if (binding?.exists && (!matchesAssignment(binding.data()!) || binding.data()?.sessionId !== current.sessionId)) return false;
+        if ((keyRef && !session.exists) || (session.exists && ["completed", "interrupted", "failed"].includes(session.data()?.status))) return false;
         if (lock.exists && lock.data()?.sessionId !== current.sessionId) return false;
+        if (keyRef && !binding?.exists) transaction.create(keyRef, bindingData(current.sessionId as string));
         transaction.set(lockRef, {
           busId: assignment.busId,
           routeId: assignment.routeId,
@@ -297,8 +434,8 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
         res.status(409).json({ error: "This bus already has an active shift on another route." });
         return;
       }
-      await Promise.all([
-        db.collection("ride_sessions").doc(current.sessionId).set({
+      const projections = [
+        { ref: db.collection("ride_sessions").doc(current.sessionId), data: {
           id: current.sessionId,
           busId: assignment.busId,
           driverId: assignment.driverId,
@@ -308,10 +445,9 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
           directionState: direction ? "resolved" : "pending",
           originStopId: typeof current.originStopId === "string" ? current.originStopId : null,
           destinationStopId: typeof current.destinationStopId === "string" ? current.destinationStopId : null,
-        }, { merge: true }),
-        ...(direction ? [db.collection("active_rides")
-          .doc(activeRideId(assignment.busId, assignment.routeId))
-          .set({
+        } },
+        ...(direction ? [{ ref: db.collection("active_rides")
+          .doc(activeRideId(assignment.busId, assignment.routeId)), data: {
             sessionId: current.sessionId,
             busId: assignment.busId,
             driverId: assignment.driverId,
@@ -331,8 +467,13 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
             delayMinutes: normalizedDelayMinutes(current.delayMinutes),
             delayUpdatedAt: normalizedDelayRevision(current.delayUpdatedAt),
             updatedAt: FieldValue.serverTimestamp(),
-          }, { merge: true })] : []),
-      ]);
+          } }] : []),
+      ];
+      if (keyRef) {
+        await commitCreationProjections(projections);
+      } else {
+        await Promise.all(projections.map(projection => projection.ref.set(projection.data, { merge: true })));
+      }
       res.json({
         sessionId: current.sessionId,
         resumed: true,
@@ -403,8 +544,13 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
     const proposedSessionRef = db.collection("ride_sessions").doc();
     const lockRef = activeBusLockRef(assignment.busId);
     const proposedArmedAt = Date.now();
-    const lockClaim = await db.runTransaction(async (transaction) => {
+    const lockClaim = await runSessionTransaction(async (transaction) => {
+      const binding = keyRef ? await transaction.get(keyRef) : null;
       const lock = await transaction.get(lockRef);
+      if (binding?.exists && (!matchesAssignment(binding.data()!) ||
+          binding.data()?.sessionId !== lock.data()?.sessionId)) return null;
+      if (pinnedSessionId && lock.data()?.sessionId !== pinnedSessionId) return null;
+      if (keyRef && lock.exists && current?.tripState === "completed" && lock.data()?.sessionId === current.sessionId) return null;
       if (lock.exists) {
         const lockData = lock.data();
         if (
@@ -440,6 +586,7 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
           : [];
         const resolvedOrigin = resolvedStops[0] ?? null;
         const resolvedDestination = resolvedStops.at(-1) ?? null;
+        if (keyRef && !binding?.exists) transaction.create(keyRef, bindingData(lockData.sessionId));
         if (direction && !existingDirection) {
           transaction.set(db.collection("ride_sessions").doc(lockData.sessionId), {
             direction,
@@ -463,6 +610,7 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
           direction,
         };
       }
+      if (keyRef) transaction.create(keyRef, bindingData(proposedSessionRef.id));
       transaction.create(proposedSessionRef, {
         id: proposedSessionRef.id,
         busId: assignment.busId,
@@ -487,6 +635,10 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+      // A deliberate new shift consumes any earlier terminal recovery intent.
+      transaction.set(db.collection("bus_locations").doc(assignment.busId), {
+        terminalJourney: FieldValue.delete(),
+      }, { merge: true });
       return {
         sessionId: proposedSessionRef.id,
         armedAt: proposedArmedAt,
@@ -542,6 +694,7 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
       // cancels its pending completion cleanup once tripState changes).
       const claim = await nodeRef.transaction((liveValue) => {
         const live = liveValue as Record<string, unknown> | null;
+        if (keyRef && live?.sessionId === sessionRef.id && live.tripState === "completed") return;
         if (
           live?.status === "active" &&
           live?.tripState !== "completed" &&
@@ -580,6 +733,10 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
       });
       if (!claim.committed) {
         const winner = claim.snapshot.val() as Record<string, unknown> | null;
+        if (keyRef && winner?.sessionId === sessionRef.id && winner.tripState === "completed") {
+          res.status(409).json({ error: "The original session is awaiting completion recovery." });
+          return;
+        }
         if (
           winner?.driverId === assignment.driverId &&
           winner.sessionId === sessionRef.id
@@ -609,7 +766,13 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
       const activeRideRef = db.collection("active_rides")
         .doc(activeRideId(assignment.busId, assignment.routeId));
       const batch = db.batch();
-      batch.set(sessionRef, {
+      const projectionWrites: { ref: typeof sessionRef; data: Record<string, unknown>; merge?: boolean }[] = [];
+      const writeProjection = (ref: typeof sessionRef, data: Record<string, unknown>, options?: { merge: boolean }) => {
+        projectionWrites.push({ ref, data, merge: options?.merge });
+        if (options) batch.set(ref, data, options);
+        else batch.set(ref, data);
+      };
+      writeProjection(sessionRef, {
         status: direction
           ? (claimedTripState === "in_service" ? "active" : "armed")
           : "pending",
@@ -637,7 +800,7 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
       if (direction) {
-        batch.set(activeRideRef, {
+        writeProjection(activeRideRef, {
           sessionId: sessionRef.id,
           busId: assignment.busId,
           driverId: assignment.driverId,
@@ -655,7 +818,11 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
-      await batch.commit();
+      if (keyRef) {
+        await commitCreationProjections(projectionWrites);
+      } else {
+        await batch.commit();
+      }
     } catch (error) {
       // Preserve the RTDB claim, pending session and bus lock on an ambiguous
       // Firestore failure. A retry enters the idempotent resume branch and
@@ -671,10 +838,14 @@ router.post("/start", requireAuth, async (req: AuthenticatedRequest, res: Respon
       pending: !direction,
     });
   } catch (error) {
+    if (error instanceof SessionCreationConflict) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
     console.error("[Shifts] Failed to start shift:", error);
     res.status(500).json({ error: "Unable to start shift." });
   }
-});
+}
 
 router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -711,6 +882,15 @@ router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Respons
       .doc(activeRideId(assignment.busId, assignment.routeId));
     const lockRef = activeBusLockRef(assignment.busId);
     const endedAt = Date.now();
+    let liveAtEnd: Record<string, unknown> | null = null;
+    try {
+      const value = (await rtdb.ref(`activeBuses/${activeRideId(assignment.busId, assignment.routeId)}`).once("value")).val();
+      if (value && typeof value === "object" && !Array.isArray(value)) liveAtEnd = value;
+    } catch (error) {
+      // History enrichment must not prevent the durable stop/lock release.
+      // Keep the previously recorded location when a fresh snapshot is absent.
+      console.warn("[Shifts] Final location unavailable during manual stop:", error);
+    }
     const outcome = await db.runTransaction(async (transaction) => {
       const [currentSession, activeRide, lock] = await Promise.all([
         transaction.get(sessionRef),
@@ -737,6 +917,8 @@ router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Respons
         }
         transaction.set(sessionRef, {
           status: "interrupted",
+          ...(liveAtEnd && liveAtEnd.sessionId === sessionId && newerJourneyLocation(liveAtEnd, current.lastKnownLocation)
+            ? { lastKnownLocation: newerJourneyLocation(liveAtEnd, current.lastKnownLocation) } : {}),
           endTime: endedAt,
           interruptionReason: "manual_end_early",
           interruptedBy: req.user?.uid ?? null,
@@ -787,21 +969,32 @@ router.post("/stop", requireAuth, async (req: AuthenticatedRequest, res: Respons
   }
 });
 
-router.delete("/:sessionId/messages", requireAdmin, async (req, res) => {
+async function clearMessages(req: Request, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   if (sessionId === null || !SAFE_ID.test(sessionId)) {
     res.status(400).json({ error: "Invalid session ID." });
     return;
   }
   try {
-    const messages = db.collection("ride_sessions").doc(sessionId).collection("messages");
+    const sessionRef = db.collection("ride_sessions").doc(sessionId);
+    const deletionRef = db.collection("_ride_history_deletion_jobs").doc(sessionId);
+    const messages = sessionRef.collection("messages");
+    const archive = sessionRef.collection("archivedMessages");
     let deleted = 0;
     while (true) {
-      const snapshot = await messages.limit(400).get();
+      const snapshot = await messages.limit(200).get();
       if (snapshot.empty) break;
-      const batch = db.batch();
-      snapshot.docs.forEach((message) => batch.delete(message.ref));
-      await batch.commit();
+      const cleared = await db.runTransaction(async transaction => {
+        const [session, deletion] = await Promise.all([transaction.get(sessionRef), transaction.get(deletionRef)]);
+        // A concurrent history deletion must not leave recreated descendants.
+        if (!session.exists || deletion.exists) return false;
+        snapshot.docs.forEach(message => {
+          transaction.set(archive.doc(message.ref.id), message.data(), { merge: true });
+          transaction.delete(message.ref);
+        });
+        return true;
+      });
+      if (!cleared) break;
       deleted += snapshot.size;
     }
     res.json({ deleted });
@@ -809,9 +1002,9 @@ router.delete("/:sessionId/messages", requireAdmin, async (req, res) => {
     console.error("[Shifts] Failed to clear messages:", error);
     res.status(500).json({ error: "Unable to clear messages." });
   }
-});
+}
 
-router.delete("/:sessionId/history", requireAdmin, async (req, res) => {
+async function deleteHistory(req: Request, res: Response) {
   const sessionId = singleRouteParam(req.params.sessionId);
   if (sessionId === null || !SAFE_ID.test(sessionId)) {
     res.status(400).json({ error: "Invalid session ID." });
@@ -828,6 +1021,98 @@ router.delete("/:sessionId/history", requireAdmin, async (req, res) => {
     console.error("[Shifts] Failed to delete ride history:", error);
     res.status(500).json({ error: "Unable to delete ride history." });
   }
-});
+}
+
+function privateResponse(_req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store");
+  next();
+}
+
+function creationContract(req: Request, res: Response, next: NextFunction) {
+  const key = req.get("Idempotency-Key");
+  if (!key || !/^[A-Za-z0-9_-]{16,128}$/.test(key)) {
+    res.status(400).json({ error: "A valid Idempotency-Key is required." });
+    return;
+  }
+  res.locals.idempotencyKey = key;
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode < 300 && typeof body?.sessionId === "string") {
+      res.location(`/api/v2/ride-sessions/${body.sessionId}`);
+    }
+    return json(body);
+  };
+  next();
+}
+
+async function sessionDelayContract(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const sessionId = singleRouteParam(req.params.sessionId);
+  if (!sessionId || !SAFE_ID.test(sessionId) || !req.body ||
+      Object.keys(req.body).some(key => key !== "delayMinutes")) {
+    res.status(400).json({ error: "Only delayMinutes and a valid session ID are accepted." });
+    return;
+  }
+  try {
+    const session = await db.collection("ride_sessions").doc(sessionId).get();
+    if (!session.exists) {
+      res.status(404).json({ error: "Ride session was not found." });
+      return;
+    }
+    const data = session.data()!;
+    const assignment = await authorizeOperator(req, data.busId, data.routeId, data.driverId);
+    if (!assignment || assignment.driverId !== data.driverId) {
+      res.status(403).json({ error: "Operator is not assigned to this session." });
+      return;
+    }
+    if (!["pending", "armed", "active"].includes(data.status)) {
+      res.status(409).json({ error: "This ride is already in a terminal state." });
+      return;
+    }
+    res.locals.expectedSessionId = sessionId;
+    req.body = { ...req.body, ...assignment };
+    next();
+  } catch (error) { next(error); }
+}
+
+async function readSession(req: AuthenticatedRequest, res: Response) {
+  const sessionId = singleRouteParam(req.params.sessionId);
+  if (!sessionId || !SAFE_ID.test(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID." });
+    return;
+  }
+  try {
+    const session = await db.collection("ride_sessions").doc(sessionId).get();
+    if (!session.exists) {
+      res.status(404).json({ error: "Ride session was not found." });
+      return;
+    }
+    const data = session.data()!;
+    const user = req.user!;
+    const admin = user.role === "admin" || user.admin === true;
+    const member = Object.prototype.hasOwnProperty.call(data.passengers ?? {}, user.uid) &&
+      data.passengers[user.uid]?.userId === user.uid;
+    const operator = !admin && !member && user.role === "driver" && user.driverId === data.driverId &&
+      !!await authorizeOperator(req, data.busId, data.routeId, data.driverId);
+    if (!admin && !member && !operator) {
+      res.status(403).json({ error: "Ride session membership is required." });
+      return;
+    }
+    res.json({ sessionId, busId: data.busId, routeId: data.routeId,
+      status: data.status, direction: isRideDirection(data.direction) ? data.direction : null });
+  } catch (error) {
+    console.error("[Shifts] Failed to read session:", error);
+    res.status(500).json({ error: "Unable to read ride session." });
+  }
+}
+
+router.patch("/delay", requireAuth, updateDelay);
+router.post("/start", requireAuth, startShift);
+router.delete("/:sessionId/messages", requireAdmin, clearMessages);
+router.delete("/:sessionId/history", requireAdmin, deleteHistory);
+rideSessionsRouter.post("/", privateResponse, requireAuth, creationContract, startShift);
+rideSessionsRouter.get("/:sessionId", privateResponse, requireAuth, readSession);
+rideSessionsRouter.patch("/:sessionId", privateResponse, requireAuth, sessionDelayContract, updateDelay);
+rideSessionsRouter.delete("/:sessionId/messages", privateResponse, requireAdmin, clearMessages);
+rideSessionsRouter.delete("/:sessionId", privateResponse, requireAdmin, deleteHistory);
 
 export default router;

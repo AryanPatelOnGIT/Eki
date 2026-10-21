@@ -10,9 +10,29 @@ import {
   moderateChatText,
   normalizeChatText,
 } from "./chatRateLimit";
+import { legacyCensorText } from "../../test-fixtures/chatModerationOracle";
 
 describe("evaluateChatRate", () => {
   const now = 1_000_000;
+
+  it("enforces literal three-second minute and hour boundary vectors", () => {
+    const clock = 10_000_000;
+    for (const [gap, allowed] of [[2999, false], [3000, true], [3001, true]] as const) {
+      const result = evaluateChatRate({ sentAt: [clock - gap] }, clock);
+      expect(result.allowed).toBe(allowed);
+      if (!allowed) expect(result).toEqual({ allowed: false, reason: "cooldown", retryAfterMs: 1 });
+    }
+    for (const delta of [1, 0, -1]) {
+      const minute = [clock - 60_000 + delta, ...Array.from({ length: 9 }, (_, i) => clock - 55_000 + i * 5000)];
+      const burst = evaluateChatRate({ sentAt: minute }, clock);
+      expect(burst.allowed).toBe(delta <= 0);
+      if (delta > 0) expect(burst).toEqual({ allowed: false, reason: "burst", retryAfterMs: 1 });
+      const hour = [clock - 3_600_000 + delta, ...Array.from({ length: 59 }, (_, i) => clock - 3_000_000 + i * 40_000)];
+      const hourly = evaluateChatRate({ sentAt: hour }, clock);
+      expect(hourly.allowed).toBe(delta <= 0);
+      if (delta > 0) expect(hourly).toEqual({ allowed: false, reason: "hourly", retryAfterMs: 1 });
+    }
+  });
 
   it("allows a first message with no stored window", () => {
     expect(evaluateChatRate(undefined, now)).toEqual({
@@ -27,6 +47,12 @@ describe("evaluateChatRate", () => {
       allowed: false,
       reason: "cooldown",
       retryAfterMs: MIN_GAP_MS - 1_000,
+    });
+  });
+
+  it("denies a future server timestamp with a bounded retry hint", () => {
+    expect(evaluateChatRate({ sentAt: [now + HOUR_MS] }, now)).toEqual({
+      allowed: false, reason: "cooldown", retryAfterMs: MIN_GAP_MS,
     });
   });
 
@@ -122,6 +148,44 @@ describe("evaluateChatRate", () => {
 });
 
 describe("censorText", () => {
+  it("finishes overlapping separators at the accepted input bound", () => {
+    for (const symbol of ["$", "!", "@", "(", "_", "\u0301", "🚌"]) {
+      const input = symbol.repeat(498) + "x";
+      expect(censorText(input)).toBe(input);
+    }
+    expect(moderateChatText("$".repeat(499) + "x")?.censored).toBe(false);
+  });
+
+  it("preserves the frozen moderation policy on deterministic evasions and boundaries", () => {
+    const terms = ["fuck", "fucker", "fucking", "shit", "bitch", "ass", "asshole", "cunt",
+      "dick", "pussy", "bastard", "mc", "bc", "madarchod", "bhenchod", "behenchod",
+      "chutiya", "gandu", "bhosadike", "bhosdi", "harami", "kutta", "slut", "whore",
+      "randi", "muth", "bhosada", "मादरचोद", "बहनचोद", "भेंचोद", "चूतिया", "गांडू", "रंडी", "हरामी"];
+    for (const term of terms) {
+      for (const separator of ["", ".", "_", " ", "!", "\u0301", "\u200B", "🚌"]) {
+        const evasion = Array.from(term).map(c => c.repeat(2)).join(separator);
+        for (const [before, after] of [["", ""], ["(", ")"], ["a", "z"], ["2", "1"], ["🚌", "!"]]) {
+          const input = `${before}${evasion}${after}`;
+          expect(censorText(input), input).toBe(legacyCensorText(input));
+        }
+      }
+      expect(censorText(term.toUpperCase())).toBe(legacyCensorText(term.toUpperCase()));
+    }
+    for (const input of ["a$s$s", "a$$$$", "b!tch", "$h!t", "f.ü.(.k", "g@ndu", "m4d4rch0d", "fuuuu.c.k", "ass assHole", "fucking f.u.c.k.e.r"]) {
+      expect(censorText(input), input).toBe(legacyCensorText(input));
+    }
+    let seed = 31;
+    const alphabet = Array.from("as$!i1tb8c(mfu4@. _é🚌");
+    for (let trial = 0; trial < 2000; trial++) {
+      let input = "";
+      for (let i = 0; i < 16; i++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        input += alphabet[seed % alphabet.length];
+      }
+      expect(censorText(input), input).toBe(legacyCensorText(input));
+    }
+  });
+
   it("censors English and Hindi/Hinglish profanities", () => {
     expect(censorText("this is shit and bc")).toBe("this is *** and ***");
   });

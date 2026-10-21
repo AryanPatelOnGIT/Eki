@@ -1,5 +1,9 @@
 # Production readiness audit
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](../testing/README.md).
+
 Audit refreshed: 2026-09-14. Scope: every tracked project source,
 configuration, documentation, build/deploy and CI surface across firmware,
 backend, Firebase and frontend. Generated dependencies/build output were
@@ -7,11 +11,23 @@ validated through their manifests/builds rather than treated as maintained
 source. Private prompts, credentials, deployment tokens and untracked local
 files are intentionally outside the public documentation scope.
 
+## How to use this audit
+
+This is a historical audit, not a live readiness certificate. The original
+scope and verification record below are preserved. For maintained behavior use
+[architecture](../design/ARCHITECTURE.md), [configuration](../CONFIGURATION.md)
+and [frontend](../../frontend/README.md). For October evidence and pending
+physical gates use [acceptance index](../testing/README.md); for deployment
+closure use [risk register](ARCHITECTURE_RISK_REGISTER.md).
+
 ## Outcome
 
 The modular-monolith/RTDB/Firestore design is appropriate for the current university fleet. Live telemetry is already push-based: ESP32 pushes HTTPS; Firebase pushes `onValue`/`onSnapshot` changes. REST commands already use native `fetch`. Switching “polling to fetch” would be conceptually wrong; the only misleading `fetchETAs` function was local math, was renamed, and its redundant timer was removed.
 
-No known production npm vulnerability remains in required dependencies. All current linters/tests/builds pass, including real firmware compilation. The repository cannot, by itself, certify radio/GNSS/power behavior or configure university infrastructure; those remain explicit acceptance work.
+The audit's recorded dependency scan, linters/tests/builds and firmware
+compilation passed at its historical baseline. Those results do not certify
+the current branch or deployed environment; use current CI and the acceptance
+index for later evidence. The repository cannot, by itself, certify radio/GNSS/power behavior or configure university infrastructure; those remain explicit acceptance work.
 
 ## Issues corrected in this audit
 
@@ -38,7 +54,7 @@ No known production npm vulnerability remains in required dependencies. All curr
 | RTDB region latency | Default Iowa RTDB instance adds ~300 ms roundtrip latency from India | Issue #169 measured 67.8% lower front-door latency in Singapore candidate (`asia-southeast1`); staged cutover gate and preflight script (`verify:rtdb-instance`) established |
 | Telemetry recovery | Transport timeouts delayed next fix by full interval | 250–749 ms immediate retry on first timeout, validated via live 175-request stationary bench (0 errors) |
 | ETA correctness/performance | Timer recomputed arrival timestamps from unchanged positions and hid countdown | Recompute only on pushed route/bus change; local 15-second countdown remains |
-| Accessibility | Custom listbox keyboard gaps; dialogs lacked complete focus behavior; clickable divs | Native select, reusable top-dialog focus trap/restore/Escape/scroll lock, semantic tabs/collapsibles/cards |
+| Accessibility | Custom listbox keyboard gaps; dialogs lacked complete focus behavior; clickable divs | At that baseline: native select, reusable top-dialog focus trap/restore/Escape/scroll lock, semantic tabs/collapsibles/cards |
 | Motion accessibility | JS map interpolation ignored reduced-motion preference | Immediate target update under `prefers-reduced-motion` |
 | Coordinate correctness | Truthiness rejected valid zero coordinates | Shared numeric coordinate validation |
 | Metadata | Nonexistent/private routes were indexed; protected pages inherited public metadata | Deterministic root-only sitemap, private robots exclusions and per-workspace no-index titles |
@@ -57,7 +73,7 @@ No known production npm vulnerability remains in required dependencies. All curr
 - `npm audit --omit=dev --omit=optional`: zero vulnerabilities.
 - PlatformIO 6.1.19, Espressif32 7.0.1 development firmware build: passed; 48,356/327,680 bytes RAM (14.8%), 949,481/3,145,728 bytes flash (30.2%). The secure fleet build was not uploaded or physically exercised in this refresh.
 - Secret-pattern review: no committed device/service secrets; templates/placeholders only.
-- Dead-code/dependency scan: no actionable orphan application module; build-entry/optional-runtime tooling explains reported false positives. Admin dormant mounting and custom select code were removed.
+- Dead-code/dependency scan: no actionable orphan application module; build-entry/optional-runtime tooling explains reported false positives. Admin dormant mounting and then-unused custom select code were removed at that baseline. Current passenger controls use the tested in-app listbox described in the frontend guide.
 
 The skipped rule-integration cases require the Firebase emulators and should be
 run before release. No physical bus test was claimed.

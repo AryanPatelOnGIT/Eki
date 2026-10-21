@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,13 +11,19 @@ type QueryRef = { kind: "query"; collection: string; field: string; value: unkno
 const harness = vi.hoisted(() => ({
   routes: new Map<string, Row>(),
   operations: new Map<string, Row>(),
+  previews: new Map<string, Row>(),
+  admin: true,
   activeRides: new Map<string, Row>(),
   failNextCommit: false,
   transactionTail: Promise.resolve() as Promise<unknown>,
+  routeReads: 0,
 }));
 
 vi.mock("../middleware/requireAdmin", () => ({
-  requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireAdmin: (_req: unknown, res: { status: (code: number) => { json: (data: unknown) => void } }, next: () => void) => {
+    if (!harness.admin) { res.status(403).json({ error: "Admin required." }); return; }
+    Object.assign(_req as object, { user: { uid: "admin" } }); next();
+  },
 }));
 vi.mock("../middleware/requireAuth", () => ({
   requireAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -29,7 +36,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     ? harness.routes
     : collection === "_route_save_operations"
       ? harness.operations
-      : harness.activeRides;
+      : collection === "_route_geometry_previews" ? harness.previews : harness.activeRides;
   const snapshot = (value: Row | undefined) => ({
     exists: Boolean(value),
     data: () => value,
@@ -51,7 +58,7 @@ vi.mock("../lib/firebaseAdmin", () => {
       kind: "doc",
       collection,
       id,
-      get: async () => snapshot(store(collection).get(id)),
+      get: async () => { if (collection === "routes") harness.routeReads++; return snapshot(store(collection).get(id)); },
       set: async (value, options) => {
         const current = store(collection).get(id) ?? {};
         store(collection).set(id, options?.merge ? { ...current, ...value } : value);
@@ -93,6 +100,7 @@ vi.mock("../lib/firebaseAdmin", () => {
           const copies = new Map<string, Map<string, Row>>([
             ["routes", new Map(harness.routes)],
             ["_route_save_operations", new Map(harness.operations)],
+            ["_route_geometry_previews", new Map(harness.previews)],
             ["active_rides", new Map(harness.activeRides)],
           ]);
           const copiedStore = (name: string) => copies.get(name)!;
@@ -119,6 +127,7 @@ vi.mock("../lib/firebaseAdmin", () => {
           }
           harness.routes = copiedStore("routes");
           harness.operations = copiedStore("_route_save_operations");
+          harness.previews = copiedStore("_route_geometry_previews");
           harness.activeRides = copiedStore("active_rides");
           return result;
         });
@@ -129,11 +138,13 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import polylineRouter from "./polyline";
+import { invalidateRouteGeometryRead } from "../services/routeGeometryReads";
+import polylineRouter, { routeSaveResourcesRouter, routeGeometryPreviewsRouter } from "./polyline";
 
 let server: Server;
 let baseUrl = "";
-const networkFetch = globalThis.fetch;
+let v2 = false;
+const networkFetch = contractFetch;
 const encodedPolyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@";
 const stops = [
   { id: "a", name: "A", shortName: "A", lat: 23, lng: 72 },
@@ -144,6 +155,8 @@ beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/routes", polylineRouter);
+  app.use("/api/v2/routes", routeSaveResourcesRouter);
+  app.use("/api/v2/route-geometry-previews", routeGeometryPreviewsRouter);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -159,11 +172,15 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  invalidateRouteGeometryRead();
   harness.routes = new Map();
   harness.operations = new Map();
+  harness.previews = new Map();
+  harness.admin = true;
   harness.activeRides = new Map();
   harness.failNextCommit = false;
   harness.transactionTail = Promise.resolve();
+  harness.routeReads = 0;
   process.env.GOOGLE_MAPS_API_KEY = "test-key";
 });
 
@@ -210,7 +227,7 @@ function routeBody(overrides: Row = {}): Row {
 }
 
 async function save(body: Row) {
-  return networkFetch(`${baseUrl}/api/routes/route-1`, {
+  return networkFetch(`${baseUrl}${v2 ? "/api/v2/routes" : "/api/routes"}/route-1`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -233,7 +250,59 @@ function mockRoutesApi(gate?: Promise<void>) {
   return upstream;
 }
 
-describe("transactional route saves", () => {
+describe("read-only passenger geometry", () => {
+  it("does not repair legacy geometry or call Google when a passenger enumerates routes", async () => {
+    harness.admin = false;
+    const upstream = mockRoutesApi();
+    for (let index = 0; index < 12; index++) harness.routes.set(`legacy-${index}`, storedRoute({ reversePolyline: null }));
+    const before = JSON.stringify([...harness.routes]);
+    for (let index = 0; index < 12; index++) {
+      const response = await networkFetch(`${baseUrl}/api/routes/legacy-${index}/geometry`);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "GEOMETRY_REPAIR_REQUIRED" });
+    }
+    expect(upstream).not.toHaveBeenCalled(); expect(JSON.stringify([...harness.routes])).toBe(before);
+  });
+  it("reuses unchanged stored geometry for sixty reads without upstream work", async () => {
+    harness.routes.set("route-1", storedRoute()); const upstream = mockRoutesApi();
+    for (let index = 0; index < 60; index++) expect((await networkFetch(`${baseUrl}/api/routes/route-1/geometry`)).status).toBe(200);
+    expect(harness.routeReads).toBe(1); expect(upstream).not.toHaveBeenCalled();
+  });
+  it("keeps an admin geometry GET read-only too", async () => {
+    harness.routes.set("route-1", storedRoute({ reversePolyline: null })); const upstream = mockRoutesApi();
+    const response = await networkFetch(`${baseUrl}/api/routes/route-1/geometry`);
+    expect(response.status).toBe(409); expect(upstream).not.toHaveBeenCalled();
+    expect(harness.routes.get("route-1")?.reversePolyline).toBeNull();
+  });
+  it("repairs legacy geometry only through an authorized versioned save and refreshes cached reads", async () => {
+    harness.routes.set("route-1", storedRoute({ reversePolyline: null })); const upstream = mockRoutesApi(); v2 = true;
+    expect((await networkFetch(`${baseUrl}/api/routes/route-1/geometry`)).status).toBe(409);
+    harness.admin = false; expect((await save(routeBody())).status).toBe(403); expect(upstream).not.toHaveBeenCalled();
+    harness.admin = true; expect((await save(routeBody())).status).toBe(200); expect(upstream).toHaveBeenCalledTimes(2);
+    const response = await networkFetch(`${baseUrl}/api/routes/route-1/geometry`);
+    expect(response.status).toBe(200); await expect(response.json()).resolves.toMatchObject({ configVersion: 2, geometryVersion: 2, cached: true });
+    expect(upstream).toHaveBeenCalledTimes(2);
+  });
+});
+
+it("bounds all admin geometry computation to two raw pipelines and eight waiting, retaining stalled permits", async () => {
+  let release!: () => void; const gate = new Promise<void>(done => { release = done; }); const upstream = mockRoutesApi(gate);
+  const compute = () => networkFetch(`${baseUrl}/api/routes/compute-polyline`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ waypoints: stops }) });
+  const requests = [compute(), compute()];
+  try {
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(2));
+    requests.push(...Array.from({ length: 10 }, compute));
+    // The last ten never dispatch: two refuse capacity and eight age out.
+    const refused = await Promise.all(requests.slice(2));
+    expect(refused.every(response => response.status === 503 && response.headers.get("retry-after") === "1")).toBe(true);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    const later = compute(); await new Promise<void>(done => setTimeout(done, 30)); expect(upstream).toHaveBeenCalledTimes(2);
+    release(); expect((await later).status).toBe(200); expect(upstream).toHaveBeenCalledTimes(3);
+  } finally { release(); await Promise.allSettled(requests); }
+}, 10000);
+
+describe.each([false, true])("transactional route saves v2=%s", mode => {
+  beforeEach(() => { v2 = mode; });
   it("reuses valid directional geometry for metadata-only edits", async () => {
     harness.routes.set("route-1", storedRoute());
     const upstream = mockRoutesApi();
@@ -281,10 +350,18 @@ describe("transactional route saves", () => {
     await vi.waitFor(() => expect(upstream).toHaveBeenCalled());
     const duplicate = await save(routeBody());
     expect(duplicate.status).toBe(202);
+    expect(duplicate.headers.get("location")).toBe(`${v2 ? "/api/v2/routes" : "/api/routes"}/route-1/save-operations/save-1`);
+    expect(duplicate.headers.get("retry-after")).toBe("1");
+    const status = await networkFetch(`${baseUrl}/api/v2/routes/route-1/save-operations/save-1`);
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ status: "processing", operationId: "save-1", routeId: "route-1" });
     release();
     expect((await first).status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(2);
     const replay = await save(routeBody());
+    const snapshot = await (await networkFetch(`${baseUrl}/api/v2/routes/route-1/save-operations/save-1`)).json();
+    expect(snapshot).toMatchObject({ status: "succeeded", result: { saved: true, saveId: "save-1" } });
+    expect(snapshot).not.toHaveProperty("leaseOwner");
     expect(replay.status).toBe(200);
     await expect(replay.json()).resolves.toMatchObject({ configVersion: 2 });
   });
@@ -339,4 +416,88 @@ it("saves 100 ordered stops with independently computed return geometry", async 
   expect(response.status).toBe(200);
   expect(upstream).toHaveBeenCalledTimes(8);
   expect(harness.routes.get("route-1")?.stops).toEqual(longStops);
+});
+
+
+describe("durable geometry preview resources", () => {
+  it("abandons expired preview ownership without repeating billable calls", async () => {
+    const id = "recovery_preview_1";
+    harness.previews.set(id, { status: "processing", deadlineAt: Date.now() - 1, executorId: "stopped-preview", generation: 1 });
+    const request = (body: unknown) => networkFetch(`${baseUrl}/api/v2/route-geometry-previews/${id}/recovery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const body = { expectedExecutorId: "stopped-preview", expectedGeneration: 1, executorStopped: true };
+    expect((await request({ ...body, inject: true })).status).toBe(400);
+    const reply = await request(body); expect(reply.status).toBe(200); expect(reply.headers.get("cache-control")).toBe("no-store");
+    expect(await reply.json()).toMatchObject({ status: "failed", error: { outcomeUnknown: true } });
+    expect((await request(body)).status).toBe(409);
+    harness.admin = false; expect((await request(body)).status).toBe(403);
+  });
+  const key = "preview_key_00001";
+  const points = [{ lat: 23, lng: 72 }, { lat: 23.1, lng: 72.1 }];
+  const post = (waypoints = points, id = key) => networkFetch(`${baseUrl}/api/v2/route-geometry-previews`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": id },
+    body: JSON.stringify({ waypoints }),
+  });
+  const poll = () => networkFetch(`${baseUrl}/api/v2/route-geometry-previews/${key}`);
+  it("protects submission and status from non-admins", async () => {
+    harness.admin = false;
+    expect((await post()).status).toBe(403); expect((await poll()).status).toBe(403);
+    expect(harness.previews.size).toBe(0);
+  });
+  it("coalesces submissions, polls without computation, and replays results", async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const upstream = mockRoutesApi(gate);
+    const first = await post(); expect(first.status).toBe(202);
+    expect(first.headers.get("location")).toBe(`/api/v2/route-geometry-previews/${key}`);
+    expect(first.headers.get("retry-after")).toBe("1");
+    expect(first.headers.get("cache-control")).toBe("no-store");
+    expect((await post()).status).toBe(202); expect((await poll()).status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect((await post([...points].reverse())).status).toBe(409);
+    release(); await vi.waitFor(() => expect(harness.previews.get(key)?.status).toBe("succeeded"));
+    const result = await (await poll()).json(); expect(result).not.toHaveProperty("payloadHash");
+    expect(await (await post()).json()).toEqual(result); expect(upstream).toHaveBeenCalledTimes(1);
+  });
+  it("bounds 100-stop preview to four upstream calls with masks and abort signals", async () => {
+    const upstream = mockRoutesApi();
+    const waypoints = Array.from({ length: 100 }, (_, index) => ({ lat: 23 + index / 1000, lng: 72 }));
+    expect((await post(waypoints)).status).toBe(202);
+    await vi.waitFor(() => expect(harness.previews.get(key)?.status).toBe("succeeded"));
+    expect(upstream).toHaveBeenCalledTimes(4);
+    for (const [url, options] of vi.mocked(globalThis.fetch).mock.calls) if (new URL(String(url)).origin === "https://routes.googleapis.com") {
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      expect(options?.headers).toMatchObject({ "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.distanceMeters,routes.duration" });
+    }
+  });
+  it("stores redacted failures and never repeats failed billable calls", async () => {
+    const upstream = vi.fn(async () => new Response("sensitive upstream response", { status: 500 }));
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) =>
+      String(input).startsWith(baseUrl) ? networkFetch(input, init) : upstream()));
+    await post(); await vi.waitFor(() => expect(harness.previews.get(key)?.status).toBe("failed"));
+    expect(JSON.stringify(await (await poll()).json())).not.toContain("sensitive");
+    expect((await post()).status).toBe(200); expect(upstream).toHaveBeenCalledTimes(1);
+  });
+  it("exposes unresolved deadlines without launching another computation", async () => {
+    const upstream = mockRoutesApi();
+    harness.previews.set(key, { status: "processing", deadlineAt: Date.now() - 1, payloadHash: "private" });
+    expect(await (await poll()).json()).toMatchObject({ status: "processing", outcomeUnknown: true });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+  it("bounds a 100-stop directional save to eight calls and keeps status errors private", async () => {
+    const upstream = mockRoutesApi();
+    const ordered = Array.from({ length: 100 }, (_, index) => ({
+      id: `stop_${index}`, name: `Stop ${index}`, shortName: `S${index}`, lat: 23 + index / 1000, lng: 72,
+    }));
+    const response = await networkFetch(`${baseUrl}/api/v2/routes/route-1`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(routeBody({ mode: "create", expectedVersion: 0, stops: ordered })),
+    });
+    expect(response.status).toBe(200); expect(upstream).toHaveBeenCalledTimes(8);
+    harness.operations.set("save-1", { routeId: "route-1", status: "failed",
+      error: { code: "ROUTE_PERSISTENCE_FAILED", error: "sensitive internal exception" } });
+    const statusUrl = `${baseUrl}/api/v2/routes/route-1/save-operations/save-1`;
+    const snapshot = await (await networkFetch(statusUrl)).json();
+    expect(snapshot).toMatchObject({ status: "failed", error: { code: "ROUTE_PERSISTENCE_FAILED" } });
+    expect(JSON.stringify(snapshot)).not.toContain("sensitive");
+    harness.admin = false; expect((await networkFetch(statusUrl)).status).toBe(403);
+  });
 });

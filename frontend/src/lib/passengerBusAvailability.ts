@@ -2,11 +2,15 @@ import {
   devicePresence,
   isActiveBusEntry,
   rideServiceState,
+  type ActiveBusEntry,
 } from "./activeBusEntries";
 
-export interface PassengerBusAvailability {
+export interface PassengerBusAvailability extends ActiveBusEntry {
   busId: string;
   routeId: string;
+  sessionId?: never;
+  direction?: never;
+  tripState?: never;
 }
 
 function busIdFromNodeKey(key: string, routeId: string): string | null {
@@ -18,7 +22,7 @@ function busIdFromNodeKey(key: string, routeId: string): string | null {
 
 /**
  * Expose fresh hardware availability without inventing a ride, direction,
- * ETA, session, or passenger tracking marker.
+ * ETA or session. Location can be viewed before a ride is armed.
  */
 export function normalizePassengerBusAvailability(
   key: string,
@@ -40,7 +44,19 @@ export function normalizePassengerBusAvailability(
   ) {
     return null;
   }
-  return { busId, routeId };
+  // Leftover lifecycle fields must not unlock ride actions or route matching.
+  return {
+    busId, routeId,
+    lat: candidate.lat, lng: candidate.lng,
+    heading: candidate.heading, speed: candidate.speed,
+    timestamp: candidate.timestamp,
+    backendReceivedAt: candidate.backendReceivedAt,
+    receivedAt: candidate.receivedAt,
+    seq: candidate.seq,
+    deviceState: "online",
+    motionState: candidate.motionState,
+    rawLocation: candidate.rawLocation,
+  };
 }
 
 export function passengerBusAvailabilities(

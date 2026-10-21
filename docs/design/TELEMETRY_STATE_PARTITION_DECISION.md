@@ -1,13 +1,17 @@
 # Telemetry state partition decision
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Date: 2026-09-10
 Issues: #165, #166, #174
 
 ## Decision
 
-Keep `activeBuses/{busId}_{routeId}` as the atomic live projection for now and
+R14 (6 October 2026) adds a separate compact per-route browser materialization, committed-only server transactions and metadata-only lifecycle admission filtering. See [measurement and rollout evidence](../testing/R14_LIVE_PROJECTION.md). The following ownership decision remains in force pending a real moving contention trace.
+
+Keep `activeBuses/{busId}_{routeId}` as the atomic backend authority for now and
 retain route geometry in the existing version-keyed `activeRouteGeometry`
-sibling. Do not introduce separate telemetry, display and lifecycle nodes until
+sibling. Do not introduce separate authoritative telemetry, matching and lifecycle nodes until
 measured production contention demonstrates that the single-node transaction is
 the bottleneck.
 

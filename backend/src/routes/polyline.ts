@@ -1,6 +1,7 @@
+import { operationRecovery, operationRecoveryList } from "./operationRecovery";
 import { computeOrderedRouteGeometry, MAX_ROUTE_STOPS } from "../lib/orderedRouteGeometry";
-import { randomBytes } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { randomBytes, randomUUID } from "node:crypto";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "../lib/firebaseAdmin";
 import { requireAdmin } from "../middleware/requireAdmin";
@@ -14,10 +15,15 @@ import {
   routeGeometryVersion,
   routeSavePayloadHash,
 } from "../lib/routeSaveContract";
+import { OPERATION_ID, OperationConflict, readOperation, submitOperation } from "../services/httpOperations";
 import { invalidateTelemetryRoute } from "../services/telemetryRouteService";
 import { invalidatePlanRoute } from "./plan";
+import { invalidateRouteGeometryRead, readRouteGeometryDocument } from "../services/routeGeometryReads";
+import { BoundedKeyedExecutor, WorkCapacityError, WorkQueueExpired } from "../lib/boundedKeyedExecutor";
 
 const router = Router();
+export const routeSaveResourcesRouter = Router();
+export const routeGeometryPreviewsRouter = Router();
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_COLOR = /^#[0-9a-fA-F]{6}$/;
 const STORED_POLYLINE_QUALITY = "HIGH_QUALITY";
@@ -35,10 +41,7 @@ interface DirectionalRouteGeometry {
   reverseDuration: string;
   polylineQuality: typeof STORED_POLYLINE_QUALITY;
 }
-const geometryComputations = new Map<
-  string,
-  Promise<DirectionalRouteGeometry>
->();
+const geometryExecutor = new BoundedKeyedExecutor<string>({ maxConcurrent: 2, maxPending: 8, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 
 interface LatLng {
   lat: number;
@@ -69,6 +72,7 @@ class RouteApiError extends Error {
 }
 
 function sendRouteError(res: Response, error: RouteApiError): void {
+  if (error.status === 503) res.set("Retry-After", "1");
   res.status(error.status).json(error.payload);
 }
 
@@ -157,8 +161,17 @@ function validEncodedPolyline(value: unknown): value is string {
 }
 
 async function computePolyline(waypoints: LatLng[]) {
-  const geometry = await computeOrderedRouteGeometry(waypoints, computePolylineChunk);
-  return { ...geometry, polylineQuality: STORED_POLYLINE_QUALITY };
+  try {
+    return await geometryExecutor.run(randomUUID(), async () => {
+      const geometry = await computeOrderedRouteGeometry(waypoints, computePolylineChunk);
+      return { ...geometry, polylineQuality: STORED_POLYLINE_QUALITY };
+    });
+  } catch (error) {
+    if (error instanceof WorkCapacityError || error instanceof WorkQueueExpired) {
+      throw routeError(503, "ROUTING_CAPACITY_EXHAUSTED", "routing", "Route computation is busy. Retry after checking the same operation.");
+    }
+    throw error;
+  }
 }
 
 async function computePolylineChunk(waypoints: LatLng[]) {
@@ -270,10 +283,14 @@ async function computePolylineChunk(waypoints: LatLng[]) {
 async function computeDirectionalPolylines(
   waypoints: LatLng[],
 ): Promise<DirectionalRouteGeometry> {
-  const [forward, reverse] = await Promise.all([
+  const outcomes = await Promise.allSettled([
     computePolyline(waypoints),
     computePolyline([...waypoints].reverse()),
   ]);
+  const [forward, reverse] = outcomes.map(outcome => {
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  });
   return {
     polyline: forward.polyline,
     forwardPolyline: forward.polyline,
@@ -286,19 +303,6 @@ async function computeDirectionalPolylines(
     reverseDuration: reverse.duration,
     polylineQuality: STORED_POLYLINE_QUALITY,
   };
-}
-
-function computePolylineOnce(routeId: string, waypoints: LatLng[]) {
-  const key = `${routeId}:${JSON.stringify(waypoints)}`;
-  const existing = geometryComputations.get(key);
-  if (existing) return existing;
-  const computation = computeDirectionalPolylines(waypoints).finally(() => {
-    if (geometryComputations.get(key) === computation) {
-      geometryComputations.delete(key);
-    }
-  });
-  geometryComputations.set(key, computation);
-  return computation;
 }
 
 function geometryError(res: Response): void {
@@ -372,12 +376,7 @@ router.post("/compute-polyline", requireAdmin, async (req: Request, res: Respons
   }
 });
 
-/**
- * Returns cached road geometry for a saved route, repairing legacy route
- * documents through Routes API when their encoded polyline is absent/invalid.
- * Any signed-in map viewer may read it; callers cannot supply arbitrary
- * billable waypoints because coordinates are loaded from Firestore by ID.
- */
+/** Read-only stored geometry. Repair requires an authorized, versioned admin save. */
 router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response) => {
   const routeId = singleRouteParam(req.params.routeId);
   if (routeId === null || !SAFE_ID.test(routeId)) {
@@ -386,13 +385,13 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
   }
 
   try {
-    const routeRef = db.collection("routes").doc(routeId);
-    const snapshot = await routeRef.get();
+    res.set("Cache-Control", "private, no-store");
+    const snapshot = await readRouteGeometryDocument(routeId);
     if (!snapshot.exists) {
       res.status(404).json({ error: "Route not found." });
       return;
     }
-    const route = snapshot.data() as Record<string, unknown>;
+    const route = snapshot.data!;
     if (
       route.polylineQuality === STORED_POLYLINE_QUALITY &&
       validEncodedPolyline(route.forwardPolyline) &&
@@ -421,47 +420,12 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
       res.status(422).json({ error: "Route has no valid coordinates." });
       return;
     }
-    const expectedVersion = routeDocumentVersion(route);
-    const geometrySignature = routeGeometrySignature(waypoints);
-    const geometry = await computePolylineOnce(routeId, waypoints);
-    const geometryVersion = routeGeometryVersion(route) + 1;
-    await db.runTransaction(async (transaction) => {
-      const current = await transaction.get(routeRef);
-      const currentData = current.data() as Record<string, unknown> | undefined;
-      const currentWaypoints = currentData ? routeWaypoints(currentData) : null;
-      if (
-        !current.exists ||
-        routeDocumentVersion(currentData) !== expectedVersion ||
-        !currentWaypoints ||
-        routeGeometrySignature(currentWaypoints) !== geometrySignature
-      ) {
-        throw routeError(
-          409,
-          "STALE_ROUTE_VERSION",
-          "persistence",
-          "The route changed while legacy geometry was being repaired. Retry the request.",
-          { currentVersion: routeDocumentVersion(currentData) },
-        );
-      }
-      transaction.set(routeRef, {
-        ...geometry,
-        geometrySignature,
-        geometryVersion,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
-    invalidatePlanRoute(routeId);
-    invalidateTelemetryRoute(routeId);
-    res.json({
-      ...geometry,
-      configVersion: expectedVersion,
-      geometryVersion,
-      cached: false,
-    });
+    sendRouteError(res, routeError(409, "GEOMETRY_REPAIR_REQUIRED", "validation",
+      "Stored directional geometry needs repair. An administrator must save the current route with its expected version."));
   } catch (error) {
     console.error("[Routes] Failed to load route geometry:", error);
     if (error instanceof RouteApiError) sendRouteError(res, error);
-    else geometryError(res);
+    else { res.set("Retry-After", "1"); sendRouteError(res, routeError(503, "GEOMETRY_READ_UNAVAILABLE", "persistence", "Stored geometry is temporarily unavailable. Retry the read.")); }
   }
 });
 
@@ -469,6 +433,7 @@ router.get("/:routeId/geometry", requireAuth, async (req: Request, res: Response
 router.get(
   "/:routeId/save-operations/:saveId",
   requireAdmin,
+  saveResourceHeaders,
   async (req: Request, res: Response) => {
     const routeId = singleRouteParam(req.params.routeId);
     const saveId = singleRouteParam(req.params.saveId);
@@ -519,7 +484,7 @@ router.get(
   },
 );
 
-router.put("/:routeId", requireAdmin, async (req: Request, res: Response) => {
+async function saveRoute(req: Request, res: Response) {
   const routeId = singleRouteParam(req.params.routeId);
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
   const color = typeof req.body?.color === "string" ? req.body.color : "";
@@ -777,6 +742,7 @@ router.put("/:routeId", requireAdmin, async (req: Request, res: Response) => {
     });
     invalidatePlanRoute(routeId);
     invalidateTelemetryRoute(routeId);
+    invalidateRouteGeometryRead(routeId);
     res.json(result);
   } catch (error) {
     console.error("[Routes] Failed to save validated route:", error);
@@ -792,7 +758,8 @@ router.put("/:routeId", requireAdmin, async (req: Request, res: Response) => {
     if (claimed) await recordFailure(failure);
     sendRouteError(res, failure);
   }
-});
+}
+
 
 router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => {
   const routeId = singleRouteParam(req.params.routeId);
@@ -846,6 +813,7 @@ router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => 
     }
     invalidatePlanRoute(routeId);
     invalidateTelemetryRoute(routeId);
+    invalidateRouteGeometryRead(routeId);
     res.json({ deleted: true });
   } catch (error) {
     console.error("[Routes] Failed to delete route:", error);
@@ -860,6 +828,96 @@ router.delete("/:routeId", requireAdmin, async (req: Request, res: Response) => 
       ),
     );
   }
+});
+
+function privateResponse(_req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store"); next();
+}
+
+function saveResourceHeaders(req: Request, res: Response, next: NextFunction) {
+  res.set("Cache-Control", "no-store");
+  const json = res.json.bind(res);
+  res.json = body => {
+    const routeId = singleRouteParam(req.params.routeId);
+    const saveId = singleRouteParam(req.params.saveId) ?? req.body?.saveId;
+    if (routeId && SAFE_ID.test(routeId) && typeof saveId === "string" && SAFE_OPERATION_ID.test(saveId) && res.statusCode < 300) {
+      const prefix = req.baseUrl.startsWith("/api/v2") ? "/api/v2/routes" : "/api/routes";
+      res.location(`${prefix}/${routeId}/save-operations/${saveId}`);
+      if (res.statusCode === 202) res.set("Retry-After", "1");
+    }
+    return json(body);
+  };
+  next();
+}
+
+async function readSaveResource(req: Request, res: Response) {
+  const routeId = singleRouteParam(req.params.routeId);
+  const saveId = singleRouteParam(req.params.saveId);
+  if (!routeId || !saveId || !SAFE_ID.test(routeId) || !SAFE_OPERATION_ID.test(saveId)) {
+    sendRouteError(res, routeError(400, "INVALID_SAVE_OPERATION", "validation", "Invalid save operation.")); return;
+  }
+  try {
+    const snapshot = await db.collection("_route_save_operations").doc(saveId).get();
+    const data = snapshot.data();
+    if (!snapshot.exists || data?.routeId !== routeId) {
+      sendRouteError(res, routeError(404, "SAVE_OPERATION_NOT_FOUND", "validation", "Save operation not found.")); return;
+    }
+    const status = data.status === "succeeded" || data.status === "failed" ? data.status : "processing";
+    if (status === "processing") res.set("Retry-After", "1");
+    res.json({ operationId: saveId, routeId, status,
+      ...(status === "succeeded" ? { result: data.result } : {}),
+      ...(status === "failed" ? { error: { code: data.error?.code ?? "ROUTE_SAVE_FAILED",
+        error: "The route save failed; reload the route before submitting a new save.",
+        ...(data.error?.outcomeUnknown ? { outcomeUnknown: true } : {}) } } : {}),
+      ...(status === "processing" ? { retryAfterMs: 1_000, ...(Number(data.leaseUntil) <= Date.now() ? { outcomeUnknown: true } : {}) } : {}) });
+  } catch (error) {
+    console.error("[Routes] Failed to read operation:", error);
+    sendRouteError(res, routeError(503, "ROUTE_RECONCILIATION_FAILED", "persistence", "The save outcome could not be checked.", { outcomeUnknown: true }));
+  }
+}
+
+routeSaveResourcesRouter.put("/:routeId", privateResponse, requireAdmin, saveResourceHeaders, saveRoute);
+routeSaveResourcesRouter.get("/:routeId/save-operations/:saveId", privateResponse, requireAdmin, readSaveResource);
+router.put("/:routeId", requireAdmin, saveResourceHeaders, saveRoute);
+
+routeGeometryPreviewsRouter.post("/", privateResponse, requireAdmin, async (req: Request, res: Response) => {
+  const id = req.get("Idempotency-Key");
+  const waypoints = validateWaypoints(req.body?.waypoints);
+  if (!id || !OPERATION_ID.test(id) || !waypoints || Object.keys(req.body).some(key => key !== "waypoints")) {
+    res.status(400).json({ error: "A valid Idempotency-Key and 2-100 waypoints are required.", code: "INVALID_PREVIEW" }); return;
+  }
+  try {
+    const snapshot = await submitOperation({ collection: "_route_geometry_previews", id,
+      adminUid: (req as Request & { user?: { uid?: string } }).user?.uid,
+      payload: { waypoints }, budgetMs: 10_000, execute: async context => {
+        context.assertActive();
+        try { return { result: await computePolyline(waypoints) }; }
+        catch (error) {
+          if (error instanceof RouteApiError) return { error: { code: error.payload.code, error: error.payload.error } };
+          throw error;
+        }
+      } });
+    res.location(`/api/v2/route-geometry-previews/${id}`);
+    if (snapshot.status === "processing") res.set("Retry-After", "1");
+    res.status(snapshot.status === "processing" ? 202 : 200).json(snapshot);
+  } catch (error) {
+    const conflict = error instanceof OperationConflict;
+    if (!conflict) res.set("Retry-After", "1");
+    res.status(conflict ? 409 : 503).json({ error: conflict ? "Operation key belongs to different waypoints." : "Preview status is unavailable; retry with the same key.",
+      code: conflict ? "IDEMPOTENCY_KEY_REUSED" : "OPERATION_UNAVAILABLE" });
+  }
+});
+routeGeometryPreviewsRouter.post("/:operationId/recovery", privateResponse, requireAdmin, operationRecovery("_route_geometry_previews"));
+routeGeometryPreviewsRouter.get("/recovery", privateResponse, requireAdmin, operationRecoveryList("_route_geometry_previews"));
+routeGeometryPreviewsRouter.get("/:operationId", privateResponse, requireAdmin, async (req: Request, res: Response) => {
+  const id = singleRouteParam(req.params.operationId);
+  if (!id || !OPERATION_ID.test(id)) { res.status(400).json({ error: "Invalid operation ID.", code: "INVALID_OPERATION_ID" }); return; }
+  try {
+    const snapshot = await readOperation("_route_geometry_previews", id);
+    if (!snapshot) { res.status(404).json({ error: "Preview not found.", code: "OPERATION_NOT_FOUND" }); return; }
+    if (snapshot.status === "processing") res.set("Retry-After", "1");
+    res.json(snapshot);
+  } catch { res.set("Retry-After", "1").status(503).json({ error: "Preview status is unavailable.", code: "OPERATION_UNAVAILABLE" }); }
 });
 
 export default router;

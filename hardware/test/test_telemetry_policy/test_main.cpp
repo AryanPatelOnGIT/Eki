@@ -132,7 +132,7 @@ void test_http_response_actions_cover_transport_and_status_families() {
     static_cast<int>(HttpResponseAction::Accept),
     static_cast<int>(httpResponseAction(202))
   );
-  for (const int code : {-11, 408, 425, 429, 500, 503, 599}) {
+  for (const int code : {-11, 403, 408, 425, 429, 500, 503, 599}) {
     TEST_ASSERT_EQUAL_INT(
       static_cast<int>(HttpResponseAction::RetrySample),
       static_cast<int>(httpResponseAction(code))
@@ -144,7 +144,7 @@ void test_http_response_actions_cover_transport_and_status_families() {
       static_cast<int>(httpResponseAction(code))
     );
   }
-  for (const int code : {401, 403}) {
+  for (const int code : {401}) {
     TEST_ASSERT_EQUAL_INT(
       static_cast<int>(HttpResponseAction::HaltCredentials),
       static_cast<int>(httpResponseAction(code))
@@ -162,6 +162,7 @@ void test_retry_after_is_strict_bounded_and_status_aware() {
   TEST_ASSERT_EQUAL_UINT32(120000, minimumHttpRetryDelayMs(429, 120000));
   TEST_ASSERT_EQUAL_UINT32(HTTPS_RETRY_AFTER_MAX_MS, minimumHttpRetryDelayMs(429, 999999));
   TEST_ASSERT_EQUAL_UINT32(0, minimumHttpRetryDelayMs(401));
+  TEST_ASSERT_EQUAL_UINT32(HTTPS_CONFIGURATION_RETRY_MS, minimumHttpRetryDelayMs(403));
   TEST_ASSERT_EQUAL_UINT32(30000, minimumHttpRetryDelayMs(400));
   TEST_ASSERT_EQUAL_UINT32(0, minimumHttpRetryDelayMs(503));
 }
@@ -176,6 +177,30 @@ void test_retry_retains_only_samples_that_can_stay_fresh() {
   TEST_ASSERT_FALSE(retryKeepsSampleFresh(now - margin, now, 0, margin));
   TEST_ASSERT_FALSE(retryKeepsSampleFresh(now - 25000, now, 30000, margin));
   TEST_ASSERT_FALSE(retryKeepsSampleFresh(now + 1, now, 1000, margin));
+}
+
+void test_send_boundary_rechecks_original_sample_after_clock_rewind() {
+  constexpr int64_t sampledAt = 1704067201000LL;
+  constexpr int64_t margin = TELEMETRY_FRESHNESS_MARGIN_MS;
+  NewestFirstTelemetryQueue<QueuedSample, 3> queue;
+  queue.reset(7);
+  const uint32_t sequence = queue.push({sampledAt, 0, 1});
+  QueuedSample fix{};
+  TEST_ASSERT_TRUE(queue.newest(fix));
+  TEST_ASSERT_TRUE(retryKeepsSampleFresh(fix.timestamp, sampledAt, 0, margin));
+  // Matches the captured invalid ordering, with synthetic time/position data:
+  // dequeue succeeds, then the disciplined clock is 30 ms behind the sample.
+  TEST_ASSERT_FALSE(retryKeepsSampleFresh(fix.timestamp, sampledAt - 30, 0, margin));
+  TEST_ASSERT_TRUE(fix.timestamp == sampledAt);
+  TEST_ASSERT_EQUAL_UINT32(sequence, fix.sequence);
+  TEST_ASSERT_TRUE(queue.remove(fix.sequence));
+  TEST_ASSERT_EQUAL_UINT32(0, queue.size());
+  const uint32_t nextSequence = queue.push({sampledAt + 1000, 0, 2});
+  TEST_ASSERT_TRUE(queue.newest(fix));
+  TEST_ASSERT_EQUAL_UINT32(sequence + 1, nextSequence);
+  TEST_ASSERT_TRUE(retryKeepsSampleFresh(fix.timestamp, sampledAt + 1000, 0, margin));
+  TEST_ASSERT_TRUE(retryKeepsSampleFresh(fix.timestamp, fix.timestamp + margin - 1, 0, margin));
+  TEST_ASSERT_FALSE(retryKeepsSampleFresh(fix.timestamp, fix.timestamp + margin, 0, margin));
 }
 
 void test_firmware_configuration_validation_identifies_the_failing_field() {
@@ -412,6 +437,20 @@ void test_wifi_retry_and_led_code_are_deterministic() {
   TEST_ASSERT_FALSE(pulsePatternLedOn(4, 1200));
 }
 
+void test_stale_connected_status_still_retries_after_ap_loss() {
+  using namespace eki::connectivity;
+  WifiRetrySupervisor supervisor;
+  const bool staleConnected = wifiLinkUsable(true, false);
+  TEST_ASSERT_FALSE(staleConnected);
+  supervisor.observe(staleConnected, 100);
+  TEST_ASSERT_TRUE(supervisor.attemptDue(100));
+  supervisor.recordAttempt(100);
+  TEST_ASSERT_FALSE(supervisor.attemptDue(5099));
+  TEST_ASSERT_TRUE(supervisor.attemptDue(5100));
+  supervisor.observe(wifiLinkUsable(true, true), 5101);
+  TEST_ASSERT_FALSE(supervisor.attemptDue(5101));
+}
+
 void test_publish_policy_handles_floor_changes_and_heartbeats() {
   const auto decide = [](
     bool valid,
@@ -593,8 +632,43 @@ void test_queue_purges_stale_samples_and_validates_rtc_identity() {
   TEST_ASSERT_EQUAL_UINT32(0, queue.size());
 }
 
+void test_clock_corroboration_rejects_duplicate_stalled_and_inconsistent_epochs() {
+  eki::clock::GnssCorroboration samples;
+  const int64_t base = 1704067200000LL;
+  TEST_ASSERT_FALSE(samples.observe(base, UINT32_MAX - 999));
+  TEST_ASSERT_FALSE(samples.observe(base + 1000, 0));
+  TEST_ASSERT_TRUE(samples.observe(base + 2000, 1000));
+  TEST_ASSERT_FALSE(samples.observe(base + 2000, 2000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3600000, 3000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3601000, 4000));
+  TEST_ASSERT_TRUE(samples.observe(base + 3602000, 5000));
+  TEST_ASSERT_FALSE(samples.observe(base + 3607000, 10000));
+}
+
+void test_large_clock_corrections_require_fresh_agreeing_peer() {
+  using eki::clock::candidateSafe;
+  const int64_t base = 1704067200000LL;
+  TEST_ASSERT_TRUE(candidateSafe(0, base, false, 0)); // corroborated GNSS-only boot
+  TEST_ASSERT_TRUE(candidateSafe(base, base + 10000, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 10001, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base - 10001, false, 0));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 3600000, true, base));
+  TEST_ASSERT_TRUE(candidateSafe(base, base + 3600000, true, base + 3600000));
+  TEST_ASSERT_FALSE(candidateSafe(base, base + 1501, true, base));
+  TEST_ASSERT_FALSE(candidateSafe(base, 0, false, 0));
+}
+
+void test_first_diagnostic_delay_is_rollover_safe_and_latched() {
+    FirstDiagnosticDelay first(UINT32_MAX - 10000);
+    TEST_ASSERT_FALSE(first.due(UINT32_MAX - 1, 30000));
+    TEST_ASSERT_FALSE(first.due(19998, 30000));
+    TEST_ASSERT_TRUE(first.due(19999, 30000));
+    TEST_ASSERT_TRUE(first.due(UINT32_MAX - 10000, 30000)); // ready stays latched over another rollover
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
+  RUN_TEST(test_first_diagnostic_delay_is_rollover_safe_and_latched);
   RUN_TEST(test_haversine_and_heading_wrap);
   RUN_TEST(test_gnss_fix_requires_fresh_coherent_fields);
   RUN_TEST(test_implausible_speed_is_rejected_instead_of_clamped);
@@ -606,10 +680,14 @@ int main(int, char **) {
   RUN_TEST(test_http_response_actions_cover_transport_and_status_families);
   RUN_TEST(test_retry_after_is_strict_bounded_and_status_aware);
   RUN_TEST(test_retry_retains_only_samples_that_can_stay_fresh);
+  RUN_TEST(test_send_boundary_rechecks_original_sample_after_clock_rewind);
   RUN_TEST(test_firmware_configuration_validation_identifies_the_failing_field);
   RUN_TEST(test_example_configuration_compiles_but_cannot_boot_unchanged);
   RUN_TEST(test_gnss_utc_conversion_and_clock_discipline_are_strict);
+  RUN_TEST(test_clock_corroboration_rejects_duplicate_stalled_and_inconsistent_epochs);
+  RUN_TEST(test_large_clock_corrections_require_fresh_agreeing_peer);
   RUN_TEST(test_wifi_retry_and_led_code_are_deterministic);
+  RUN_TEST(test_stale_connected_status_still_retries_after_ap_loss);
   RUN_TEST(test_publish_policy_handles_floor_changes_and_heartbeats);
   RUN_TEST(test_location_transition_rejects_teleportation);
   RUN_TEST(test_adaptive_gnss_error_budget_is_bounded);

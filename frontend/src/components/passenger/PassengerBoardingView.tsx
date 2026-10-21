@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { RouteData } from "@/hooks/useRoutes";
-import CustomSelect from "@/components/ui/CustomSelect";
+import InAppSelect from "@/components/ui/InAppSelect";
 import { errorMessage } from "@/lib/errors";
 import { auth } from "@/lib/firebaseAuth";
+import { ApiError, apiRequest } from "@/lib/apiClient";
+import { withTimeout } from "@/lib/promiseTimeout";
+import { getAuthVerificationGeneration } from "@/lib/authState";
+import { stopEstimateLabel, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 
 interface Props {
   sessionId: string;
   route: RouteData;
   tripState: "pre_departure" | "in_service";
   destinationStopId?: string;
+  stopEstimates?: PassengerStopEstimates;
+  restoredBoarding?: { boardingStopId: string; alightingStopId: string | null };
   onDestinationStopChange?: (stopId: string) => void;
   onJoined?: () => void;
 }
@@ -22,6 +28,25 @@ const formatStopName = (name: string) => {
   if (parts.length >= 2) return `${parts[0]} ${parts[1]}`;
   return name;
 };
+
+const PREPARATION_TIMEOUT_MS = 10_000;
+const BOARDING_API_TIMEOUT_MS = 10_000;
+
+function untilCancelled<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(value => {
+      signal.removeEventListener("abort", abort); resolve(value);
+    }, error => {
+      signal.removeEventListener("abort", abort); reject(error);
+    });
+  });
+}
 
 function getCurrentPosition(): Promise<{ lat: number; lng: number; accuracy: number }> {
   return new Promise((resolve, reject) => {
@@ -35,8 +60,12 @@ function getCurrentPosition(): Promise<{ lat: number; lng: number; accuracy: num
         lng: position.coords.longitude,
         accuracy: position.coords.accuracy,
       }),
-      () => reject(new Error("Location access is required to board this bus.")),
-      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 10_000 },
+      error => reject(new Error(error.code === 1
+        ? "Location access is required to board this bus."
+        : error.code === 3
+          ? "Location acquisition timed out. Please try again."
+          : "Location is unavailable. Check your device location settings and try again.")),
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: PREPARATION_TIMEOUT_MS },
     );
   });
 }
@@ -50,9 +79,12 @@ export default function PassengerBoardingView({
   route,
   tripState,
   destinationStopId,
+  stopEstimates,
+  restoredBoarding,
   onDestinationStopChange,
   onJoined,
 }: Props) {
+  const codeHintId = useId();
   const [boardingStopId, setBoardingStopId] = useState("");
   const [alightingStopId, setAlightingStopId] = useState("");
   const [boardingCode, setBoardingCode] = useState("");
@@ -61,26 +93,49 @@ export default function PassengerBoardingView({
   const [hasJoined, setHasJoined] = useState(false);
   const joinAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
 
   useEffect(() => {
     mountedRef.current = true;
+    setHasJoined(false);
+    setJoinState("idle");
+    setJoinError("");
     return () => {
       mountedRef.current = false;
       joinAbortRef.current?.abort();
       joinAbortRef.current = null;
     };
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     if (destinationStopId !== undefined) setAlightingStopId(destinationStopId);
   }, [destinationStopId]);
 
-  const stopOptions = (route.stops ?? []).map((stop) => ({
+  useEffect(() => {
+    if (!restoredBoarding) return;
+    let current = true;
+    queueMicrotask(() => {
+      if (!current || !mountedRef.current || sessionRef.current !== sessionId) return;
+      setBoardingStopId(restoredBoarding.boardingStopId);
+      setAlightingStopId(restoredBoarding.alightingStopId ?? "");
+      setHasJoined(true);
+      setJoinState("joined");
+      setJoinError("");
+    });
+    return () => { current = false; };
+  }, [restoredBoarding, sessionId]);
+
+  const stopOptions = (route.stops ?? []).map((stop, index) => ({
     value: stop.id,
     label: formatStopName(stop.name),
+    detail: stopEstimateLabel(stopEstimates, stop.id, index),
+    completed: stopEstimates?.nextStopIndex !== undefined && index < stopEstimates.nextStopIndex,
   }));
 
   const joinRide = async () => {
+    // State updates are batched; a ref closes the same-render double-click gap.
+    if (joinAbortRef.current) return;
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
     const currentUser = auth.currentUser;
     if (!backendUrl) {
@@ -93,7 +148,7 @@ export default function PassengerBoardingView({
       setJoinError("Sign in is required to board.");
       return;
     }
-    if (!boardingStopId || !alightingStopId || boardingCode.length !== 8) {
+    if (!boardingStopId || !alightingStopId || boardingStopId === alightingStopId || boardingCode.length !== 8) {
       setJoinState("error");
       setJoinError("Choose boarding and destination stations, then enter the 8-character code from the driver.");
       return;
@@ -103,15 +158,22 @@ export default function PassengerBoardingView({
     setJoinError("");
     const updatingExistingPassenger = hasJoined;
     const controller = new AbortController();
-    joinAbortRef.current?.abort();
     joinAbortRef.current = controller;
-    const timeoutId = window.setTimeout(() => controller.abort(), 10_000);
+    const authGeneration = getAuthVerificationGeneration();
+    const isCurrent = () => mountedRef.current &&
+      joinAbortRef.current === controller && !controller.signal.aborted &&
+      sessionRef.current === sessionId && auth.currentUser === currentUser &&
+      getAuthVerificationGeneration() === authGeneration;
     try {
       const [token, position] = await Promise.all([
-        currentUser.getIdToken(),
-        updatingExistingPassenger ? Promise.resolve(null) : getCurrentPosition(),
+        withTimeout(untilCancelled(currentUser.getIdToken(), controller.signal), PREPARATION_TIMEOUT_MS, "Sign-in verification timed out. Please try again."),
+        updatingExistingPassenger ? Promise.resolve(null) : withTimeout(
+          untilCancelled(getCurrentPosition(), controller.signal), PREPARATION_TIMEOUT_MS,
+          "Location acquisition timed out. Please try again.",
+        ),
       ]);
-      const response = await fetch(`${backendUrl}/api/sessions/${sessionId}/join`, {
+      if (!isCurrent()) return;
+      const result = await apiRequest<{ joined?: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}/join`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -124,31 +186,30 @@ export default function PassengerBoardingView({
           alightingStopId: alightingStopId || null,
         }),
         signal: controller.signal,
+        timeoutMs: BOARDING_API_TIMEOUT_MS,
+        fallbackError: "Unable to board.",
       });
-      const result = await response.json().catch(() => ({})) as {
-        joined?: boolean;
-        error?: string;
-      };
-      if (!response.ok || result.joined !== true) {
-        throw new Error(result.error || "Unable to board.");
+      if (!result || result.joined !== true) {
+        throw new Error("Unable to board.");
       }
-      if (!mountedRef.current || controller.signal.aborted) return;
+      if (!isCurrent()) return;
       setHasJoined(true);
       setJoinState("joined");
       onJoined?.();
     } catch (error) {
-      if (!mountedRef.current) return;
+      if (!isCurrent()) return;
       // If the server no longer sees the prior manifest entry, the next attempt
       // must perform the first-boarding proximity check again.
       if (updatingExistingPassenger) setHasJoined(false);
       setJoinState("error");
       setJoinError(
-        controller.signal.aborted
+        error instanceof ApiError && error.code === "NETWORK_TIMEOUT"
           ? "The boarding request timed out. Please try again."
           : errorMessage(error),
       );
     } finally {
-      window.clearTimeout(timeoutId);
+      // Cancel any other preparation still pending after a failed stage.
+      controller.abort();
       if (joinAbortRef.current === controller) joinAbortRef.current = null;
     }
   };
@@ -167,7 +228,7 @@ export default function PassengerBoardingView({
       >
         {tripState === "in_service" ? "Ride in service" : "Ride armed · awaiting stop 1"}
       </p>
-      <CustomSelect
+      <InAppSelect
         name="boarding-stop"
         ariaLabel="Boarding stop"
         placeholder="Boarding..."
@@ -175,12 +236,16 @@ export default function PassengerBoardingView({
         disabled={joinState === "joining"}
         onChange={(value) => {
           setBoardingStopId(value);
+          if (value === alightingStopId) {
+            setAlightingStopId("");
+            onDestinationStopChange?.("");
+          }
           selectionChanged();
         }}
         options={[{ value: "", label: "Boarding..." }, ...stopOptions]}
         style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
       />
-      <CustomSelect
+      <InAppSelect
         name="destination-station"
         ariaLabel="Destination station"
         placeholder="Choose destination station..."
@@ -191,7 +256,8 @@ export default function PassengerBoardingView({
           onDestinationStopChange?.(value);
           selectionChanged();
         }}
-        options={[{ value: "", label: "Choose destination station..." }, ...stopOptions]}
+        options={[{ value: "", label: "Choose destination station..." },
+          ...stopOptions.filter((stop) => stop.value !== boardingStopId)]}
         style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
       />
       <div className="flex gap-2">
@@ -205,21 +271,25 @@ export default function PassengerBoardingView({
           className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm font-bold uppercase tracking-[0.18em] outline-none"
           style={{ background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--border-subtle)" }}
           aria-label="Boarding code"
-          placeholder="DRIVER CODE"
+          aria-describedby={codeHintId}
+          placeholder="8-CHAR CODE"
           autoComplete="one-time-code"
           inputMode="text"
-          maxLength={8}
         />
         <button
           type="button"
           onClick={() => void joinRide()}
-          disabled={joinState === "joining" || !boardingStopId || !alightingStopId || boardingCode.length !== 8}
+          disabled={joinState === "joining" || !boardingStopId || !alightingStopId ||
+            boardingStopId === alightingStopId || boardingCode.length !== 8}
           className="rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wide disabled:cursor-not-allowed disabled:opacity-50"
           style={{ background: "var(--status-live)", color: "var(--surface-0)" }}
         >
           {joinState === "joining" ? "Checking…" : joinState === "joined" ? "On board" : "Board"}
         </button>
       </div>
+      <p id={codeHintId} className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+        Enter the driver’s 8-character code. Spaces and hyphens are removed automatically.
+      </p>
       {joinState === "joining" && (
         <p className="text-[11px] font-semibold" style={{ color: "var(--status-warning)" }} role="status">
           Verifying the session code and live bus position…

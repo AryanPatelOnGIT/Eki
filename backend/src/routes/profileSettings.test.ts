@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,14 @@ const harness = vi.hoisted(() => ({
     picture: "https://images.example.test/avatar.png",
   } as Record<string, unknown>,
   authClaims: {} as Record<string, unknown>,
+  authErrorCode: "",
+  authDisabled: false,
+  inTransaction: false,
+  transactionAttempts: 1,
+  authLookupInTransaction: false,
+  authLookupCalls: 0,
+  beforeTransaction: undefined as (() => void) | undefined,
+  deletion: undefined as Record<string, unknown> | undefined,
   setCustomClaimsCalls: [] as Array<{ uid: string; claims: Record<string, unknown> }>,
   revokeCalls: [] as string[],
 }));
@@ -60,7 +69,12 @@ vi.mock("../lib/firebaseAdmin", () => {
 
   return {
     auth: {
-      getUser: async () => ({ customClaims: harness.authClaims }),
+      getUser: async () => {
+        harness.authLookupCalls += 1;
+        if (harness.inTransaction) harness.authLookupInTransaction = true;
+        if (harness.authErrorCode) throw Object.assign(new Error("Synthetic missing identity"), { code: harness.authErrorCode });
+        return { customClaims: harness.authClaims, disabled: harness.authDisabled };
+      },
       setCustomUserClaims: async (uid: string, claims: Record<string, unknown>) => {
         harness.authClaims = { ...claims };
         harness.setCustomClaimsCalls.push({ uid, claims: { ...claims } });
@@ -78,18 +92,32 @@ vi.mock("../lib/firebaseAdmin", () => {
           create: (ref: Ref, value: Record<string, unknown>) => void;
           get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
         }) => Promise<unknown>,
-      ) => callback({
-        create: (_ref, value) => {
-          if (harness.profile) throw new Error("already exists");
-          harness.profile = value;
-        },
-        get: async () => snapshot(),
-      }),
+      ) => {
+        harness.beforeTransaction?.();
+        let result: unknown;
+        for (let attempt = 0; attempt < harness.transactionAttempts; attempt += 1) {
+          harness.inTransaction = true;
+          try {
+            result = await callback({
+              create: (_ref, value) => {
+                if (harness.profile) throw new Error("already exists");
+                if (attempt === harness.transactionAttempts - 1) harness.profile = value;
+              },
+              get: async ref => ref.collection === "_privacy_deletion_requests"
+                ? { exists: Boolean(harness.deletion), data: () => harness.deletion }
+                : snapshot(),
+            });
+          } finally {
+            harness.inTransaction = false;
+          }
+        }
+        return result;
+      },
     },
   };
 });
 
-import settingsRouter from "./settings";
+import settingsRouter, { settingsV2Router } from "./settings";
 import usersRouter from "./users";
 
 let server: Server;
@@ -100,6 +128,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api/users", usersRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api/v2/settings/global", settingsV2Router);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -118,6 +147,12 @@ beforeEach(() => {
   harness.profile = undefined;
   harness.settings = {};
   harness.authClaims = {};
+  harness.authErrorCode = ""; harness.authDisabled = false; harness.deletion = undefined;
+  harness.inTransaction = false;
+  harness.transactionAttempts = 1;
+  harness.authLookupInTransaction = false;
+  harness.authLookupCalls = 0;
+  harness.beforeTransaction = undefined;
   harness.setCustomClaimsCalls = [];
   harness.revokeCalls = [];
   harness.user = {
@@ -129,8 +164,39 @@ beforeEach(() => {
 });
 
 describe("profile bootstrap route", () => {
+  it("checks Auth outside retried Firestore transaction callbacks", async () => {
+    harness.transactionAttempts = 3;
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(response.status).toBe(201);
+    expect(harness.profile?.role).toBe("passenger");
+    expect(harness.authLookupInTransaction).toBe(false);
+    expect(harness.authLookupCalls).toBe(2); // one validation, one fresh claim synchronization
+  });
+
+  it("reads the deletion fence transactionally after the Auth lookup", async () => {
+    harness.beforeTransaction = () => { harness.deletion = { status: "processing" }; };
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(response.status).toBe(409);
+    expect(harness.profile).toBeUndefined();
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
+  it.each(["auth/user-not-found", "auth/user-disabled"])("a cached token cannot recreate a profile for %s", async code => {
+    if (code === "auth/user-disabled") harness.authDisabled = true;
+    else harness.authErrorCode = code;
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(401);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
+  it("does not recreate a missing profile while its deletion request is present", async () => {
+    harness.deletion = { status: "processing", phase: "auth_deletion_dispatched" };
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    expect(harness.profile).toBeUndefined();
+    expect(response.status).toBe(409);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+  });
   it("creates a passenger profile only from verified token claims", async () => {
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, {
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -162,7 +228,7 @@ describe("profile bootstrap route", () => {
   it("preserves an existing privileged profile", async () => {
     harness.profile = { uid: "user_1", role: "admin", displayName: "Existing" };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "admin" });
@@ -174,7 +240,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -192,7 +258,7 @@ describe("profile bootstrap route", () => {
     harness.profile = { uid: "user_1", role: "passenger" };
     harness.authClaims = { role: "passenger", featureFlag: true };
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ role: "passenger" });
@@ -200,34 +266,66 @@ describe("profile bootstrap route", () => {
     expect(harness.revokeCalls).toEqual([]);
   });
 
-  it("removes stale privileged claims and revokes refresh tokens", async () => {
+  it.each([
+    { role: "driver", driverId: "driver_1", assignedBusId: "bus_1", featureFlag: true },
+    { role: "admin", admin: true, featureFlag: true },
+  ])("preserves fresh $role claims when the passenger profile is stale", async claims => {
     harness.profile = { uid: "user_1", role: "passenger" };
-    harness.authClaims = {
-      role: "driver",
-      driverId: "driver_1",
-      assignedBusId: "bus_1",
-      featureFlag: true,
-    };
+    harness.authClaims = claims;
 
-    const response = await fetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
+    const response = await contractFetch(`${baseUrl}/api/users/bootstrap`, { method: "POST" });
 
     expect(response.status).toBe(200);
-    expect(harness.setCustomClaimsCalls[0]?.claims).toEqual({
-      featureFlag: true,
-      role: "passenger",
-    });
-    expect(harness.revokeCalls).toEqual(["user_1"]);
+    await expect(response.json()).resolves.toEqual({ role: claims.role });
+    expect(harness.authClaims).toEqual(claims);
+    expect(harness.setCustomClaimsCalls).toEqual([]);
+    expect(harness.revokeCalls).toEqual([]);
+    expect(harness.profile.role).toBe("passenger");
   });
 });
 
 describe("settings route", () => {
-  async function save(body: Record<string, unknown>) {
-    return fetch(`${baseUrl}/api/settings`, {
-      method: "PUT",
+  async function save(body: Record<string, unknown>, v2 = false) {
+    return contractFetch(`${baseUrl}${v2 ? "/api/v2/settings/global" : "/api/settings"}`, {
+      method: v2 ? "PATCH" : "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
+
+  it("enforces literal text limits and blank policy on both settings aliases with no rejected mutation", async () => {
+    for (const v2 of [false, true]) {
+      for (const [field, limit] of [["serviceStartTime", 64], ["noBusesMessage", 200], ["noBusesSubMessage", 300], ["announcementText", 500]] as const) {
+        for (const length of [limit - 1, limit, limit + 1]) {
+          harness.settings = { announcementActive: true };
+          const previous = { ...harness.settings };
+          const response = await save({ [field]: "a".repeat(length) }, v2);
+          expect(response.status).toBe(length <= limit ? 200 : 400);
+          if (length <= limit) expect(harness.settings[field]).toBe("a".repeat(length));
+          else expect(harness.settings).toEqual(previous);
+        }
+        harness.settings = { announcementActive: true };
+        const response = await save({ [field]: "   " }, v2);
+        expect(response.status).toBe(field === "announcementText" ? 200 : 400);
+        if (field === "announcementText") expect(harness.settings[field]).toBe("   ");
+        else expect(harness.settings).toEqual({ announcementActive: true });
+      }
+    }
+  });
+
+  it("accepts only literal boolean announcement states on both aliases", async () => {
+    for (const v2 of [false, true]) {
+      for (const value of [true, false]) {
+        expect((await save({ announcementActive: value }, v2)).status).toBe(200);
+        expect(harness.settings.announcementActive).toBe(value);
+      }
+      for (const value of ["true", "false", 1, 0, null]) {
+        const previous = { ...harness.settings };
+        expect((await save({ announcementActive: value }, v2)).status).toBe(400);
+        expect(harness.settings).toEqual(previous);
+      }
+    }
+  });
 
   it("rejects empty, unknown, and invalid settings", async () => {
     expect((await save({})).status).toBe(400);
@@ -246,5 +344,16 @@ describe("settings route", () => {
       updatedBy: "admin_1",
     });
     expect(harness.settings.updatedAt).toBeDefined();
+  });
+
+  it("uses the same partial validation and persistence for v2 PATCH", async () => {
+    expect((await save({ role: "admin" }, true)).status).toBe(400);
+    const response = await save({ announcementText: "Updated" }, true);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ saved: true });
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", updatedBy: "admin_1" });
+    const legacy = await save({ announcementActive: true });
+    expect(legacy.status).toBe(200);
+    expect(harness.settings).toMatchObject({ announcementText: "Updated", announcementActive: true });
   });
 });

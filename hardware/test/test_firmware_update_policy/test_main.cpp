@@ -65,11 +65,19 @@ void test_update_schedule_uses_long_success_and_short_failure_intervals() {
   TEST_ASSERT_TRUE(checkIsDue(FAILED_CHECK_RETRY_MS, true, 0, true));
 }
 
+void test_installation_aborts_on_motion_stale_fix_or_fix_loss() {
+  TEST_ASSERT_TRUE(installationSnapshotSafe(true, true, UINT32_MAX - 999, 1000));
+  TEST_ASSERT_FALSE(installationSnapshotSafe(true, true, UINT32_MAX - 999, 1001));
+  TEST_ASSERT_FALSE(installationSnapshotSafe(false, true, 100, 101));
+  TEST_ASSERT_FALSE(installationSnapshotSafe(true, false, 100, 101));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_manifest_requires_newer_bounded_https_release);
   RUN_TEST(test_signed_version_binds_the_release_sequence);
   RUN_TEST(test_update_requires_idle_stopped_healthy_device);
   RUN_TEST(test_update_schedule_uses_long_success_and_short_failure_intervals);
+  RUN_TEST(test_installation_aborts_on_motion_stale_fix_or_fix_loss);
   return UNITY_END();
 }

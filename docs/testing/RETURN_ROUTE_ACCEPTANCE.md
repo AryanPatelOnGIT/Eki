@@ -1,14 +1,25 @@
 # Return journeys, long routes, and live reroutes
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
+> Historical evidence: original run dates, commits, measurements and limits below remain authoritative for that run. This documentation update does not rerun the test. See [current testing gates](README.md).
+
+Subsequent R06 recovery evidence is in the
+[5 October priority record](ISSUE_246_PRIORITY_PARTS_2026_10_05.md): software tests
+cover the durable-claim/RTDB-publication crash window and reuse of the same return
+session. The moving and physical scenarios below retain their original evidence
+and open acceptance requirements.
+
 Implemented on 2026-09-12 in the working tree based on `d8d69fd`.
 
 The missing tracking improvements from audited snapshot `965d376` were restored before correcting the remaining defects. This includes nullable direction handling, pending-match marker retention, smooth marker movement, adaptive GNSS filtering, and ambiguity handling.
 
 ## Behavior
 
+- Current arrival policy: intermediate and terminal stop circles are 10 m, as is initial endpoint direction detection. The backend uses accepted GNSS fixes and ordered stops; the webapp follows its published next-stop index. Terminal completion requires reliable stopped samples spanning the default 2 s confirmation. The 75 m parked return-readiness area applies only after completion and the separate turnaround wait below. Physical GNSS/stop-pin accuracy remains a field acceptance gate.
 - A new shift infers its direction from its own current endpoint fix. A completed or device-only direction cannot override it. Existing sessions keep their own direction.
 - Shift creation, telemetry inference, and return creation use the same endpoint-version contract. Device-only directions remain provisional and can change at the other endpoint.
-- Completing the last required stop makes the return trip eligible immediately by default. A fresh stopped terminal fix arms a new session with opposite direction, swapped endpoints, index zero, and cleared old match/reroute state. There is no default two-minute delay. An explicit positive `AUTOMATIC_TURNAROUND_DWELL_MS` still supports a scheduled wait.
+- Confirming arrival at the last required stop starts a separate 30-second turnaround wait by default. A fresh stopped terminal fix arms a new session with opposite direction, swapped endpoints, index zero, and cleared old match/reroute state. `AUTOMATIC_TURNAROUND_DWELL_MS` configures this wait (default `30000` ms; minimum `0`), independently of the terminal-arrival confirmation interval.
 - The terminal fix is correlated by its sample timestamp, avoiding an artificial extra wait caused by accepted device clock skew when no dwell is configured.
 - Routes support up to 100 stops. The same configured stop sequence is visited in reverse order on the return. Google computes the legal road geometry separately for each direction; the return need not occupy the same carriageway.
 - Closely spaced stops crossed between two accepted samples can advance sequentially in the same update. A downstream stop cannot bypass an unreached required stop. Departure distance adapts for nearby first stops.
@@ -28,7 +39,7 @@ The missing tracking improvements from audited snapshot `965d376` were restored 
 | Firmware TCP connect / HTTP read / TLS handshake limits | 1,000 ms / 1,500 ms / 10 seconds; separate phase limits, not a total deadline |
 | Live Google calculation budget | 3,500 ms per request; long-route chunks run concurrently |
 | Reroute retry gate | 5,000 ms from previous attempt |
-| Default automatic-return delay | 0 ms; reliable stopped terminal telemetry still required |
+| Default automatic-return delay | 30,000 ms after confirmed completion; reliable stopped terminal telemetry still required |
 | Pre-auth IP ingress budget | 15 requests/device/10 seconds, configured for 100 devices/IP by default; separate maintenance pools, before replica sharding |
 | Authenticated per-device budget | Existing 90/minute policy retained |
 | Maximum configured stop count | 100 |
@@ -53,7 +64,6 @@ One-second cadence is not a zero-latency guarantee. GNSS motion confirmation, ra
 This work does not establish a real-drive latency percentile or GPS accuracy guarantee. Backend/frontend deployment and firmware flashing are still needed for devices and passengers to receive the changes. The compiled `esp32dev` image is a development artifact, not a signed fleet release. No database region migration was performed.
 
 Before fleet release, drive the full configured route and its return, stop briefly at the terminal, and check that direction, stop order, geometry, and ETA switch together. Include close stops, a wrong turn, parallel roads, two buses on different paths, lost connectivity, recovery, and starting a new shift at each endpoint. Capture sample/send/server/database/listener/render timing with the existing trace tooling, then report p50/p95/p99 and error rates. Singapore staging remains a separately measured infrastructure change.
-
 
 ## Follow-up network review
 
@@ -82,7 +92,6 @@ checks remain open. No deployment, tunnel replacement or device flashing was
 performed; those operational checks cannot be inferred from passing unit tests.
 
 Follow-up verification: 434 backend tests passed (7 skipped), 23 native firmware tests passed; backend build/lint and ESP32 development image build passed.
-
 
 ## Freeze-path follow-up
 
@@ -115,7 +124,6 @@ trace are required to measure actual freeze duration and validate TLS/worker mem
 | Reroute blocks matching or overwrites next trip | Independent queue and version/session guards; integration tests |
 | Real drive / real GNSS replay / Singapore percentiles | Open: live environment and physical trace unavailable |
 | Zero freezes under network failure | Not established; outage cannot deliver live positions |
-
 
 ## Superseding live verification (2026-09-13)
 

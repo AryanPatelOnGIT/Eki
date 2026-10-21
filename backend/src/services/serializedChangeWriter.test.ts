@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SerializedChangeWriter } from "./serializedChangeWriter";
+import { BoundedKeyedExecutor, WorkCapacityError, WorkQueueExpired } from "../lib/boundedKeyedExecutor";
 
 /** Resolves after a couple of microtask turns so ordering is observable. */
 function tick(): Promise<void> {
@@ -7,6 +8,41 @@ function tick(): Promise<void> {
 }
 
 describe("SerializedChangeWriter", () => {
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it("bounds writes independently of fingerprint LRU size and does not suppress rejected retries", async () => {
+    let release!: () => void; const gate = new Promise<void>(done => { release = done; });
+    const writer = new SerializedChangeWriter(1, { maxConcurrent: 1, maxPending: 2 });
+    const results = Array.from({ length: 100 }, (_, i) => writer.enqueue(String(i), "state", () => gate).catch(error => error));
+    await tick(); expect(writer.snapshot()).toMatchObject({ active: 1, pending: 2, keys: 3, rejected: 97 });
+    release(); expect((await Promise.all(results)).filter(error => error instanceof WorkCapacityError)).toHaveLength(97);
+    const retry = vi.fn(async () => "recovered");
+    await expect(writer.enqueue("99", "state", retry)).resolves.toBe("recovered"); expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an uncertain commit ordered after queued expiry and fingerprint clearing", async () => {
+    vi.useFakeTimers({ toFake: ["performance", "setTimeout", "clearTimeout"] });
+    let release!: () => void; const gate = new Promise<void>(done => { release = done; });
+    const committed: string[] = [];
+    const writer = new SerializedChangeWriter(1, { maxConcurrent: 1, maxPendingPerKey: 1, maxQueueAgeMs: 100 });
+    const old = writer.enqueue("bus", "old", async () => { await gate; committed.push("old"); });
+    const stale = writer.enqueue("bus", "stale", async () => { committed.push("stale"); }).catch(error => error);
+    await vi.advanceTimersByTimeAsync(101); expect(await stale).toBeInstanceOf(WorkQueueExpired);
+    writer.clear(); const fresh = writer.enqueue("bus", "fresh", async () => { committed.push("fresh"); });
+    expect(Array.from(writer.pending())).toHaveLength(2); expect(committed).toEqual([]);
+    release(); await Promise.all([old, fresh]); expect(committed).toEqual(["old", "fresh"]);
+  });
+
+  it("shares a global execution ceiling without conflating writer keys", async () => {
+    let release!: () => void; const gate = new Promise<void>(done => { release = done; });
+    const executor = new BoundedKeyedExecutor<string>({ maxConcurrent: 1, maxPending: 1 });
+    const fleet = new SerializedChangeWriter(1, { executor }); const rides = new SerializedChangeWriter(1, { executor });
+    const first = fleet.enqueue("bus", null, () => gate);
+    const second = rides.enqueue("bus", null, async () => 2);
+    await expect(fleet.enqueue("other", null, async () => 3)).rejects.toBeInstanceOf(WorkCapacityError);
+    expect(executor.snapshot()).toMatchObject({ active: 1, pending: 1 });
+    release(); await first; await expect(second).resolves.toBe(2);
+  });
   it("serializes writes for the same key in FIFO order", async () => {
     const writer = new SerializedChangeWriter();
     const order: string[] = [];

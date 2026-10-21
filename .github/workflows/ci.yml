@@ -13,6 +13,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # The static acceptance budget compares immutable PR/base commits.
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -27,6 +30,32 @@ jobs:
           echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
           "$JAVA_HOME_21_X64/bin/java" -version
       - run: npm ci
+      - name: Verify acceptance catalog and deterministic QA configuration
+        run: npm run qa:check
+      - name: Require mapped regressions for changed critical source
+        if: github.event_name == 'pull_request'
+        env:
+          EKI_QA_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run qa:budget
+      - name: Publish static acceptance coverage without claiming execution
+        run: npm run qa:catalog
+      - name: Record deterministic GNSS unit properties with exact assertion evidence
+        run: npm run qa:gnss
+      - name: Record reviewed backend and frontend unit sub-oracles
+        run: npm run qa:unit:reviewed
+      - name: Retain source-attributed acceptance catalog
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: static-acceptance-catalog
+          path: artifacts/qa/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify frontend/backend RTDB instance preflight
+        run: npm run verify:rtdb-instance
+        env:
+          FIREBASE_DATABASE_URL: https://eki-unit-test-default-rtdb.firebaseio.com
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: https://eki-unit-test-default-rtdb.firebaseio.com
       - name: Cache Next.js + backend TypeScript build caches
         # Persistent Turbopack cache (.next/cache — includes the workbox SW
         # replay cache), the backend emitted output, and incremental build info.
@@ -43,6 +72,8 @@ jobs:
           key: build-cache-${{ runner.os }}-${{ hashFiles('package-lock.json', 'package.json', 'frontend/package.json', 'frontend/tsconfig.json', 'frontend/next.config.ts', 'frontend/src/**', 'frontend/public/**', 'backend/package.json', 'backend/tsconfig.json', 'backend/src/**', 'scripts/generate-sw.mjs') }}
           restore-keys: |
             build-cache-${{ runner.os }}-
+      - name: Verify OpenAPI schemas and registered route coverage
+        run: npm run verify:openapi
       - run: npm run lint
       - run: npm test
         env:
@@ -52,10 +83,79 @@ jobs:
       - name: Test Firebase authorization rules in emulators
         env:
           FIREBASE_RULES_TEST: "1"
-        # Emulator rules tests run against App Check-free copies written to a
+        # Emulator rules tests run against isolated copies written to a
         # temp dir (scripts/run-rules-emulator.mjs); the committed rule files
         # are never modified (audit #113).
         run: node scripts/run-rules-emulator.mjs
+      - name: Retain observed disposable emulator evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: emulator-acceptance-evidence
+          # One artifact root lets the dependent ledger read fixed report paths.
+          # Including root-level debug logs nests reports under artifacts/qa/.
+          path: artifacts/qa/emulator-*
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify bounded admission under stalled dependencies
+        run: |
+          npm run build --workspace=backend
+          node --expose-gc scripts/benchmark-work-admission.mjs
+      - name: Install Chromium for admin access browser regression checks
+        # Actual auth/guard/UI with synthetic SDK/data dependencies.
+        run: npx playwright install --with-deps chromium
+      - name: Verify admin access and feedback in mobile and desktop browsers
+        run: npm run test:e2e:admin
+      - name: Verify passenger warnings clear variable ride controls
+        run: npx playwright test --config playwright.passenger-layout.config.ts
+      - name: Verify passenger stop estimates and route progress
+        run: npx playwright test --config playwright.passenger-progress.config.ts
+      - name: Retain passenger progress screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: passenger-progress
+          path: artifacts/passenger-progress/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify confirmed production audit regressions
+        run: npx playwright test --config playwright.production-audit.config.ts
+      - name: Retain audit regression screenshots and measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-audit-validation
+          path: artifacts/production-audit/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain passenger warning layout screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: passenger-warning-layout
+          path: artifacts/passenger-layout/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify actual passenger components and backend with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --browser
+      - name: Verify published protected HTTP authorization with disposable emulators
+        run: node scripts/run-rules-emulator.mjs --api
+      - name: Retain actual HTTP authorization observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-authorization-evidence
+          path: artifacts/qa/api-*
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain observed browser integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-acceptance-evidence
+          path: artifacts/qa/browser-*
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Strict production build (fail-closed gate + CSP regeneration)
         # Issue #39 D1: the strict build (EKI_STRICT_PRODUCTION_BUILD) and the
         # CSP hash regeneration were never exercised in CI. Placeholder values
@@ -71,12 +171,42 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: 1:000000000000:web:0000000000000000000000
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ci-only-placeholder
           NEXT_PUBLIC_GOOGLE_MAP_ID: ci-only-placeholder
-          NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY: ci-only-placeholder
           NEXT_PUBLIC_BACKEND_URL: https://ci-only.example.invalid
+          NEXT_PUBLIC_SITE_URL: https://canonical-ci.example.invalid
+          NEXT_PUBLIC_SITE_INDEXING: "true"
         run: npm run build:production
+      - name: Verify exported canonical, social and crawler origins
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          const origin = 'https://canonical-ci.example.invalid';
+          const html = readFileSync('frontend/out/index.html', 'utf8');
+          const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)[1];
+          const ogUrl = html.match(/<meta property="og:url" content="([^"]+)"/)[1];
+          const ogImage = html.match(/<meta property="og:image" content="([^"]+)"/)[1];
+          assert.equal(new URL(canonical).href, `${origin}/`);
+          assert.equal(new URL(ogUrl).href, `${origin}/`);
+          assert.equal(new URL(ogImage).origin, origin);
+          assert(readFileSync('frontend/out/robots.txt', 'utf8').includes(`Sitemap: ${origin}/sitemap.xml`));
+          assert(readFileSync('frontend/out/sitemap.xml', 'utf8').includes(`<loc>${origin}/</loc>`));
+          JS
       # Slow-3G/Offline browser acceptance remains a manual deployment gate;
       # see docs/operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md.
       - run: npm audit --omit=dev --omit=optional
+      - name: Audit development tooling as well as runtime dependencies
+        run: npm audit
+      - name: Generate production dependency SBOM
+        run: |
+          npm sbom --omit=dev --sbom-format cyclonedx --sbom-type application --package-lock-only > sbom.cdx.json
+          node -e 'const b=require("./sbom.cdx.json"); if(b.bomFormat!=="CycloneDX" || !Array.isArray(b.components) || b.components.length===0) process.exit(1)'
+      - name: Retain SBOM for release review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-dependency-sbom
+          path: sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
 
   backend-image:
     # Issue #28: the backend runs as replicated containers, so the exact image
@@ -91,7 +221,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build backend container image
         run: docker build -f backend/Dockerfile -t eki-backend:ci .
-      - name: Smoke-boot the container and probe /health
+      - name: Smoke-boot the container and verify liveness plus degraded readiness
         run: |
           docker run -d --name eki-backend-smoke \
             -e NODE_ENV=production \
@@ -110,7 +240,20 @@ jobs:
           http_code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://127.0.0.1:8080/health)"
           test "$http_code" = "503"
           grep -q '"status":"degraded"' /tmp/health.json
+          live_code="$(curl -s -o /tmp/live.json -w '%{http_code}' http://127.0.0.1:8080/live)"
+          test "$live_code" = "200"
+          grep -q '"status":"alive"' /tmp/live.json
+          test "$(docker inspect --format '{{.Config.Healthcheck.Test}}' eki-backend-smoke)" = '[CMD-SHELL wget -qO- http://127.0.0.1:8080/live || exit 1]'
           docker logs eki-backend-smoke
+      - name: Scan runtime image for high-severity vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: eki-backend:ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
 
   firmware:
     runs-on: ubuntu-latest
@@ -120,13 +263,94 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install platformio
+      - run: pip install platformio==6.2.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify fleet JTAG configuration rejects unsafe overrides
+        run: python hardware/scripts/test_verify_secure_fleet.py
       - name: Install non-production firmware build configuration
         run: cp hardware/include/secrets.example.h hardware/include/secrets.h
-      - run: platformio test --project-dir hardware -e native
+      - name: Record actual native firmware assertion identities
+        run: npm run qa:native
+      - name: Retain native host evidence separately from physical acceptance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-firmware-evidence
+          path: artifacts/qa/native-*
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Exercise real checkpoint cryptography, TLS wrapper and NMEA parser
+        run: python hardware/scripts/test_host_protocols.py
+      - name: Keep firmware runtime reachable in build verification
+        # The example's short secret intentionally fails boot validation.
+        # A valid-length fake secret avoids optimizing all network/task code
+        # away; this fixture has no usable device credentials.
+        run: sed -i 's/replace-me/ci-only-not-a-real-device-secret/' hardware/include/secrets.h
       - run: platformio run --project-dir hardware -e esp32dev
+      - name: Build quiet development runtime for trace-gating verification
+        run: platformio run --project-dir hardware -e esp32dev-quiet
+      - name: Verify trace strings are removed from the quiet artifact
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          marker = b"[TelemetryTrace]"
+          assert marker in Path("hardware/.pio/build/esp32dev/firmware.elf").read_bytes()
+          assert marker not in Path("hardware/.pio/build/esp32dev-quiet/firmware.elf").read_bytes()
+          PY
+      - name: Verify pre-application SNTP guard is linked
+        run: |
+          "$HOME/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-nm" hardware/.pio/build/esp32dev/firmware.elf | grep -E ' T sntp_sync_time$'
+      - name: Build legacy app-only journal acceptance firmware
+        run: platformio run --project-dir hardware -e esp32dev-journal
       - name: Verify signed fleet build with an ephemeral CI-only key
         run: |
           mkdir -p hardware/keys
           openssl genrsa -out hardware/keys/secure_boot_signing_key.pem 3072
           platformio run --project-dir hardware -e esp32dev-secure
+      - name: Verify fleet artifact signature rejects modification and foreign keys
+        run: >-
+          python hardware/scripts/test_signed_image.py
+          --esptool-dir "$HOME/.platformio/packages/tool-esptoolpy"
+          --image hardware/.pio/build/esp32dev-secure/firmware-signed.bin
+          --key hardware/keys/secure_boot_signing_key.pem
+
+  qa-evidence:
+    needs: [web, firmware]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: static-acceptance-catalog
+          path: artifacts/qa/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: always()
+        with:
+          pattern: '*-evidence'
+          path: artifacts/qa/
+          merge-multiple: true
+      - name: Validate all six current-source evidence families
+        if: always()
+        run: npm run qa:report
+      - name: Retain current-source execution ledger
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: current-source-execution-evidence
+          path: artifacts/qa/execution-report.*
+          if-no-files-found: error
+          retention-days: 7

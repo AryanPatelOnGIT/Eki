@@ -19,14 +19,15 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
     loading,
     roleError,
     logout,
+    refreshAccess,
   } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/");
-  }, [loading, router, user]);
+    if (!loading && !user && !roleError) router.replace("/");
+  }, [loading, roleError, router, user]);
 
   useEffect(() => {
     if (user && allowedRoles.includes(user.role)) {
@@ -57,10 +58,6 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
     );
   }
 
-  if (!user) {
-    return null;
-  }
-
   if (roleError) {
     return (
       <div
@@ -76,7 +73,7 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
           {roleError}
         </p>
         <div className="flex items-center gap-4">
-          <button type="button" className="btn-primary px-5 py-2.5 text-sm" onClick={() => window.location.reload()}>
+          <button type="button" className="btn-primary px-5 py-2.5 text-sm" onClick={() => void refreshAccess()}>
             Try again
           </button>
           <button
@@ -91,6 +88,8 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
       </div>
     );
   }
+
+  if (!user) return null;
 
   if (!allowedRoles.includes(user.role)) {
     return (

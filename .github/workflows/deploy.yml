@@ -9,11 +9,12 @@
 # Required GitHub secrets (environment-scoped):
 #   staging / production environments each need:
 #   - FIREBASE_TOKEN: a Firebase CLI CI token for that project
+#   - FIREBASE_DATABASE_URL: the backend's deployed RTDB instance origin
 #   - NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
 #     NEXT_PUBLIC_FIREBASE_DATABASE_URL, NEXT_PUBLIC_FIREBASE_PROJECT_ID,
 #     NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET, NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
 #     NEXT_PUBLIC_FIREBASE_APP_ID, NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
-#     NEXT_PUBLIC_GOOGLE_MAP_ID, NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY,
+#     NEXT_PUBLIC_GOOGLE_MAP_ID,
 #     NEXT_PUBLIC_BACKEND_URL
 name: Deploy
 
@@ -70,6 +71,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Verify backend/frontend RTDB target before staging release
+        run: npm run verify:rtdb-instance
+        env:
+          FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.NEXT_PUBLIC_FIREBASE_DATABASE_URL }}
+          RTDB_EXPECTED_REGION: ${{ vars.RTDB_EXPECTED_REGION }}
       - name: Cache Next.js + backend TypeScript build caches
         # Same cache namespace as ci.yml so deploys reuse what verification built.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -92,11 +99,24 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
           NEXT_PUBLIC_GOOGLE_MAP_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAP_ID }}
-          NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
         run: npm run build:production
-      - name: Enforce Firebase App Check before staging deploy
-        run: node scripts/verify-appcheck-enforcement.mjs --project bustrack-be165 --enforce
+      - name: Disable Firebase App Check before staging deploy
+        run: node scripts/disable-appcheck-enforcement.mjs --project bustrack-be165 --disable
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      - name: Deploy required Firestore indexes
+        run: >-
+          $FIREBASE_CLI deploy
+          --project bustrack-be165
+          --only firestore:indexes
+          --non-interactive
+          --token "$FIREBASE_TOKEN"
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      - name: Wait for retention and privacy indexes
+        timeout-minutes: 32
+        run: node scripts/verify-firestore-indexes.mjs --project bustrack-be165
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       - name: Deploy to staging (hosting + rules)
@@ -121,6 +141,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Verify backend/frontend RTDB target before production release
+        run: npm run verify:rtdb-instance
+        env:
+          FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.NEXT_PUBLIC_FIREBASE_DATABASE_URL }}
+          RTDB_EXPECTED_REGION: ${{ vars.RTDB_EXPECTED_REGION }}
       - name: Cache Next.js + backend TypeScript build caches
         # Same cache namespace as ci.yml so deploys reuse what verification built.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -143,11 +169,24 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}
           NEXT_PUBLIC_GOOGLE_MAP_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_MAP_ID }}
-          NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           NEXT_PUBLIC_BACKEND_URL: ${{ secrets.NEXT_PUBLIC_BACKEND_URL }}
         run: npm run build:production
-      - name: Verify Firebase App Check enforcement
-        run: node scripts/verify-appcheck-enforcement.mjs --project eki-production
+      - name: Disable Firebase App Check before production deploy
+        run: node scripts/disable-appcheck-enforcement.mjs --project eki-production --disable
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      - name: Deploy required Firestore indexes
+        run: >-
+          $FIREBASE_CLI deploy
+          --project eki-production
+          --only firestore:indexes
+          --non-interactive
+          --token "$FIREBASE_TOKEN"
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      - name: Wait for retention and privacy indexes
+        timeout-minutes: 32
+        run: node scripts/verify-firestore-indexes.mjs --project eki-production
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       - name: Deploy to production (explicit project, never the default)

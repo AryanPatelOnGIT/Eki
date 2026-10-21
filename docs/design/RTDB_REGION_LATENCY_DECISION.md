@@ -1,10 +1,12 @@
 # RTDB region latency decision
 
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+
 Status: **Singapore candidate approved; production cutover requires the staged gate below.**
 
 Decision date: 2026-09-10. Scope: issue #169; this decision does not authorize creating or switching a production database.
 
-## Verified current state
+## State recorded at the decision baseline
 
 `firebase database:instances:list --project bustrack-be165 --json` reported one active default instance, `bustrack-be165-default-rtdb`, in `us-central1` (Iowa). The Firebase CLI output contained no credentials. The repository does not deploy a managed backend region: its current bench/demo design runs Express on this Asia/Kolkata-configured workstation behind an HTTPS tunnel. At measurement time port 4000 was not listening and the configured public tunnel returned four 404 responses and one timeout, so it cannot be represented as a live production backend measurement.
 
@@ -32,7 +34,7 @@ Repeat the authenticated backend probe with `npm run measure:rtdb --workspace=ba
 Do not cut over until an approved nonproduction `asia-southeast1` instance passes all of these checks on the campus network, mobile data, and the actual backend host at representative times:
 
 1. Run at least 100 warm authenticated Admin reads in each region and record p50/p95/p99.
-2. Record browser `onValue` server-receive-to-render timing and reconnect behavior with authenticated App Check-enabled users.
+2. Record browser RTDB callback-to-render timing and reconnect behavior with authenticated App Check-enabled users.
 3. Rehearse one moving device at the one-second cadence and record `/api/health` processing, device-to-server, RTDB-write and route-processing p95/p99 plus errors/429s.
 4. Require Singapore median and p95 to improve by at least 30% with no worse error/reconnect rate, no regression in ingestion throughput, and successful lifecycle/passenger/admin acceptance.
 5. Obtain the university owner and Firebase billing/region approval. If the gate misses, retain Iowa and archive the measurements.

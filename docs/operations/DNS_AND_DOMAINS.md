@@ -1,6 +1,6 @@
 # Eki Web App DNS & Domain Setup Guide
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-04 14:20 IST (UTC+05:30).
 
 This document defines the DNS record configurations, custom domain setups, SSL/TLS provisioning, and security integration rules required for deploying the Eki web application and backend API.
 
@@ -20,6 +20,13 @@ The Eki deployment consists of two primary endpoints:
 
 ### Default vs. Production Custom Domains
 
+Set `NEXT_PUBLIC_SITE_URL` to the canonical frontend HTTPS origin before the
+static build. Metadata, Open Graph URLs/images, robots and sitemap share it.
+Without it the explicit primary-domain fallback remains
+`https://bustrack-be165.web.app`. Set `NEXT_PUBLIC_SITE_INDEXING=false` on
+testing/preview builds; changing either value requires rebuilding the export.
+This does not configure Firebase Auth, App Check, CORS or DNS automatically.
+
 | Component | Default Firebase Origin | Example Custom Domain |
 |---|---|---|
 | **Frontend Web App** | `<firebase-project-id>.web.app`<br>`<firebase-project-id>.firebaseapp.com` | `eki.yourdomain.com` or `bus.university.edu` |
@@ -32,6 +39,7 @@ The Eki deployment consists of two primary endpoints:
 To map a custom domain (e.g. `eki.yourdomain.com`) to Firebase Hosting:
 
 ### Step A: Add Custom Domain in Firebase Console
+
 1. Open the [Firebase Console](https://console.firebase.google.com/).
 2. Navigate to **Hosting** under the approved Firebase project for this environment.
 3. Click **Add Custom Domain** and enter your domain name (e.g. `eki.yourdomain.com`).
@@ -77,6 +85,7 @@ The Express backend must sit behind a valid TLS/HTTPS endpoint with public or ca
 | **CNAME** | `api` | `<cloud-run-service>.a.run.app.` | CNAME pointing to Cloud Run / ALB endpoint |
 
 ### SSL/TLS Requirements
+
 - Mandatory HTTPS (TLS 1.2+).
 - Managed SSL via Let's Encrypt, Cloudflare, or GCP Managed Certificates.
 - Export the **Root CA certificate** if using internal university enterprise CAs; it must be embedded in the device-specific `secrets.h` for TLS validation.
@@ -85,7 +94,8 @@ The Express backend must sit behind a valid TLS/HTTPS endpoint with public or ca
 
 ## 5. Environment & Security Header Alignment
 
-### Frontend `.env.local` / `env.production`
+### Frontend local file or production build environment
+
 ```ini
 NEXT_PUBLIC_BACKEND_URL=https://api.eki.yourdomain.com
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=<the-exact-hostname-that-serves-the-frontend>
@@ -96,10 +106,7 @@ For the default Firebase Hosting URL, this is normally
 custom hostname and authorize `https://<frontend-host>/__/auth/handler` with the
 OAuth provider. Keeping the Auth helper on the frontend origin prevents
 third-party-storage partitioning from breaking popup/redirect state in Safari,
-Firefox and privacy-restricted browsers. The frontend automatically normalizes
-this via `resolveFirebaseAuthDomain` in `frontend/src/lib/firebaseAuthDomain.ts`.
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=<frontend-hostname>
-```
+Firefox and privacy-restricted browsers.
 
 The client automatically uses the matching Firebase Hosting hostname only on
 the project's primary `<project-id>.web.app` and `<project-id>.firebaseapp.com`
@@ -108,6 +115,7 @@ sites. For a secondary Firebase Hosting site or a custom domain, set
 matching Google OAuth redirect URI above.
 
 ### Backend `.env`
+
 ```ini
 CORS_ORIGIN=https://eki.yourdomain.com
 ```
@@ -117,7 +125,9 @@ origin is configured in the frontend and firmware; the backend receives its
 browser allowlist through `CORS_ORIGIN`.
 
 ### Firebase Hosting CSP (`firebase.json`)
+
 Ensure `firebase.json` headers permit required connections and auth frames:
+
 - `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebasedatabase.app https://*.firebaseapp.com https://www.google.com/recaptcha/ wss://*.firebaseio.com wss://*.firebasedatabase.app https://api.eki.yourdomain.com`
 - `frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/`
 

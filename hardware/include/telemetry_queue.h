@@ -61,6 +61,15 @@ class NewestFirstTelemetryQueue {
     finishMutation();
   }
 
+  /** Restore one committed checkpoint without changing its retry identity. */
+  bool restoreNewest(Sample sample, uint32_t configurationTag = 0) {
+    if (sample.sequence == 0) return false;
+    reset(configurationTag);
+    nextSequence_ = sample.sequence;
+    push(sample);
+    return true;
+  }
+
   /**
    * Add a sample and assign its monotonic queue sequence. When full, discard
    * the oldest sample so the most useful live state is always retained.

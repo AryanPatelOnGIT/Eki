@@ -7,11 +7,16 @@ import {
 import { promisify } from "node:util";
 import { db, rtdb } from "../lib/firebaseAdmin";
 import { createConcurrencyLimiter } from "../lib/concurrency";
+import { createBoundedSingleFlight, SingleFlightDeadlineError } from "../lib/boundedSingleFlight";
+import { BoundedKeyedExecutor } from "../lib/boundedKeyedExecutor";
+import { ExecutionDeadline, TelemetryExecutionFailure, currentExecutionDeadline } from "../lib/executionDeadline";
 import { recordBackgroundFailure } from "../lib/backgroundFailureTracker";
-import { isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
-import { withoutLiveRouteContext } from "../lib/liveRouteContext";
-import { normalizeRideDirection } from "../lib/rideDirection";
+import { evaluateOutageReacquisition, isPlausibleTelemetryTransition } from "../lib/telemetryMotion";
+import { restoreDurableRide } from "./durableRideRecovery";
+export { durableLifecycle, freshestDelayMinutes, shouldApplyRestoreTelemetry } from "./durableRideRecoveryPolicy";
+export type { DelayPreference } from "./durableRideRecoveryPolicy";
 import type { TelemetryPayload } from "./telemetryPayload";
+import { telemetryDiagnosticCounters } from "./telemetryDiagnosticCounters";
 import { scheduleTelemetryRouteProcessing } from "./telemetryRouteService";
 import {
   AuthenticatedDeviceRateLimiter,
@@ -31,32 +36,47 @@ const scryptAsync = promisify(scrypt);
 // cache misses cannot exhaust CPU/ memory on the request path (issue #48 L1).
 const SCRYPT_MAX_CONCURRENT = 4;
 const scryptLimiter = createConcurrencyLimiter(SCRYPT_MAX_CONCURRENT);
+const ingestionExecution = new BoundedKeyedExecutor<string>({ maxConcurrent: 8, maxPending: 32, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CREDENTIAL_CACHE_MS = 60_000;
 const NEGATIVE_CACHE_MS = 5_000;
-const DURABLE_RIDE_MISS_CACHE_MS = 30_000;
 const MAX_CREDENTIAL_CACHE_ENTRIES = 1_000;
-const MAX_DURABLE_RIDE_MISSES = 1_000;
 const DEVICE_RATE_LIMIT_PATH = "_deviceRateLimits";
 const DEVICE_CREDENTIAL_VERSION_PATH = "_deviceCredentialVersions";
 
 export interface DeviceAssignment {
   busId: string;
   routeId: string;
+  deviceId?: string;
+  assignmentRevision?: number;
+}
+
+export type DeviceCredentialResult =
+  | { status: "invalid" | "unassigned" }
+  | { status: "assigned"; assignment: DeviceAssignment };
+
+export class DeviceCredentialVerificationInvalidatedError extends Error {
+  constructor() { super("Device credentials changed during verification; retry with the current registry."); }
 }
 
 interface CredentialCacheEntry {
   assignment: DeviceAssignment | null;
+  unassigned: boolean;
   secretDigest: Buffer | null;
   expiresAt: number;
+  expiresMonotonicAt: number;
 }
 
 export interface HttpsTelemetryStatus {
+  diagnostics: ReturnType<typeof telemetryDiagnosticCounters>;
   accepted: number;
   rejected: number;
   lastAcceptedAt: string | null;
   lastRejectedAt: string | null;
   credentialCacheHitRate: number | null;
+  credentialFills: { activeFills: number; waitingCallers: number };
+  kdfExecution: ReturnType<typeof scryptLimiter.snapshot>;
+  ingestionExecution: ReturnType<typeof ingestionExecution.snapshot>;
   processingLatencyMs: LatencySummary;
   deviceQueueLatencyMs: LatencySummary;
   networkLatencyMs: LatencySummary;
@@ -85,11 +105,6 @@ export interface LatencySummary {
   p99: number | null;
 }
 
-export interface DelayPreference {
-  delayMinutes: number;
-  delayUpdatedAt: number;
-}
-
 /**
  * A powered device proves only device presence. Ride lifecycle fields are
  * introduced by the transactional arm/direction-resolution flow, never by
@@ -99,59 +114,11 @@ export function initialDevicePresenceState(): { status: "offline" } {
   return { status: "offline" };
 }
 
-function validDelayMinutes(value: unknown): number | null {
-  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1440
-    ? Number(value)
-    : null;
-}
-
-function validDelayRevision(value: unknown): number {
-  return Number.isSafeInteger(value) && Number(value) >= 0
-    ? Number(value)
-    : 0;
-}
-
-/**
- * Pick the freshest announced delay between the live RTDB node and the
- * durable active_rides copy.
- *
- * The delay route writes both stores with the same `delayUpdatedAt` epoch,
- * but the two writes are not atomic, so one can be stale after a partial
- * failure. The newer timestamp wins; on a tie the live value is preferred
- * because it is what passengers are currently seeing. Legacy rows without
- * a timestamp default to 0 and therefore never override a newer value.
- */
-export function freshestDelayMinutes(
-  live: Record<string, unknown> | null,
-  durable: Record<string, unknown> | null,
-): DelayPreference {
-  const liveMinutes = validDelayMinutes(live?.delayMinutes);
-  const durableMinutes = validDelayMinutes(durable?.delayMinutes);
-  const liveAt = validDelayRevision(live?.delayUpdatedAt);
-  const durableAt = validDelayRevision(durable?.delayUpdatedAt);
-
-  if (durableMinutes !== null && (liveMinutes === null || durableAt > liveAt)) {
-    return { delayMinutes: durableMinutes, delayUpdatedAt: durableAt };
-  }
-  return {
-    delayMinutes: liveMinutes ?? durableMinutes ?? 0,
-    delayUpdatedAt: liveAt,
-  };
-}
-
-export function shouldApplyRestoreTelemetry(
-  existingTimestamp: unknown,
-  candidateTimestamp: number,
-): boolean {
-  const existing = Number(existingTimestamp);
-  return !Number.isFinite(existing) || existing < candidateTimestamp;
-}
-
 export type TelemetryIngestResult =
   | { ok: true; duplicate: boolean }
   | {
       ok: false;
-      reason: "credentials";
+      reason: "credentials" | "unassigned";
     }
   | {
       ok: false;
@@ -160,7 +127,9 @@ export type TelemetryIngestResult =
     };
 
 const credentialCache = new Map<string, CredentialCacheEntry>();
-const durableRideMisses = new Map<string, number>();
+const credentialFills = createBoundedSingleFlight<DeviceCredentialResult>({
+  maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
+});
 const durableRideRestores = new Map<string, Promise<void>>();
 let credentialInvalidationListenerStarted = false;
 const status: Pick<
@@ -305,6 +274,10 @@ function ensureDeviceCredentialInvalidationListener(): void {
   };
   const handleError = (error: Error) => {
     credentialInvalidationListenerStarted = false;
+    credentialCache.clear();
+    credentialFills.invalidate();
+    versions.off("child_added", invalidate);
+    versions.off("child_changed", invalidate);
     console.error("[Devices] Credential invalidation listener failed:", error);
   };
   versions.on("child_added", invalidate, handleError);
@@ -325,12 +298,16 @@ function assignmentFromDevice(
   ) {
     return null;
   }
-  return { busId, routeId };
+  return { busId, routeId,
+    ...(typeof device?.deviceId === "string" ? { deviceId: device.deviceId } : {}),
+    ...(Number.isSafeInteger(device?.assignmentRevision) ? { assignmentRevision: Number(device?.assignmentRevision) } : {}),
+  };
 }
 
 export async function verifyDeviceSecretHash(
   secret: string,
   encodedHash: unknown,
+  mayDispatch: () => boolean = () => true,
 ): Promise<boolean> {
   let salt = DUMMY_SALT;
   let storedKey = DUMMY_HASH;
@@ -347,75 +324,108 @@ export async function verifyDeviceSecretHash(
       storedHashIsValid = true;
     }
   }
-  const derived = (await scryptLimiter.run(() => scryptAsync(secret, salt, 64))) as Buffer;
+  const deadline = currentExecutionDeadline();
+  const derived = (await scryptLimiter.run(() => {
+    deadline?.assert();
+    if (!mayDispatch()) throw new SingleFlightDeadlineError();
+    return scryptAsync(secret, salt, 64);
+  })) as Buffer;
   return safeBufferEqual(derived, storedKey) && storedHashIsValid;
 }
 
-export async function authenticateDeviceCredentials(
+export async function checkDeviceCredentials(
   deviceId: string,
   secret: string,
   now: number,
-): Promise<DeviceAssignment | null> {
+): Promise<DeviceCredentialResult> {
   ensureDeviceCredentialInvalidationListener();
   const suppliedDigest = digestSecret(secret);
   const cacheKey = credentialCacheKey(deviceId, suppliedDigest);
   const cached = credentialCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && cached.expiresMonotonicAt > performance.now()) {
     credentialCacheHits += 1;
     if (
       cached.assignment &&
       cached.secretDigest &&
       safeBufferEqual(suppliedDigest, cached.secretDigest)
     ) {
-      return cached.assignment;
+      return { status: "assigned", assignment: cached.assignment };
     }
-    return null;
+    return { status: cached.unassigned && cached.secretDigest && safeBufferEqual(suppliedDigest, cached.secretDigest) ? "unassigned" : "invalid" };
   }
 
   credentialCacheMisses += 1;
+  return credentialFills.run(cacheKey, deviceId, async isCurrent => {
+    if (!isCurrent()) throw new SingleFlightDeadlineError();
+    const assertCurrent = () => {
+      // An initial version snapshot or concurrent credential update invalidates
+      // this read; it is not evidence that the supplied secret is incorrect.
+      // Throw so device routes return a retryable 503 instead of latching 401.
+      if (!isCurrent()) throw new DeviceCredentialVerificationInvalidatedError();
+    };
+    const fillStartedAt = performance.now();
+    const publish = (value: CredentialCacheEntry) => {
+      assertCurrent();
+      cacheCredential(cacheKey, value);
+      return true;
+    };
+    const deviceDoc = await db.collection("devices").doc(deviceId).get();
+    assertCurrent();
+    const device = deviceDoc.data() as Record<string, unknown> | undefined;
+    const assignment = deviceDoc.exists ? assignmentFromDevice(device) : null;
+    const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash, isCurrent);
+    assertCurrent();
+    if (!assignment || !secretMatches) {
+      const unassigned = secretMatches && device?.enabled !== false;
+      publish({
+        assignment: null,
+        unassigned,
+        secretDigest: suppliedDigest,
+        expiresAt: now + NEGATIVE_CACHE_MS,
+        expiresMonotonicAt: fillStartedAt + NEGATIVE_CACHE_MS,
+      });
+      return { status: unassigned ? "unassigned" : "invalid" };
+    }
 
-  const deviceDoc = await db.collection("devices").doc(deviceId).get();
-  const device = deviceDoc.data() as Record<string, unknown> | undefined;
-  const assignment = deviceDoc.exists ? assignmentFromDevice(device) : null;
-  const secretMatches = await verifyDeviceSecretHash(secret, device?.secretHash);
-  if (!assignment || !secretMatches) {
-    cacheCredential(cacheKey, {
-      assignment: null,
+    const [busDoc, routeDoc] = await Promise.all([
+      db.collection("buses").doc(assignment.busId).get(),
+      db.collection("routes").doc(assignment.routeId).get(),
+    ]);
+    const bus = busDoc.data();
+    const assignedRoutes = Array.isArray(bus?.assignedRoutes)
+      ? bus.assignedRoutes
+      : typeof bus?.assignedRouteId === "string"
+        ? [bus.assignedRouteId]
+        : [];
+    if (
+      !busDoc.exists ||
+      !routeDoc.exists ||
+      !assignedRoutes.includes(assignment.routeId)
+    ) {
+      publish({
+        assignment: null,
+        unassigned: true,
+        secretDigest: suppliedDigest,
+        expiresAt: now + NEGATIVE_CACHE_MS,
+        expiresMonotonicAt: fillStartedAt + NEGATIVE_CACHE_MS,
+      });
+      return { status: "unassigned" };
+    }
+
+    const published = publish({
+      assignment,
+      unassigned: false,
       secretDigest: suppliedDigest,
-      expiresAt: now + NEGATIVE_CACHE_MS,
+      expiresAt: now + CREDENTIAL_CACHE_MS,
+      expiresMonotonicAt: fillStartedAt + CREDENTIAL_CACHE_MS,
     });
-    return null;
-  }
-
-  const [busDoc, routeDoc] = await Promise.all([
-    db.collection("buses").doc(assignment.busId).get(),
-    db.collection("routes").doc(assignment.routeId).get(),
-  ]);
-  const bus = busDoc.data();
-  const assignedRoutes = Array.isArray(bus?.assignedRoutes)
-    ? bus.assignedRoutes
-    : typeof bus?.assignedRouteId === "string"
-      ? [bus.assignedRouteId]
-      : [];
-  if (
-    !busDoc.exists ||
-    !routeDoc.exists ||
-    !assignedRoutes.includes(assignment.routeId)
-  ) {
-    cacheCredential(cacheKey, {
-      assignment: null,
-      secretDigest: suppliedDigest,
-      expiresAt: now + NEGATIVE_CACHE_MS,
-    });
-    return null;
-  }
-
-  cacheCredential(cacheKey, {
-    assignment,
-    secretDigest: suppliedDigest,
-    expiresAt: now + CREDENTIAL_CACHE_MS,
+    return published ? { status: "assigned", assignment } : { status: "invalid" };
   });
-  return assignment;
+}
+
+export async function authenticateDeviceCredentials(deviceId: string, secret: string, now: number): Promise<DeviceAssignment | null> {
+  const result = await checkDeviceCredentials(deviceId, secret, now);
+  return result.status === "assigned" ? result.assignment : null;
 }
 
 async function deviceRateLimitRetryAfterMs(
@@ -439,12 +449,15 @@ async function reserveDistributedDeviceTokens(
   limit: number,
   requested: number,
 ): Promise<DistributedTokenReservation> {
+  const deadline = currentExecutionDeadline();
+  deadline?.assert();
   let callbackAttempts = 0;
   let finalDecision: ReturnType<typeof reserveRateLimitTokens> | null = null;
   deviceRateLimitStoreTransactions += 1;
   const transaction = await rtdb
     .ref(`${DEVICE_RATE_LIMIT_PATH}/${deviceId}`)
     .transaction((value) => {
+      if (deadline && !deadline.isActive()) return undefined;
       callbackAttempts += 1;
       const record = value as Partial<RateBucket> | null;
       const existing = record
@@ -487,120 +500,17 @@ async function reserveDistributedDeviceTokens(
   };
 }
 
-export function durableLifecycle(
-  value: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const direction = normalizeRideDirection(value.direction);
-  if (
-    value.status !== "active" ||
-    typeof value.sessionId !== "string" ||
-    typeof value.driverId !== "string" ||
-    (value.tripState !== "pre_departure" &&
-      value.tripState !== "in_service") ||
-    !direction
-  ) {
-    return null;
-  }
-  return {
-    sessionId: value.sessionId,
-    driverId: value.driverId,
-    status: "active",
-    direction,
-    originStopId: typeof value.originStopId === "string" ? value.originStopId : null,
-    destinationStopId:
-      typeof value.destinationStopId === "string" ? value.destinationStopId : null,
-    automaticTurnaround: value.automaticTurnaround === true,
-    previousSessionId:
-      typeof value.previousSessionId === "string" ? value.previousSessionId : null,
-    completedAt: null,
-    turnaroundEligibleAt: null,
-    turnaroundClaimId: null,
-    turnaroundClaimedAt: null,
-    tripState: value.tripState,
-    currentStopIndex: Number.isInteger(value.currentStopIndex)
-      ? value.currentStopIndex
-      : 0,
-    hasDepartedOrigin: value.hasDepartedOrigin === true,
-    delayMinutes:
-      typeof value.delayMinutes === "number" ? value.delayMinutes : 0,
-    delayUpdatedAt:
-      typeof value.delayUpdatedAt === "number" ? value.delayUpdatedAt : 0,
-  };
-}
-
-async function restoreDurableRide(
-  assignment: DeviceAssignment,
-  sample: TelemetryPayload,
-): Promise<void> {
-  const nodeKey = `${assignment.busId}_${assignment.routeId}`;
-  const now = Date.now();
-  const missExpiresAt = durableRideMisses.get(nodeKey) ?? 0;
-  if (missExpiresAt > now) return;
-
-  const activeRide = await db.collection("active_rides").doc(nodeKey).get();
-  const lifecycle = activeRide.exists
-    ? durableLifecycle(
-        activeRide.data() as Record<string, unknown>,
-      )
-    : null;
-  if (!lifecycle) {
-    if (
-      !durableRideMisses.has(nodeKey) &&
-      durableRideMisses.size >= MAX_DURABLE_RIDE_MISSES
-    ) {
-      for (const [key, expiresAt] of durableRideMisses) {
-        if (expiresAt <= now) durableRideMisses.delete(key);
-      }
-      if (durableRideMisses.size >= MAX_DURABLE_RIDE_MISSES) {
-        const oldest = durableRideMisses.keys().next().value;
-        if (oldest) durableRideMisses.delete(oldest);
-      }
-    }
-    durableRideMisses.set(nodeKey, now + DURABLE_RIDE_MISS_CACHE_MS);
-    return;
-  }
-  durableRideMisses.delete(nodeKey);
-
-  await rtdb.ref(`activeBuses/${nodeKey}`).transaction((current) => {
-    const live = current as Record<string, unknown> | null;
-    if (
-      live?.status === "active" &&
-      typeof live.sessionId === "string"
-    ) {
-      return;
-    }
-    const telemetry = shouldApplyRestoreTelemetry(
-      live?.timestamp,
-      sample.timestamp,
-    ) ? sample : {};
-    // The durable lifecycle can hold a delay older than the live node if a
-    // delay update only partially landed; never regress the announced value.
-    const delay = freshestDelayMinutes(live, lifecycle);
-    const liveBase = live?.sessionId === lifecycle.sessionId
-      ? live
-      : withoutLiveRouteContext(live);
-    return {
-      ...(liveBase ?? {}),
-      ...telemetry,
-      ...lifecycle,
-      ...delay,
-      busId: assignment.busId,
-      routeId: assignment.routeId,
-      deviceState: "online",
-      signalState:
-        sample.motionState === "uncertain" ? "gnss_lost" : "connected",
-    };
-  });
-}
-
 function scheduleDurableRideRestore(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
+  claimId: string | null,
+  recoverTerminal: boolean,
 ): void {
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   if (durableRideRestores.has(nodeKey)) return;
 
-  const restore = restoreDurableRide(assignment, sample)
+  const restore = restoreDurableRide(assignment, sample, claimId, recoverTerminal)
+    .then(() => undefined)
     .catch((error) => {
       // Surface through the failure tracker too (issue #38): sustained
       // failures escalate to an error-level alert and show up on /health.
@@ -643,6 +553,9 @@ export function nextTelemetryValue(
   sample: TelemetryPayload,
   backendReceivedAt: number,
 ): Record<string, unknown> | undefined {
+  if (typeof current?.retiredAssignmentRevision === "number" &&
+      (!assignment.deviceId || assignment.deviceId === current.deviceId) &&
+      (assignment.assignmentRevision ?? 0) < current.retiredAssignmentRevision) return;
   const existingTimestamp = Number(current?.timestamp);
   if (!telemetrySampleIsNewer(
     existingTimestamp,
@@ -671,7 +584,11 @@ export function nextTelemetryValue(
           timestamp: previousTimestamp,
         }
       : null;
-  const transitionIsPlausible = isPlausibleTelemetryTransition(previous, sample);
+  const ordinaryTransition = isPlausibleTelemetryTransition(previous, sample);
+  const reacquisition = ordinaryTransition ? { accepted: false } : evaluateOutageReacquisition(
+    previous, sample, current?.rawLocation, current?.plausibilityReacquisition,
+  );
+  const transitionIsPlausible = ordinaryTransition || reacquisition.accepted;
   const acceptedSample = transitionIsPlausible || !previous
     ? sample
     : {
@@ -689,11 +606,20 @@ export function nextTelemetryValue(
     ? sample
     : previous;
 
+  // Retire only verified obsolete fields. Preserve lifecycle, current matching
+  // state, and unknown fields so a rolling deployment cannot erase new state.
+  const currentState: Record<string, unknown> = { ...(current ?? initialDevicePresenceState()) };
+  delete currentState.rtdbCommittedAt; // Same server timestamp as receivedAt.
+  delete currentState.activeRoutePolyline; // Geometry lives in the versioned sibling store.
+  delete currentState.plausibilityReacquisition;
+  delete currentState.retiredAssignmentRevision;
+
   return {
     // Device presence is not a ride. Lifecycle fields are introduced only by
     // the transactional arm/direction-resolution path.
-    ...(current ?? initialDevicePresenceState()),
+    ...currentState,
     ...acceptedSample,
+    ...(reacquisition.pending ? { plausibilityReacquisition: reacquisition.pending } : {}),
     // Keep the authenticated GNSS fix independently observable even when
     // plausibility filtering retains the previous accepted live position.
     // Map matching writes a separate matchedLocation and never mutates this.
@@ -718,6 +644,8 @@ export function nextTelemetryValue(
     },
     busId: assignment.busId,
     routeId: assignment.routeId,
+    ...(assignment.deviceId ? { deviceId: assignment.deviceId } : {}),
+    ...(assignment.assignmentRevision !== undefined ? { assignmentRevision: assignment.assignmentRevision } : {}),
     deviceState: "online",
     signalState:
       acceptedSample.motionState === "uncertain"
@@ -725,7 +653,6 @@ export function nextTelemetryValue(
         : "connected",
     backendReceivedAt,
     receivedAt: { ".sv": "timestamp" },
-    rtdbCommittedAt: { ".sv": "timestamp" },
   };
 }
 
@@ -733,12 +660,15 @@ async function persistTelemetry(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
   backendReceivedAt: number,
-): Promise<{ committed: boolean; hasSession: boolean }> {
+): Promise<{ committed: boolean; hasSession: boolean; claimId: string | null; recoverTerminal: boolean }> {
+  const deadline = currentExecutionDeadline();
+  deadline?.markWriteDispatched();
   const writeStartedAt = Date.now();
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
   const ref = rtdb.ref(`activeBuses/${nodeKey}`);
   let transactionAttempts = 0;
   const transaction = await ref.transaction((current) => {
+    if (deadline && !deadline.isActive()) return undefined;
     transactionAttempts += 1;
     return nextTelemetryValue(
       current as Record<string, unknown> | null,
@@ -746,14 +676,17 @@ async function persistTelemetry(
       sample,
       backendReceivedAt,
     );
-  });
+  }, undefined, false);
   const value = transaction.snapshot.val() as Record<string, unknown> | null;
   recordSample(rtdbWriteLatencySamples, Date.now() - writeStartedAt);
   recordSample(rtdbTransactionAttemptSamples, transactionAttempts);
   return {
     committed: transaction.committed,
     hasSession:
-      value?.status === "active" && typeof value.sessionId === "string",
+      value?.status === "active" && typeof value.sessionId === "string" && value.sessionId.length > 0 &&
+      (value.tripState === "pre_departure" || value.tripState === "in_service"),
+    claimId: typeof value?.turnaroundClaimId === "string" ? value.turnaroundClaimId : null,
+    recoverTerminal: typeof value?.sessionId !== "string" || !value.sessionId,
   };
 }
 
@@ -765,11 +698,12 @@ export function parseDeviceAuthorization(
   return secret.length >= 20 && secret.length <= 512 ? secret : null;
 }
 
-export async function ingestDeviceTelemetry(
+async function executeDeviceTelemetry(
   deviceId: string,
   secret: string,
   sample: TelemetryPayload,
-  now = Date.now(),
+  now: number,
+  deadline: ExecutionDeadline,
 ): Promise<TelemetryIngestResult> {
   // One server ingress timestamp for the whole request boundary. `now` is
   // captured when the handler enters, so `backendReceivedAt` and the network
@@ -783,25 +717,26 @@ export async function ingestDeviceTelemetry(
     return { ok: false, reason: "credentials" };
   }
 
-  const assignment = await authenticateDeviceCredentials(deviceId, secret, now);
-  if (!assignment) {
+  const credential = await deadline.dependency("credentials", () => checkDeviceCredentials(deviceId, secret, now));
+  if (credential.status !== "assigned") {
     status.rejected += 1;
     status.lastRejectedAt = new Date(now).toISOString();
-    return { ok: false, reason: "credentials" };
+    return { ok: false, reason: credential.status === "unassigned" ? "unassigned" : "credentials" };
   }
-  const retryAfterMs = await deviceRateLimitRetryAfterMs(deviceId, now);
+  const assignment = credential.assignment;
+  const retryAfterMs = await deadline.dependency("rate limit", () => deviceRateLimitRetryAfterMs(deviceId, now));
   if (retryAfterMs !== null) {
     status.rejected += 1;
     status.lastRejectedAt = new Date(now).toISOString();
     return { ok: false, reason: "rate_limit", retryAfterMs };
   }
 
-  const persisted = await persistTelemetry(assignment, sample, serverReceivedAt);
+  const persisted = await deadline.dependency("telemetry commit", () => persistTelemetry({ ...assignment, deviceId }, sample, serverReceivedAt));
   if (!persisted.hasSession) {
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
     // is not delayed by an additional Firestore read.
-    scheduleDurableRideRestore(assignment, sample);
+    scheduleDurableRideRestore(assignment, sample, persisted.claimId, persisted.recoverTerminal);
   }
   if (persisted.committed) {
     status.accepted += 1;
@@ -822,12 +757,29 @@ export async function ingestDeviceTelemetry(
   return { ok: true, duplicate: !persisted.committed };
 }
 
+export async function ingestDeviceTelemetry(
+  deviceId: string, secret: string, sample: TelemetryPayload, now = Date.now(),
+): Promise<TelemetryIngestResult> {
+  const deadline = new ExecutionDeadline();
+  try {
+    const operation = ingestionExecution.run(deviceId, () => deadline.run(() => {
+      deadline.assert();
+      return executeDeviceTelemetry(deviceId, secret, sample, now, deadline);
+    }));
+    return await deadline.waitForResponse(operation);
+  } catch (error) {
+    if (error instanceof TelemetryExecutionFailure) throw error;
+    throw new TelemetryExecutionFailure("Telemetry service dependency failed.", deadline.hasUncertainCommit(), error);
+  } finally { deadline.dispose(); }
+}
+
 export function recordTelemetryRejection(now = Date.now()): void {
   status.rejected += 1;
   status.lastRejectedAt = new Date(now).toISOString();
 }
 
 export function invalidateDeviceCredentialCache(deviceId: string): void {
+  credentialFills.invalidate(deviceId);
   const prefix = `${deviceId}:`;
   for (const key of credentialCache.keys()) {
     if (key.startsWith(prefix)) credentialCache.delete(key);
@@ -847,10 +799,14 @@ export function getHttpsTelemetryStatus(): HttpsTelemetryStatus {
   const credentialAttempts = credentialCacheHits + credentialCacheMisses;
   return {
     ...status,
+    diagnostics: telemetryDiagnosticCounters(),
     credentialCacheHitRate:
       credentialAttempts === 0
         ? null
         : Number((credentialCacheHits / credentialAttempts).toFixed(3)),
+    credentialFills: credentialFills.snapshot(),
+    kdfExecution: scryptLimiter.snapshot(),
+    ingestionExecution: ingestionExecution.snapshot(),
     processingLatencyMs: summarizeLatencySamples(processingLatencySamples),
     deviceQueueLatencyMs: summarizeLatencySamples(deviceQueueLatencySamples),
     networkLatencyMs: summarizeLatencySamples(networkLatencySamples),

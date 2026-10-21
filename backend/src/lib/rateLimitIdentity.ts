@@ -17,11 +17,17 @@ export function ipKeyGenerator(req: Request): string {
   return requestIpRateLimitKey(req.ip ?? "unknown");
 }
 
+/** Only a principal attached by verified authentication can own a user bucket. */
+export function verifiedUserKeyGenerator(req: Request): string {
+  return req.user?.uid ? `uid:${req.user.uid}` : ipKeyGenerator(req);
+}
+
 export function createIdentityAwareLimiter(options: {
   windowMs: number;
   limit: number;
   message: { error: string };
   skip?: (req: Request) => boolean;
+  verifiedUser?: boolean;
 }): RequestHandler {
   return rateLimit({
     windowMs: options.windowMs,
@@ -30,6 +36,6 @@ export function createIdentityAwareLimiter(options: {
     legacyHeaders: false,
     message: options.message,
     ...(options.skip ? { skip: options.skip } : {}),
-    keyGenerator: ipKeyGenerator,
+    keyGenerator: options.verifiedUser ? verifiedUserKeyGenerator : ipKeyGenerator,
   });
 }

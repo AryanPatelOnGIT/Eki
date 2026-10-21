@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { FieldValue } from "firebase-admin/firestore";
@@ -5,11 +6,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 const harness = vi.hoisted(() => ({
   liveReads: 0,
+  profileExists: true,
   removePassengerBeforeTransaction: false,
   sessionPassengers: {} as Record<string, Record<string, unknown>>,
   updates: [] as unknown[][],
   joinUid: "passenger_1",
   sessionDirection: "forward" as unknown,
+  sessionStatus: "active",
+  completeBeforeTransaction: false,
+  livePosition: { lat: 23, lng: 72.5 } as { lat: unknown; lng: unknown },
 }));
 
 vi.mock("../middleware/requireAuth", () => ({
@@ -29,7 +34,7 @@ vi.mock("../lib/firebaseAdmin", () => {
     data: () => data,
   });
   const sessionData = () => ({
-    status: "active",
+    status: harness.sessionStatus,
     boardingCode: "ABCD2345",
     busId: "bus_1",
     routeId: "route_1",
@@ -37,12 +42,13 @@ vi.mock("../lib/firebaseAdmin", () => {
     passengers: harness.sessionPassengers,
   });
   const document = (collectionName: string) => ({
+    collectionName,
     get: async () => {
       if (collectionName === "ride_sessions") return snapshot(true, sessionData());
       if (collectionName === "routes") {
         return snapshot(true, { stops: [{ id: "stop_1" }, { id: "stop_2" }] });
       }
-      if (collectionName === "users") return snapshot(true, { displayName: "Profile Name" });
+      if (collectionName === "users") return snapshot(harness.profileExists, { displayName: "Profile Name" });
       return snapshot(false);
     },
   });
@@ -54,13 +60,14 @@ vi.mock("../lib/firebaseAdmin", () => {
       }),
       runTransaction: async (
         callback: (transaction: {
-          get: () => Promise<ReturnType<typeof snapshot>>;
+          get: (ref: { collectionName: string }) => Promise<ReturnType<typeof snapshot>>;
           update: (...args: unknown[]) => void;
         }) => Promise<unknown>,
       ) => {
         if (harness.removePassengerBeforeTransaction) harness.sessionPassengers = {};
+        if (harness.completeBeforeTransaction) harness.sessionStatus = "completed";
         return callback({
-          get: async () => snapshot(true, sessionData()),
+          get: async ref => ref.collectionName === "users" ? snapshot(harness.profileExists, { displayName: "Profile Name" }) : snapshot(true, sessionData()),
           update: (...args: unknown[]) => harness.updates.push(args),
         });
       },
@@ -77,8 +84,7 @@ vi.mock("../lib/firebaseAdmin", () => {
               status: "active",
               deviceState: "online",
               motionState: "stopped",
-              lat: 23,
-              lng: 72.5,
+              ...harness.livePosition,
               timestamp: Date.now(),
             }),
           };
@@ -88,15 +94,17 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import sessionsRouter from "./sessions";
+import sessionsRouter, { rideSessionBoardingRouter } from "./sessions";
 
 let server: Server;
 let baseUrl = "";
+let v2 = false;
 
 beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/sessions", sessionsRouter);
+  app.use("/api/v2/ride-sessions", rideSessionBoardingRouter);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -112,17 +120,20 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  harness.liveReads = 0;
+  harness.liveReads = 0; harness.profileExists = true;
   harness.removePassengerBeforeTransaction = false;
   harness.sessionPassengers = {};
   harness.updates = [];
   harness.joinUid = "passenger_1";
   harness.sessionDirection = "forward";
+  harness.sessionStatus = "active";
+  harness.completeBeforeTransaction = false;
+  harness.livePosition = { lat: 23, lng: 72.5 };
 });
 
 async function join(body: Record<string, unknown>) {
-  return fetch(`${baseUrl}/api/sessions/session_1/join`, {
-    method: "POST",
+  return contractFetch(`${baseUrl}${v2 ? "/api/v2/ride-sessions/session_1/passengers/me" : "/api/sessions/session_1/join"}`, {
+    method: v2 ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       boardingCode: "ABCD2345",
@@ -133,7 +144,13 @@ async function join(body: Record<string, unknown>) {
   });
 }
 
-describe("session passenger join route", () => {
+describe.each([false, true])("session passenger join route v2=%s", mode => {
+  beforeEach(() => { v2 = mode; });
+  it("cannot modify retained membership after profile retirement", async () => {
+    harness.profileExists = false;
+    harness.sessionPassengers = { passenger_1: { userId: "passenger_1", userName: "Retained name" } };
+    expect((await join({})).status).toBe(403); expect(harness.updates).toEqual([]);
+  });
   it.each([undefined, null, "", "sideways", 123])(
     "keeps unresolved direction %p from creating forward boarding options",
     async (direction) => {
@@ -148,6 +165,12 @@ describe("session passenger join route", () => {
       expect(harness.updates).toHaveLength(0);
     },
   );
+
+  it("rejects completion between proximity validation and manifest commit", async () => {
+    harness.completeBeforeTransaction = true;
+    expect((await join({ lat: 23, lng: 72.5, accuracy: 20 })).status).toBe(409);
+    expect(harness.updates).toHaveLength(0);
+  });
 
   it("records membership in an indexable passengerIds array for privacy deletion", async () => {
     const response = await join({ lat: 23, lng: 72.5, accuracy: 20 });
@@ -185,6 +208,34 @@ describe("session passenger join route", () => {
 
     expect(response.status).toBe(200);
     expect(harness.liveReads).toBe(1);
+    expect(harness.updates).toHaveLength(1);
+  });
+
+  describe.each(["lat", "lng"] as const)("live bus %s", (axis) => {
+    it.each([null, undefined, "", false, "23"])(
+      "rejects malformed coordinate %p before recording membership",
+      async (value) => {
+        harness.livePosition[axis] = value;
+        // Match the old coerced coordinate so proximity alone cannot hide the bug.
+        const position = { lat: 23, lng: 72.5, [axis]: value === undefined ? 0 : Number(value) };
+        const response = await join({ ...position, accuracy: 20 });
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({
+          error: "The live bus position is unavailable; wait for a fresh hardware fix.",
+        });
+        expect(harness.liveReads).toBe(1);
+        expect(harness.updates).toHaveLength(0);
+      },
+    );
+  });
+
+  it("allows first boarding at valid numeric zero coordinates", async () => {
+    harness.livePosition = { lat: 0, lng: 0 };
+    const response = await join({ lat: 0, lng: 0, accuracy: 20 });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ joined: true, sessionId: "session_1" });
     expect(harness.updates).toHaveLength(1);
   });
 

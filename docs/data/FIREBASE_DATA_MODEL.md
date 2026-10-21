@@ -1,6 +1,8 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-09-14.
+Last updated: 2026-10-08 08:22 IST (UTC+05:30).
+
+Field ownership and compatibility build on [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
 ## Reading this document
 
@@ -25,13 +27,24 @@ erDiagram
 
 ## RTDB
 
+### Public live views (R14)
+
+`publicRouteBuses/route:{routeId}/buses/node:{busId}_{routeId}` contains only fields explicitly selected by `publicLiveBus`: coordinates, accepted sample identity, matched/raw location, public route state and ride lifecycle. Opaque prefixes safely preserve legal prototype-like IDs. Histories, anchors, claims, retry state and worker metadata are excluded. Passengers subscribe directly to a selected route, plus their explicitly joined ride route when browsing another route. Trusted boolean administrators may read the public fleet root. All writes are server-only; bare legacy route/node entries are excluded from schema 1 browser consumption.
+
+`liveRouteCatalog/values/route:{routeId}` contains active counts and `availableReceipts`, an exact bounded receipt vector with no coordinates or identities. The browser applies its configured freshness window; receipt/sample pairing follows the accepted -10s/+60s skew contract. Legacy `available`/`freshestAt` remain diagnostics and do not decide browser expiry. Parent `revisions`, per-route `generations` and `_workerGeneration` are private. The elected worker repairs missing/removal publications using bounded periodic replay, including empty route tombstones and successor revision lineage.
+
+`clientProjectionStatus/public` exposes only `{schemaVersion:1,ready}`. It becomes ready after current-generation bounded backfill and queued publications settle. Absent/incompatible/not-ready status is an actionable unavailable state, rather than an empty fleet; a compatible ready empty fleet is valid. The status parent retains a private worker fence. Deploy the publisher and verify backfill before restrictive rules and the browser release; a testing merge does not deploy any of them.
+
+The guarded natural-completion write retains one `lastCompletedSessionId/lastCompletedAt/lastCompletedRouteId` marker through automatic turnaround. This bounded marker is public lifecycle evidence, not full ride history. Older/cross-route joined-session recovery uses the closed member-authorized HTTP status endpoint backed by durable `ride_sessions`. Removed/offline/interrupted data never invents completion. See [R14 evidence and rollout](../testing/R14_LIVE_PROJECTION.md).
+
 ### `activeBuses/{busId}_{routeId}`
 
-One latest projection per assigned bus/route. The key is an internal composite locator; consumers use stored `busId` and `routeId` and must not split the key because IDs can contain underscores. A telemetry-created node represents device presence only and omits ride lifecycle fields. Passenger service exists only when the server-owned tuple `status: active` + non-empty `sessionId` + resolved `direction` + `tripState: pre_departure|in_service` is complete.
+Backend-only authority, with every browser read/write denied. One latest record per assigned bus/route. The key is an internal composite locator; consumers use stored `busId` and `routeId` and must not split the key because IDs can contain underscores. A telemetry-created node represents device presence only and omits ride lifecycle fields. Passenger service exists only when the server-owned tuple `status: active` + non-empty `sessionId` + resolved `direction` + `tripState: pre_departure|in_service` is complete.
 
 | Field | Type | Meaning/source |
 |---|---|---|
 | `busId` | string | Server registry assignment |
+| `_workerGeneration` | integer, optional | Internal generation on surviving worker projections; stale worker transactions cannot overwrite a newer value. Not a telemetry sequence or public service state. |
 | `routeId` | string | Server registry/shift assignment |
 | `lat`, `lng` | number | Latest accepted GNSS coordinate |
 | `rawLocation` | object | Original authenticated `{lat,lng,speed,heading,gpsHdop,motionState,seq,sampledAt}`; never overwritten by snapping |
@@ -48,7 +61,10 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | `gpsHdop` | number/null | Receiver horizontal dilution of precision; null for staged legacy firmware |
 | `motionState` | `moving` / `stopped` / `uncertain` | Firmware; uncertain means trustworthy GNSS lost |
 | `timestamp` | epoch ms | NTP-synchronised device measurement time |
+| `seq`, `deviceSentAt`, `backendReceivedAt` | number / epoch ms | Sample tie-breaker, device send time, and backend ingress/freshness boundary |
 | `receivedAt` | RTDB server epoch ms | Backend commit time |
+| `plausibilityAnchor` | object | Last physically accepted `{lat,lng,speed,gpsHdop,timestamp}`; held outliers do not advance its timestamp |
+| `plausibilityReacquisition` | optional object | Temporary `{count,startedAt}` for three coherent, good-quality fixes after a 60–300 second accepted-position gap. Uses existing `rawLocation` as the preceding candidate, requires 0.5–5 second spacing and the full bounded travel envelope. Clears on acceptance or an ineligible fix; it is not ride progress/history. |
 | `deviceState` | `online` / `offline` | Ingestion/worker connectivity projection; `online` is trusted by clients only while `timestamp` is fresh |
 | `signalState` | `connected` / `gnss_lost` / `lost` | Derived signal explanation |
 | `status` | `active` / `offline` | Ride lifecycle ownership, not hardware power; initial device-only nodes are `offline` |
@@ -60,14 +76,26 @@ One latest projection per assigned bus/route. The key is an internal composite l
 | `directionFirestoreSynced` | boolean | `false` only while a telemetry-resolved session direction still needs its one-time Firestore projection; `true` after synchronization |
 | `originStopId`, `destinationStopId` | string | Endpoints for this direction |
 | `completedAt`, `turnaroundEligibleAt` | epoch ms | Completion and earliest automatic opposite-direction arm time; removed when the next session activates |
+| `turnaroundSampledAt` | epoch ms | Minimum fresh device sample for automatic return; separate from the dwell deadline |
 | `turnaroundClaimId`, `turnaroundClaimedAt` | string / epoch ms | Short-lived cross-replica automatic-turnaround claim; removed after activation or failed durable claim |
 | `automaticTurnaround`, `previousSessionId` | boolean / string | Identifies a backend-armed return session and its completed predecessor |
 | `currentStopIndex` | integer | Zero-based next/current ordered stop progress |
 | `hasDepartedOrigin` | boolean | Prevents repeated origin activation |
 | `delayMinutes` | number | Driver API value, 0–1440 |
+| `delayUpdatedAt` | epoch ms | Delay revision for conflict-safe recovery/projection |
 | `lifecycleUpdatedAt` | RTDB server epoch ms | Server lifecycle/status mutation time |
 
-Read: any authenticated Firebase user (`.read: auth != null`); App Check is enforced through the Firebase console. Write: denied to all clients; server only. Indexed by `routeId`, `busId`. Active rides survive stale hardware and are marked offline; stale non-active nodes can be removed.
+`rtdbCommittedAt` is a retired alias of `receivedAt`; new accepted telemetry
+removes it while browser trace exports keep the historical `rtdbCommittedAtMs`
+key. `activeRoutePolyline` is a retired inline geometry field; the versioned
+sibling store below is authoritative. Route context also owns
+`offRouteSampleCount`, `mapMatchUpdatedAt`, `rerouteRequestId`,
+`lastRerouteAttemptAt`, `rerouteError`, `rerouteCompletedAt` and
+`rerouteFailedAt`; the field audit explains their hysteresis/ownership/diagnostic
+roles. Context reset clears `mapMatchSeq` and `mapMatchSampledAt` as well as the
+previous match result.
+
+Read and write: denied to all clients at `/activeBuses`; the backend owns the authoritative node. Browsers read the scoped `/publicRouteBuses` projection instead. App Check is enforced through the Firebase console. Indexed by `routeId`, `busId`. Active rides survive stale hardware and are marked offline; stale non-active nodes can be removed.
 
 ### `activeRouteGeometry/{busId}_{routeId}/{routeVersion}`
 
@@ -87,7 +115,11 @@ Server-only authorization mirror used with Auth claims/driver records. It is wri
 
 ### `users/{uid}` and `messages`
 
-RTDB `users/{uid}` is a denied-write legacy/read-owner perimeter; active application profiles are in Firestore. Top-level RTDB `messages` is fully denied; current messages live under Firestore ride sessions. No new feature should use either legacy tree.
+RTDB `users/{uid}` and top-level `messages` are legacy trees with all client
+reads/writes denied by the current default rules. Active profiles and ride
+messages are in Firestore. No new feature should use either legacy tree.
+Existing legacy copies and historical reroute versions are not covered by the
+Firestore retention sweeper; migration/cleanup is tracked in issue #214.
 
 ## Firestore client-visible collections
 
@@ -123,7 +155,7 @@ Any authenticated user reads. All client writes are denied; admin backend valida
 
 ### `buses/{busId}`
 
-Fields: `id`, `name` (≤100), and `assignedRoutes: string[]` (≤50); legacy readers also tolerate `assignedRouteId`. Authenticated users read; only admin backend writes. Devices, drivers, route deletion, start authorization and UI catalogs join by `busId`.
+Fields: `id`, `name` (≤100), and `assignedRoutes: string[]` (≤50); legacy readers also tolerate `assignedRouteId`. Admin bus saves merge only these editable catalog fields, preserve unrelated server timestamps/nested metadata, and explicitly delete legacy `assignedRouteId`. Unknown request fields are ignored; new documents contain only the catalog fields. Authenticated users read; only admin backend writes. Devices, drivers, route deletion, start authorization and UI catalogs join by `busId`.
 
 ### `drivers/{driverId}`
 
@@ -131,7 +163,7 @@ Fields: `id`, `name`, `authUid`, `assignedBusId` (`string|null`), and optional `
 
 ### `bus_locations/{busId}`
 
-Compact server lifecycle projection: `routeId`, `driverId`, `status`, `deviceState`, `tripState`, `lastSeen`, plus legacy/optional motion fields. It changes on lifecycle/fleet state, not every coordinate. Admin-only client read/write rule; backend writes. Fleet analytics consumes it.
+Compact server lifecycle projection: `routeId`, `driverId`, `status`, `deviceState`, `tripState`, `lastSeen`, plus legacy/optional motion fields. It changes on lifecycle/fleet state, not every coordinate. Admin clients may read; client writes are denied and the backend writes. Fleet analytics consumes it.
 
 ### `passenger_requests/{uid}`
 
@@ -167,7 +199,7 @@ Durable ride record and parent of messages.
 | `boardingCode` | eight-character string | Driver-visible session proof; never projected into RTDB |
 | `boardingCodeIssuedAt` | Firestore Timestamp | Server issuance time |
 | `stopsReached` | map keyed zero-based index | Ordered server evidence |
-| `stopsReached.{i}` | `{stopIndex,stopId,stopName,timestamp}` | Stop evidence |
+| `stopsReached.{i}` | `{stopIndex,stopId,stopName,timestamp,evidence?}` | Stop evidence; new `evidence` is `gnss_progress` or `recovered_checkpoint`, whose timestamp denotes repair time rather than original arrival |
 | `automaticTurnaround`, `previousSessionId` | boolean / string | Present on an automatically armed opposite-direction session |
 | `path` | legacy map/array | Older history tolerated/read/deleted; no current per-fix writes |
 
@@ -187,7 +219,7 @@ Fields: `busId`, `driverId`, `routeId`, `direction`, `originStopId`, `destinatio
 
 ### `feedbacks/{feedbackId}`
 
-Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction; the admin status endpoint changes review state. Retention/server privacy can delete.
+Fields: `userId`, server-derived `userName`, `type` (`general|ride`), nullable `sessionId/busId/driverId/rating`, `comment` (≤2000 characters and 200 words), `requestHash`, `timestamp`, `status` (`new|reviewed|resolved`), and optional review audit fields. All client writes are denied. The idempotent feedback endpoint checks completed-session passenger eligibility and cooldown in the write transaction. Admin review uses `GET /api/v2/feedback` (latest 200 records, no-store) and a status PATCH; the browser does not attach a direct feedback listener. The admin status endpoint changes review state. Retention can delete feedback; passenger account deletion preserves it.
 
 ### `feedbackCooldowns/{uid}`
 
@@ -207,7 +239,7 @@ Fields: `deviceId`, `busId`, `routeId`, `enabled`, `secretHash` (`32-hex-salt:12
 
 ### `active_rides/{busId}_{routeId}`
 
-Minimal recovery state: `sessionId`, `busId`, `routeId`, `driverId`, `direction`, `originStopId`, `destinationStopId`, `status: active`, `tripState`, direction-ordered `currentStopIndex`, `hasDepartedOrigin`, `delayMinutes`, optional `automaticTurnaround`/`previousSessionId`, and `updatedAt`. No coordinate history. Telemetry restores this into RTDB if a live node loses lifecycle fields and clears stale completion/claim fields. Completion/reconciliation deletes only a matching session.
+Minimal recovery state: `sessionId`, `busId`, `routeId`, `driverId`, `direction`, `originStopId`, `destinationStopId`, `status: active`, `tripState`, direction-ordered `currentStopIndex`, `hasDepartedOrigin`, `delayMinutes`, optional `automaticTurnaround`/`previousSessionId`, and `updatedAt`. No coordinate history. Recovery reads this projection, its bus lock and non-terminal session in one Firestore transaction. Telemetry and the leader's initial/completed RTDB snapshots restore missing lifecycle fields. A completed predecessor can be replaced only by its own durable automatic return, with a matching claim when present; unrelated or newer live sessions and terminal durable sessions are protected. Recovery reuses the claimed session ID, clears old completion/claim and match/reroute context, preserves newer raw telemetry and same-session delays, and leaves completed history/locks untouched. A newly observed claim bypasses the earlier no-ride miss cache; claimed misses retry after 1s rather than 30s. Completion/reconciliation deletes only a matching session.
 
 ### `_active_bus_locks/{busId}`
 
@@ -215,19 +247,49 @@ Unique active-session constraint: `busId`, `routeId`, `driverId`, `sessionId`, `
 
 ### `_worker_leases/{leaseName}`
 
-Coordinator ownership/expiry fields include `ownerId` and lease timing. Transactions acquire/renew/release. Only the holder runs lifecycle and maintenance jobs.
+The coordinator uses `_worker_leases/trip-state-worker`: unique process `ownerId`, persistent integer `generation`, `renewedAt` and `expiresAt` Firestore timestamps. Acquisition increments the generation; renewal retains it; release sets `ownerId:null` and an expired timestamp without deleting the generation. Worker durable writes validate the lease within their transaction. Independent monotonic expiry also stops admission during hung renewal. See [worker leadership](../operations/WORKER_LEADERSHIP.md) for the 2-second skew allowance and limits of fencing RTDB/Auth/recursive deletion.
 
 ### `_privacy_deletion_requests/{uid}`
 
-Fields: `status` (`pending` plus worker terminal/retry states), `attempts`, `requestedAt`, `updatedAt`, and worker error/claim markers as applicable. Passenger API queues; leader worker claims, deletes personal collection-group/session fields/profile/cooldown/request/auth user in pages, and records retry state on failure.
+Server-only `status` (`pending|processing|failed`), lifetime `attempts`, consecutive `failures`, `nextAttemptAt`, `generation`, `executorId`, `deadlineAt`, `phase` (`cleaning|auth_deletion_dispatched`), original `requestedAt`, `updatedAt`, last attempt/error timestamps and fixed `lastErrorCode`. `targetCreatedAt` binds the current Auth account identity. Resubmission adds `resubmittedAt/resubmissions` without clearing history; admin recovery adds `recoveredBy/recoveredAt/recoveries/executorStopped`, increments generation and resets only the failure cycle. Successful cleanup removes the record. The privacy worker cursor is `_reconciliation_cursors/privacy-deletions`. Shared fleet mutex records can carry `privacyRequestId`, and lock recovery audits its linked status. See [privacy deletion](../operations/PRIVACY_DELETION.md) for bounds and limits.
+
+### `_retention_deletion_jobs/{sessionId}`
+
+Backend-only retry reference with `requestedAt` (Firestore Timestamp). The session ID is the document ID; the worker always derives the fixed `ride_sessions/{sessionId}` target itself. It commits this job before a terminal ride's recursive deletion and removes it only after every descendant is deleted. Startup/daily retention sweeps replay pending jobs even when the parent ride was already removed by a partial failure. The default-deny client rules cover this internal collection. Jobs are removed on successful cleanup, not aged out while child records remain.
+
+### `_ride_history_deletion_jobs/{sessionId}`
+
+Independent backend-only retry reference with `requestedAt` for an Admin-requested terminal history deletion. This job remains until both recursive session cleanup and all matching completed-trip projections are removed. The manual endpoint and startup/daily retention worker can resume it even without the ride parent. It is kept separate from age-based deletion jobs so concurrent manual/retention requests cannot acknowledge each other's incomplete projection cleanup. Ongoing session status is rechecked before each attempt; client access is denied by the default rules.
 
 ### `_fleet_operations/{operationId}`
 
-Idempotency/reconciliation operation metadata such as stable request fingerprint, result/status and `createdAt`. Admin fleet guard prevents conflicting request reuse; opt-in retention deletes old entries.
+Server-only legacy/admin fleet audit: method, path, admin UID, pending/completed/failed status, created/completed timestamps and bounded batch/count/cursor progress. Persisted before mutation; it does not provide durable HTTP replay. Existing operational retention applies.
 
 ### `_route_save_operations/{saveId}`
 
 Server-only route-save coordination record. It binds a stable `saveId` to `routeId` and an exact payload hash, with `processing|succeeded|failed` status, a bounded cross-replica lease/owner, attempt count, timestamps, and a replayable result or structured failure. A different payload cannot reuse the ID. The final transaction writes the versioned route and successful operation together, allowing timeout-after-commit reconciliation without a duplicate Google request or stale overwrite.
+
+### `_route_geometry_previews/{operationId}` / `_fleet_reconciliation_jobs/{operationId}`
+
+Server-only payload hash, admin UID, `processing|succeeded|failed` status, unique
+process `executorId`, positive `generation`, wall-clock `deadlineAt`, timestamps,
+and redacted replay outcome. Phase/progress checkpoints identify the current
+bounded fleet batch without exposing Auth UIDs. Expired status reads persist
+`recovery_required`; processing records have no terminal-retention timestamp.
+Operator abandonment requires a verified stopped executor and exact generation;
+it writes a failed unknown outcome, generation bump and internal `recoveredBy`
+audit. No automatic billable/Auth replay. Legacy claims use identity `legacy`/0.
+
+### `_fleet_reconciliation_locks/singleton` / `_fleet_lock_recoveries/{id}`
+
+The singleton has `owner`, process `executorId`, optional linked `operationId`
+and creation timestamp. Legacy, periodic and operation reconciliation share it;
+there is no expiry takeover of dispatched Auth work. Recovery atomically audits
+that owner, operation, executor, stopped-executor attestation, admin UID and
+`recoveredAt`, then deletes only the matching singleton. Linked processing jobs
+must first be recovered; local unsettled work is refused. Recovery logs follow
+`OPERATION_LOG_RETENTION_DAYS` from `recoveredAt`; retention never removes a lock.
+See the [operator recovery runbook](../api/OPERATION_RESOURCES.md).
 
 ### `_health/*`
 
@@ -254,8 +316,8 @@ credential-cache entries. Browser rules deny all reads and writes.
 - A device assignment must match `buses.assignedRoutes` and an existing route.
 - Driver API authority requires agreement among Auth claims, `drivers`, `buses`, and the requested bus/route.
 - Terminal history deletion recursively removes the ride session/subcollections and all matching `completed_trips`; active states return 409.
-- Privacy deletion removes one user's profile, feedback/cooldown/request, session passenger entries/messages, and Auth account while leaving non-personal operational ride facts according to policy.
-- Retention defaults: terminal sessions 90 days, feedback 180, completed projections 180, fleet operation logs 90. Production startup requires `RETENTION_SWEEPER_ENABLED=true`; development and tests remain non-destructive when omitted.
+- Passenger account deletion removes the user's profile, cooldowns, message rate limits, passenger request, and Auth account. Feedback, session passenger entries (including legacy manifests), messages, and shared operational ride facts are preserved unchanged; their independent retention policies still apply.
+- Retention defaults: terminal sessions 180 days after `endTime`, feedback 180, completed projections 180 days after `completedAt`, fleet operation logs 90. Session deletion recursively removes passenger/message subcollections. The daily sweep deletes records strictly older than the cutoff, so removal occurs on the next successful sweep after day 180. Production startup requires `RETENTION_SWEEPER_ENABLED=true`; development and tests remain non-destructive when omitted. Deployment overrides must agree with the approved schedule.
 
 ## Indexes
 
@@ -269,3 +331,7 @@ credential-cache entries. Browser rules deny all reads and writes.
 - Firestore operational writes: `FieldValue.serverTimestamp()`/`Timestamp`.
 - Some legacy/history summaries use ISO strings or epoch milliseconds; normalizers accept documented variants.
 - Never infer IDs by splitting composite keys; use stored fields.
+
+### `_reconciliation_cursors/{scan}`
+
+Server-only stable document-ID continuation for `abandoned-sessions` and `fleet-authorizations`: `cursor` is a string or null after a completed cycle, with `updatedAt`. A lease-valid transaction advances it only after a settled page; restart resumes the saved page. Pages contain at most 100 records. This is not a whole-collection snapshot. Fleet operation progress adds the last settled cursor; `_fleet_operations` stores bounded per-batch driver IDs/counts/cursor, and the shared singleton mutex can carry `auditOperationId` for crashed legacy/admin mutation audit. See [reconciliation](../operations/RECONCILIATION.md).

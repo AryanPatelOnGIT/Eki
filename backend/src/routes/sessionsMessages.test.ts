@@ -1,3 +1,4 @@
+import { contractFetch } from "../../test-support/openapi";
 import type { Server } from "node:http";
 import express from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,10 +13,12 @@ type User = {
 
 const harness = vi.hoisted(() => ({
   messages: new Map<string, Record<string, unknown>>(),
+  archivedMessages: new Map<string, Record<string, unknown>>(),
   rate: undefined as Record<string, unknown> | undefined,
   session: {} as Record<string, unknown>,
   setKinds: [] as string[],
   user: {} as User,
+  profileExists: true,
 }));
 
 vi.mock("../middleware/requireAuth", () => ({
@@ -31,7 +34,7 @@ vi.mock("../middleware/requireAuth", () => ({
 
 vi.mock("../lib/firebaseAdmin", () => {
   type Ref = {
-    kind: "session" | "rate" | "message";
+    kind: "session" | "rate" | "message" | "profile" | "archive";
     id: string;
     collection: (name: string) => { doc: (id: string) => Ref };
     get: () => Promise<ReturnType<typeof snapshot>>;
@@ -45,31 +48,34 @@ vi.mock("../lib/firebaseAdmin", () => {
     id,
     collection: (name: string) => ({
       doc: (childId: string) => makeRef(
-        name === "messageRateLimits" ? "rate" : "message",
+        name === "messageRateLimits" ? "rate" : name === "archivedMessages" ? "archive" : "message",
         childId,
       ),
     }),
     get: async () => snapshot(kind === "session", kind === "session" ? harness.session : undefined),
   });
   const read = (ref: Ref) => {
+    if (ref.kind === "profile") return snapshot(harness.profileExists);
     if (ref.kind === "session") return snapshot(true, harness.session);
     if (ref.kind === "rate") return snapshot(Boolean(harness.rate), harness.rate);
-    const message = harness.messages.get(ref.id);
+    const message = (ref.kind === "archive" ? harness.archivedMessages : harness.messages).get(ref.id);
     return snapshot(Boolean(message), message);
   };
 
   return {
     db: {
       collection: (name: string) => ({
-        doc: (id: string) => makeRef(name === "ride_sessions" ? "session" : "message", id),
+        doc: (id: string) => makeRef(name === "ride_sessions" ? "session" : name === "users" ? "profile" : "message", id),
       }),
       runTransaction: async (
         callback: (transaction: {
           getAll: (...refs: Ref[]) => Promise<Array<ReturnType<typeof snapshot>>>;
+          get: (ref: Ref) => Promise<ReturnType<typeof snapshot>>;
           set: (ref: Ref, value: Record<string, unknown>) => void;
         }) => Promise<unknown>,
       ) => callback({
         getAll: async (...refs: Ref[]) => refs.map(read),
+        get: async (ref: Ref) => read(ref),
         set: (ref: Ref, value: Record<string, unknown>) => {
           harness.setKinds.push(ref.kind);
           if (ref.kind === "rate") harness.rate = value;
@@ -81,15 +87,17 @@ vi.mock("../lib/firebaseAdmin", () => {
   };
 });
 
-import sessionsRouter from "./sessions";
+import sessionsRouter, { rideSessionBoardingRouter } from "./sessions";
 
 let server: Server;
 let baseUrl = "";
+let v2 = false;
 
 beforeAll(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api/sessions", sessionsRouter);
+  app.use("/api/v2/ride-sessions", rideSessionBoardingRouter);
   server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -106,8 +114,9 @@ afterAll(async () => {
 
 beforeEach(() => {
   harness.messages = new Map();
+  harness.archivedMessages = new Map();
   harness.rate = undefined;
-  harness.setKinds = [];
+  harness.setKinds = []; harness.profileExists = true;
   harness.user = { uid: "passenger_1", role: "passenger", name: "Token Name" };
   harness.session = {
     status: "active",
@@ -120,14 +129,39 @@ beforeEach(() => {
 });
 
 async function send(text = "Hello", requestId = "request_12345678", extra = {}) {
-  return fetch(`${baseUrl}/api/sessions/session_1/messages`, {
+  return contractFetch(`${baseUrl}${v2 ? "/api/v2/ride-sessions" : "/api/sessions"}/session_1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, requestId, ...extra }),
   });
 }
 
-describe("session message route", () => {
+it("retained membership cannot send a cached-token message after profile retirement", async () => {
+  harness.profileExists = false; expect((await send()).status).toBe(403);
+  expect(harness.messages.size).toBe(0); expect(harness.rate).toBeUndefined();
+});
+it("preserves message replay identity across both aliases and rejects changed content without another write", async () => {
+  for (const mode of [false, true]) {
+    v2 = mode; harness.messages.clear(); harness.rate = undefined;
+    harness.setKinds = []; harness.session.status = "active";
+    const created = await send(); expect(created.status).toBe(201);
+    const original = await created.json();
+    expect(harness.setKinds).toEqual(["rate", "message"]);
+    harness.setKinds = [];
+    const replay = await send(); expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(original); expect(harness.setKinds).toEqual([]);
+    expect((await send("Changed payload")).status).toBe(409);
+    expect(harness.messages.size).toBe(1); expect(harness.setKinds).toEqual([]);
+    harness.session.status = "completed";
+    expect((await send("New message", "request_after_end_01")).status).toBe(409);
+    const afterEnd = await send(); expect(afterEnd.status).toBe(200);
+    expect(await afterEnd.json()).toEqual(original);
+    expect(harness.messages.size).toBe(1); expect(harness.setKinds).toEqual([]);
+  }
+});
+
+describe.each([false, true])("session message route v2=%s", mode => {
+  beforeEach(() => { v2 = mode; });
   it.each(["pre_departure", "in_service"])("allows member chat at zero speed while %s", async tripState => {
     Object.assign(harness.session, { tripState, speed: 0, motionState: "stopped" });
     expect((await send("Waiting at the stop")).status).toBe(201);
@@ -157,6 +191,26 @@ describe("session message route", () => {
     expect(retry.status).toBe(200);
     expect(harness.setKinds).toEqual([]);
     expect(harness.messages.size).toBe(1);
+  });
+  it("retains retry identity and rejects changed content after live chat is archived", async () => {
+    const original = await (await send()).json();
+    harness.archivedMessages = new Map(harness.messages); harness.messages.clear();
+    harness.setKinds = [];
+    const replay = await send();
+    expect(replay.status).toBe(200); expect(await replay.json()).toEqual(original);
+    expect((await send("Changed after clear")).status).toBe(409);
+    expect(harness.messages.size).toBe(0); expect(harness.archivedMessages.size).toBe(1);
+    expect(harness.setKinds).toEqual([]);
+  });
+
+  it("replays the same message after completion without another write", async () => {
+    const original = await (await send()).json();
+    harness.session.status = "completed";
+    harness.setKinds = [];
+    const retry = await send();
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(original);
+    expect(harness.setKinds).toEqual([]);
   });
 
   it("rejects request-id reuse with different content", async () => {
@@ -241,7 +295,7 @@ describe("session message route", () => {
 
     expect(response.status).toBe(201);
     expect([...harness.messages.values()][0]).toMatchObject({
-      from: "driver",
+      from: "admin",
       senderId: "admin_auth",
       senderName: "Campus Admin",
     });
