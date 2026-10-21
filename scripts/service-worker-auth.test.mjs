@@ -8,15 +8,16 @@ it("allows worker fetches of the Google Auth loader in shipped and generated CSP
   const firebase = JSON.parse(await readFile(new URL("../firebase.json", import.meta.url), "utf8"));
   const policy = firebase.hosting.headers.find(entry => entry.source === "**")
     .headers.find(header => header.key === "Content-Security-Policy").value;
-  assert.ok(connectSourcesFromCsp(policy).includes("https://apis.google.com"));
+  assert.ok(new Set(connectSourcesFromCsp(policy)).has("https://apis.google.com"));
   // Evaluate the actual source-list expression used by the build generator,
   // so a later build cannot silently remove the shipped fix.
   const generator = await readFile(new URL("./update-csp.mjs", import.meta.url), "utf8");
   const expression = generator.match(/const connectSources = ([\s\S]*?)\.join\(" "\);/)[1];
   const sources = runInNewContext(expression, { backendOrigin: "https://api.example.test" });
-  assert.ok(sources.includes("https://apis.google.com"));
-  assert.ok(sources.includes("https://api.example.test"));
-  assert.ok(!sources.includes("*"));
+  const allowed = new Set(sources);
+  assert.ok(allowed.has("https://apis.google.com"));
+  assert.ok(allowed.has("https://api.example.test"));
+  assert.ok(!allowed.has("*"));
 });
 
 it("keeps Auth helpers on the network and retires only their obsolete cache", async () => {
