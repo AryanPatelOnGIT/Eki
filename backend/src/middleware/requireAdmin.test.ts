@@ -45,6 +45,8 @@ describe("current admin HTTP authorization", () => {
   });
 
   it.each([
+    { role: "passenger" },
+    { role: "driver", admin: false, authorizationVersion: "current" },
     { admin: true, role: "passenger", authorizationVersion: "current" },
     { admin: "true", role: "admin", authorizationVersion: "current" },
     { admin: false, role: "admin", authorizationVersion: "current" },

@@ -15,6 +15,21 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("account confirmations", () => {
+  it("shows the admin panel link only while the current user has the admin role", () => {
+    mocks.user = { uid: "qa-admin", displayName: "QA Admin", role: "admin", photoURL: "" };
+    const view = render(<AccountTab />);
+    expect(screen.getByRole("link", { name: "Admin Panel" }).getAttribute("href")).toBe("/admin");
+
+    for (const role of ["passenger", "driver", ""]) {
+      mocks.user = { uid: "qa-user", displayName: "QA User", role, photoURL: "" };
+      view.rerender(<AccountTab />);
+      expect(screen.queryByRole("link", { name: "Admin Panel" })).toBeNull();
+    }
+
+    mocks.user = null;
+    view.rerender(<AccountTab />);
+    expect(screen.queryByRole("link", { name: "Admin Panel" })).toBeNull();
+  });
   it("falls back after a photo failure and retries for a changed URL or account", () => {
     const account = { uid: "qa-passenger", displayName: "QA Passenger", role: "passenger", photoURL: "https://example.test/photo.png" };
     mocks.user = account;
