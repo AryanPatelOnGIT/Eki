@@ -3,10 +3,12 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider, useAuth } from "./useAuth";
 import { beginAuthVerification, waitForAuth } from "@/lib/authState";
+import { markGoogleRedirectPending, consumeGoogleRedirectPending } from "@/lib/googleSignInFlow";
 type TestUser = { uid: string; getIdToken?: () => Promise<string>; getIdTokenResult: (forceRefresh?: boolean) => Promise<{ claims: { role: string; admin?: boolean } }> };
 const mocks = vi.hoisted(() => ({
   callback: null as null | ((user: TestUser | null) => Promise<void>),
-  auth: { currentUser: null as TestUser | null }, claims: vi.fn(), observe: vi.fn(), signOut: vi.fn(),
+  auth: { currentUser: null as TestUser | null, config: { authDomain: "" } }, claims: vi.fn(), observe: vi.fn(), signOut: vi.fn(),
+  popup: vi.fn(), redirect: vi.fn(), redirectResult: vi.fn(),
   profile: vi.fn(), bootstrap: vi.fn(),
 }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: mocks.auth, googleProvider: {} }));
@@ -18,7 +20,7 @@ vi.mock("@/hooks/useSettings", () => ({ clearSettingsCache: vi.fn() }));
 vi.mock("@/lib/liveBusStore", () => ({ invalidateLiveBusCache: vi.fn() }));
 vi.mock("firebase/auth", () => ({
   onAuthStateChanged: mocks.observe, setPersistence: async () => {}, browserLocalPersistence: {},
-  getRedirectResult: async () => null, signInWithPopup: vi.fn(), signInWithRedirect: vi.fn(), signOut: mocks.signOut,
+  getRedirectResult: mocks.redirectResult, signInWithPopup: mocks.popup, signInWithRedirect: mocks.redirect, signOut: mocks.signOut,
 }));
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const user = (uid: string): TestUser => ({ uid, getIdTokenResult: async () => { await mocks.claims(); return { claims: { role: "admin", admin: true } }; } });
@@ -27,12 +29,160 @@ beforeEach(() => {
   // Bootstrap scenarios opt in below and keep HTTP transport mocked.
   vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "");
   beginAuthVerification(); vi.clearAllMocks(); mocks.callback = null; mocks.auth.currentUser = null;
+  mocks.auth.config.authDomain = window.location.host;
+  mocks.popup.mockReset().mockResolvedValue(undefined);
+  mocks.redirect.mockReset().mockReturnValue(new Promise(() => {}));
+  mocks.redirectResult.mockReset().mockResolvedValue(null);
+  mocks.signOut.mockReset().mockResolvedValue(undefined);
   mocks.claims.mockResolvedValue(undefined); mocks.observe.mockImplementation((_auth, callback) => { mocks.callback = callback; return () => {}; });
   mocks.profile.mockResolvedValue({ exists: () => false }); mocks.bootstrap.mockResolvedValue({ role: "passenger" });
-  localStorage.clear(); vi.spyOn(console, "warn").mockImplementation(() => {});
+  localStorage.clear(); sessionStorage.clear(); vi.spyOn(console, "warn").mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 async function mount() { const hook = renderHook(() => useAuth(), { wrapper: AuthProvider }); await waitFor(() => expect(mocks.callback).not.toBeNull()); return hook; }
+describe("Google sign-in lifecycle", () => {
+  it.each(["Mozilla/5.0 (Linux; Android 14)", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"])(
+    "uses a full-page flow on mobile (%s) after signing out", async userAgent => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+      const hook = await mount();
+      const account = user("first-login"); mocks.auth.currentUser = account;
+      await act(async () => { await mocks.callback!(account); });
+      mocks.signOut.mockImplementation(async () => { mocks.auth.currentUser = null; await mocks.callback!(null); });
+      await act(async () => { await hook.result.current.logout(); });
+      expect(hook.result.current.user).toBeNull();
+      await act(async () => { void hook.result.current.loginWithGoogle(); });
+      expect(mocks.redirect).toHaveBeenCalledExactlyOnceWith(mocks.auth, {});
+      expect(mocks.popup).not.toHaveBeenCalled();
+      expect(hook.result.current.loginLoading).toBe(true);
+      expect(consumeGoogleRedirectPending()).toBe(true);
+    },
+  );
+
+  it("uses redirect in an installed PWA even with a desktop user agent", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    const hook = await mount();
+    await act(async () => { void hook.result.current.loginWithGoogle(); });
+    expect(mocks.redirect).toHaveBeenCalledOnce(); expect(mocks.popup).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps desktop popup login working repeatedly for the same and another account", async () => {
+    const hook = await mount();
+    mocks.signOut.mockImplementation(async () => { mocks.auth.currentUser = null; await mocks.callback!(null); });
+    for (const uid of ["passenger-a", "passenger-a", "passenger-b"]) {
+      const account = { uid, getIdTokenResult: vi.fn(async () => ({ claims: { role: "passenger" } })) };
+      mocks.popup.mockImplementation(async () => { mocks.auth.currentUser = account; await mocks.callback!(account); return { user: account }; });
+      await act(async () => { await hook.result.current.loginWithGoogle(); });
+      expect(hook.result.current.user?.uid).toBe(uid);
+      expect(hook.result.current.loginError).toBeNull();
+      expect(hook.result.current.loading).toBe(false);
+      expect(account.getIdTokenResult).toHaveBeenCalledOnce();
+      await act(async () => { await hook.result.current.logout(); });
+      expect(hook.result.current.user).toBeNull();
+    }
+    expect(mocks.popup).toHaveBeenCalledTimes(3); expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it.each(["popup", "redirect"])("verifies a successful %s result even if the observer update is delayed", async flow => {
+    const claims = deferred();
+    const getIdTokenResult = vi.fn(async () => { await claims.promise; return { claims: { role: "passenger" } }; });
+    const account = { uid: "oauth-result", getIdTokenResult };
+    const result = deferred();
+    mocks.redirectResult.mockImplementation(async () => {
+      if (flow === "popup") return null;
+      await result.promise; return { user: account };
+    });
+    const hook = await mount();
+    mocks.auth.currentUser = account;
+    let signingIn: Promise<void> | undefined;
+    await act(async () => {
+      if (flow === "popup") {
+        mocks.popup.mockResolvedValue({ user: account });
+        signingIn = hook.result.current.loginWithGoogle();
+      } else result.resolve();
+    });
+    expect(getIdTokenResult).toHaveBeenCalledOnce();
+    expect(hook.result.current.user).toBeNull();
+    await act(async () => { claims.resolve(); await signingIn; });
+    expect(hook.result.current.user?.uid).toBe("oauth-result");
+    expect(getIdTokenResult).toHaveBeenCalledWith(true);
+  });
+
+  it.each(["admin", "passenger"])("restores a %s redirect session and keeps access closed until claims resolve", async role => {
+    const restoring = deferred(), claims = deferred();
+    const account = { uid: "returned", getIdTokenResult: async () => { await claims.promise; return { claims: { role, admin: role === "admin" } }; } };
+    mocks.redirectResult.mockImplementation(async () => { await restoring.promise; return { user: account }; });
+    markGoogleRedirectPending();
+    const hook = await mount();
+    expect(hook.result.current.loginReady).toBe(false);
+    mocks.auth.currentUser = account;
+    let verification!: Promise<void>;
+    await act(async () => { verification = mocks.callback!(account); restoring.resolve(); });
+    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loading).toBe(true);
+    await act(async () => { claims.resolve(); await verification; });
+    expect(hook.result.current.user?.role).toBe(role);
+    expect(hook.result.current.loginReady).toBe(true); expect(hook.result.current.loginError).toBeNull();
+    expect(consumeGoogleRedirectPending()).toBe(false);
+    hook.unmount();
+    // Firebase's persisted current account also restores when there is no
+    // redirect result on the next page load.
+    mocks.callback = null; mocks.redirectResult.mockResolvedValue(null);
+    const reloaded = await mount();
+    await act(async () => { await mocks.callback!(account); });
+    expect(reloaded.result.current.user?.role).toBe(role);
+    expect(reloaded.result.current.loginError).toBeNull();
+  });
+
+  it("reports a lost redirect session instead of silently returning to sign-in", async () => {
+    markGoogleRedirectPending();
+    const hook = await mount();
+    await waitFor(() => expect(hook.result.current.loginReady).toBe(true));
+    expect(hook.result.current.loginError).toContain("did not restore your session");
+    expect(consumeGoogleRedirectPending()).toBe(false);
+  });
+
+  it("shows redirect errors and allows another attempt", async () => {
+    markGoogleRedirectPending();
+    mocks.redirectResult.mockRejectedValue({ code: "auth/network-request-failed" });
+    const hook = await mount();
+    await waitFor(() => expect(hook.result.current.loginReady).toBe(true));
+    expect(hook.result.current.loginError).toContain("auth/network-request-failed");
+    expect(consumeGoogleRedirectPending()).toBe(false);
+    mocks.redirect.mockRejectedValue({ code: "auth/unauthorized-domain" });
+    await act(async () => { await hook.result.current.loginWithGoogleRedirect(); });
+    expect(hook.result.current.loginError).toContain("not authorized");
+    expect(hook.result.current.loginLoading).toBe(false);
+    expect(consumeGoogleRedirectPending()).toBe(false);
+  });
+
+  it("offers the full-page fallback when a desktop popup is blocked", async () => {
+    mocks.popup.mockRejectedValue({ code: "auth/popup-blocked" });
+    const hook = await mount();
+    await act(async () => { await hook.result.current.loginWithGoogle(); });
+    expect(hook.result.current.loginFallbackAvailable).toBe(true);
+    expect(hook.result.current.loginError).toContain("blocked");
+    expect(hook.result.current.loginLoading).toBe(false);
+  });
+
+  it("discards a late popup completion and timer while sign-out is pending", async () => {
+    const hook = await mount();
+    const account = user("leaving"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    const popup = deferred(), signOut = deferred();
+    mocks.popup.mockImplementation(async () => { await popup.promise; return { user: account }; });
+    mocks.signOut.mockReturnValue(signOut.promise);
+    vi.useFakeTimers();
+    let signingIn!: Promise<void>, signingOut!: Promise<void>;
+    await act(async () => { signingIn = hook.result.current.loginWithGoogle(); });
+    await act(async () => { signingOut = hook.result.current.logout(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000); popup.resolve(); await signingIn; });
+    expect(hook.result.current.user).toBeNull();
+    expect(hook.result.current.loginError).toBeNull();
+    expect(hook.result.current.loginFallbackAvailable).toBe(false);
+    expect(mocks.claims).toHaveBeenCalledOnce();
+    await act(async () => { mocks.auth.currentUser = null; await mocks.callback!(null); signOut.resolve(); await signingOut; });
+  });
+});
 describe("verified auth publication", () => {
   it("recovers transient access with bounded backoff and current trusted claims without relogin", async () => {
     const hook = await mount(); vi.useFakeTimers();
