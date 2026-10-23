@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { lazy, Suspense, type ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, configure, render, screen, act } from "@testing-library/react";
+import { cleanup, configure, render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PassengerWorkspace from "./PassengerWorkspace";
 import { BUS_EXPIRY_MS } from "@/lib/liveBusFreshness";
 import { setScenario } from "../../../../e2e/fixtures/state";
+import * as fixtures from "../../../../e2e/fixtures/state";
 import type { PassengerMapProps } from "@/components/maps/PassengerMap";
 import { stopEstimateContext, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 configure({ asyncUtilTimeout: 5_000 });
@@ -29,6 +30,16 @@ vi.mock("@/components/shared/FeedbackModal", () => ({ default: () => <div>QA fee
 beforeEach(() => setScenario("pending"));
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("passenger workspace navigation", () => {
+  it("acknowledges a ready empty catalog without waiting for a nonexistent bus subscription", async () => {
+    setScenario("empty");
+    const received = vi.fn();
+    const resume = vi.spyOn(fixtures, "useRTDBResume").mockReturnValue({ isResuming: true,
+      resumeGeneration: 0, connectionGeneration: 1, markSnapshotReceived: received });
+    try {
+      render(<PassengerWorkspace />);
+      await waitFor(() => expect(received).toHaveBeenCalled());
+    } finally { resume.mockRestore(); }
+  });
   it("shares map estimates with boarding and immediately invalidates them when the selected bus changes", async () => {
     setScenario("multiple"); render(<PassengerWorkspace />); const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Track QA route" }));

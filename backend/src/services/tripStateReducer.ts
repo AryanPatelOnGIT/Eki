@@ -37,9 +37,10 @@ export interface TripStateResult {
 
 // Stop arrival and endpoint direction inference are intentionally distinct
 // policies. Keep this alias while callers migrate from the historical name.
-// A conservative starting point for the NEO-M8N, pending a route field trial.
+// Passenger stop passage uses the requested 2.5m arrival circle. Endpoint
+// direction inference retains its separate radius and quality requirements.
 // Use raw accepted fixes, never the map's snapped/interpolated marker position.
-export const STOP_ARRIVAL_GEOFENCE_M = 10;
+export const STOP_ARRIVAL_GEOFENCE_M = 2.5;
 export const STOP_GEOFENCE_M = STOP_ARRIVAL_GEOFENCE_M;
 export const ORIGIN_DEPARTURE_M = 150;
 const MAX_TELEMETRY_SEGMENT_M = 250;

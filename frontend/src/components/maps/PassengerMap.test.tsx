@@ -64,12 +64,13 @@ describe("published passenger stop progress", () => {
     act(() => state.listener?.({ bus: { ...bus, timestamp: Date.now(), backendReceivedAt: Date.now() } }));
     expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ unavailable: undefined }));
   });
-  it("renders one bus arrow with no status dot or passenger-location marker", () => {
+  it("renders one accessible bus glyph with no duplicate status or passenger-location marker", () => {
     const watchPosition = vi.fn(success => { success({ coords: { latitude: 24, longitude: 73 } }); return 1; });
     Object.defineProperty(navigator, "geolocation", { configurable: true, value: { watchPosition, clearWatch: vi.fn() } });
     const view = render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
     const marker = screen.getByTitle(/^qa-bus(?: —.*)?$/);
-    expect(marker.children).toHaveLength(1);
+    expect(marker.getAttribute("role")).toBe("img");
+    expect(marker.querySelectorAll(".lucide-bus-front")).toHaveLength(1);
     expect(view.container.querySelector('[data-marker=\'{"lat":24,"lng":73}\']')).toBeNull();
     expect(view.container.querySelectorAll("[data-marker]")).toHaveLength(route.stops.length + 1);
     view.unmount();
@@ -309,6 +310,13 @@ describe("passenger map device and ride contexts", () => {
     state.snapshot = { bus: fixtureBus() };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview selectedBusKey="session:qa-session" />);
     expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
+    expect(state.arrivals).not.toHaveBeenCalled();
+  });
+  it("reports missing authoritative progress instead of leaving destination ETAs calculating forever", () => {
+    state.snapshot = { bus: { ...fixtureBus("forward"), currentStopIndex: undefined } };
+    const changed = vi.fn();
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} onStopEstimatesChange={changed} />);
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: {}, unavailable: "Stop progress unavailable" }));
     expect(state.arrivals).not.toHaveBeenCalled();
   });
   it("switches same-route buses and centers/estimates only the selected session", async () => {

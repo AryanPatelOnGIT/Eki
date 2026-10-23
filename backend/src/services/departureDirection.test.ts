@@ -23,6 +23,13 @@ describe("credible departure direction", () => {
   it("resolves reverse departure using independently directed road geometry", () => {
     expect(inferDepartureDirection({ ...input, samples: samples.map((sample, index) => ({ ...sample, ...point(480 - index * 20) })) })).toBe("reverse");
   });
+  it("retains sustained first-leg departure through a small GNSS backstep", () => {
+    const jittered = [20, 40, 38, 60].map((meters, index) => ({ ...point(meters), timestamp: 100_000 + index * 4_000 }));
+    expect(inferDepartureDirection({ ...input, samples: jittered, now: 112_000 })).toBe("forward");
+    expect(inferDepartureDirection({ ...input, samples: jittered.map(sample => ({ ...sample, ...point(500 - (sample.lat - 23) * 111_195) })), now: 112_000 })).toBe("reverse");
+    const reversing = [20, 50, 35, 60].map((meters, index) => ({ ...point(meters), timestamp: 100_000 + index * 4_000 }));
+    expect(inferDepartureDirection({ ...input, samples: reversing, now: 112_000 })).toBeNull();
+  });
   it("rejects stationary jitter, stale/out-of-order data, jumps and unobserved intermediate stops", () => {
     expect(inferDepartureDirection({ ...input, samples: samples.slice(0, 2) })).toBeNull();
     expect(inferDepartureDirection({ ...input, now: 200_000 })).toBeNull();

@@ -10,9 +10,9 @@ export const routingTestMap = [{
     { path: 'backend/src/services/departureDirection.test.ts', name: 'credible departure direction > rejects stationary jitter, stale/out-of-order data, jumps and unobserved intermediate stops', level: 'L1', semantics: 'Conservative moving inference rejects insufficient, stale, unordered, stationary, jumping and beyond-first-leg synthetic evidence.' }],
 }, {
   caseId: 'TRIP06',
-  scope: 'Real ingestion and trip engine with in-memory Firebase adapters preserve the next expected stop at 11m, advance at 9m, and persist one history event before the live index. Transport and physical GNSS are separate.',
+  scope: 'Real ingestion and trip engine with in-memory Firebase adapters preserve the next expected stop at 2.6m, advance at 2.4m, and persist one history event before the live index. Transport and physical GNSS are separate.',
   sourcePaths: ['backend/src/services/tripStateReducer.ts', 'backend/src/services/tripStateEngine.ts'],
-  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > publishes the next stop and its history only after entering the 10m arrival circle', level: 'L1', semantics: 'Authenticated ingestion invokes the real engine; an outside fix leaves the middle stop unreached, an inside fix records it once and publishes the terminal as next, and repeated fixes cannot duplicate history.' }],
+  tests: [{ path: 'backend/src/services/routingLifecycle.integration.test.ts', name: 'routing lifecycle through actual ingestion and listeners > publishes the next stop and its history only after entering the 2.5m arrival circle', level: 'L1', semantics: 'Authenticated ingestion invokes the real engine; an outside fix leaves the middle stop unreached, an inside fix records it once and publishes the terminal as next, and repeated fixes cannot duplicate history.' }],
 }, {
   caseId: 'TRIP14',
   scope: 'Real ingestion/engine/recovery with serialized in-memory Firebase adapters preserves terminal intent, unique return identity and undeparted overnight readiness. Provider and persistence transport are mocked.',

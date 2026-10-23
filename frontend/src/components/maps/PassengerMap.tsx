@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Map as GoogleMap, AdvancedMarker, useMap } from "@vis.gl/react-google-maps";
 import RouteTimelineSheet from "@/components/passenger/RouteTimelineSheet";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
+import BusPositionGlyph from "@/components/maps/BusPositionGlyph";
 import { RouteStop } from "@/hooks/useRoutes";
 import { getDistanceMeters } from "@/lib/mapUtils";
 import { isLiveBusSignalLost, liveBusFreshnessTimestamp } from "@/lib/liveBusFreshness";
@@ -16,7 +17,7 @@ import {
 } from "@/lib/passengerLiveBus";
 import { passengerRerouteNotice } from "@/lib/passengerRouteStatus";
 
-import { WifiOff, Navigation, Navigation2 } from "lucide-react";
+import { WifiOff, Navigation } from "lucide-react";
 import { MAP_OPTIONS, MAPS_MAP_ID } from "@/config/maps";
 import {
   directionsMatch,
@@ -56,9 +57,9 @@ type IncomingBusData = PassengerMapBus;
 const WALKING_KMH = 5;
 const WALKING_M_PER_MIN = (WALKING_KMH * 1000) / 60;
 const BUS_MOTION_COLORS: Record<string, string> = {
-  moving:    "#34D399", // emerald — bus is rolling
-  stopped:   "#FBBF24", // amber   — stopped at station or in traffic
-  uncertain: "#F87171", // red     — GPS fix lost
+  moving:    "#2563eb",
+  stopped:   "#b45309",
+  uncertain: "#b45309",
 };
 
 const BusMarker = memo(function BusMarker({
@@ -83,14 +84,14 @@ const BusMarker = memo(function BusMarker({
     setDisplayHeading(nextDisplayHeading);
   }, [bus.heading, bus.motionState, bus.speed, bus.deviceState]);
 
-  const color = signalLost || markerSelection.uncertain ? "#FBBF24"
+  const color = signalLost || markerSelection.uncertain ? "#b45309"
     : BUS_MOTION_COLORS[bus.motionState] ?? BUS_MOTION_COLORS.uncertain;
 
   if (!markerPoint) return null;
   return (
-    <AdvancedMarker position={markerPoint} anchorLeft="-50%" anchorTop="-50%">
-      <div
-        title={
+    <AdvancedMarker position={markerPoint} anchorLeft="-50%" anchorTop="-50%" zIndex={40}>
+      <BusPositionGlyph
+        label={
           signalLost ? `${bus.busId} — last known location`
           : markerSelection.decision === "match_pending"
             ? `${bus.busId} — updating route position`
@@ -98,26 +99,10 @@ const BusMarker = memo(function BusMarker({
               ? `${bus.busId} — approximate GNSS position`
               : `${bus.busId} — ${bus.motionState}`
         }
-        style={{
-          width: 44,
-          height: 44,
-          position: "relative",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <div
-          style={{
-            transform: `rotate(${displayHeading}deg)`,
-            transformOrigin: "center",
-            transition: "transform 250ms ease-out",
-            willChange: "transform",
-          }}
-        >
-          <Navigation2 size={30} fill={color} color="white" strokeWidth={1} />
-        </div>
-      </div>
+        heading={displayHeading}
+        color={color}
+        uncertain={signalLost || markerSelection.uncertain || bus.deviceState !== "online"}
+      />
     </AdvancedMarker>
   );
 });
@@ -333,15 +318,9 @@ function PassengerMapInner({
     };
   }, [route.id, route.rideDirection, route.configVersion, route.stops, resumeGeneration, preview, selectedBusKey]);
 
-  // ── High-Frequency Speed-Aware ETA Fallback (Haversine) ──────────────────
+  // One clock publication; the calculation effect owns arrival labels.
   const updateUI = useCallback(() => {
-    const now = Date.now();
-    setUiNow(now);
-    const updatedETAs: Record<string, number> = {};
-    for (const [stopId, timestamp] of Object.entries(arrivalTimestampsRef.current)) {
-      updatedETAs[stopId] = Math.max(0, Math.ceil((timestamp - now) / 60_000));
-    }
-    setStopETAs(updatedETAs);
+    setUiNow(Date.now());
   }, []);
 
   useEffect(() => {
@@ -482,6 +461,7 @@ function PassengerMapInner({
     : signalLostBuses.length === buses.size && buses.size > 0 ? "Signal delayed"
     : preview ? (firstBus?.sessionId ? "Direction pending" : "Service not started")
     : buses.size === 0 ? "Waiting for bus"
+    : progressBus && activeBusStopIndex === undefined ? "Stop progress unavailable"
     : !anyGeometryAvailable ? "Route unavailable" : undefined;
   const estimateContext = stopEstimateContext(route, selectedBusKey, buses.size === 1 ? firstBus?.routeVersion : undefined);
   useEffect(() => {

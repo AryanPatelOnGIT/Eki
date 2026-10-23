@@ -5,6 +5,7 @@ import {
 } from "./polylineDistance";
 import { getDistanceMeters } from "./mapUtils";
 import { ETA_SPEED_FLOOR_KMH } from "./etaConstants";
+import { routeLegPaths } from "./routeLegPaths";
 
 export interface EtaStopPoint {
   id: string;
@@ -33,8 +34,24 @@ export class StopProjectionCache {
     const stopsKey = JSON.stringify(stops.map((stop) => [stop.id, stop.lat, stop.lng]));
     const existing = this.entries.get(routeKey);
     if (existing?.path === path && existing.stopsKey === stopsKey) return existing.positions;
-    const index = preparePolylineDistanceIndex(path);
-    const positions = new Map(stops.map((stop) => [stopProjectionKey(stop), positionAlongPolyline(stop, index)]));
+    const positions = new Map<string, number | null>();
+    // Independent nearest-point projections pick the first visit on a loop
+    // or return road. Use the same ordered itinerary as the route renderer
+    // whenever this is a complete configured path. Partial reroutes retain
+    // their existing per-stop projections until their own itinerary is known.
+    const legs = routeLegPaths(path, stops);
+    if (stops.length > 1 && legs.size === stops.length - 1) {
+      let distance = 0;
+      positions.set(stopProjectionKey(stops[0]), 0);
+      for (let stopIndex = 1; stopIndex < stops.length; stopIndex++) {
+        const cumulative = preparePolylineDistanceIndex(legs.get(stopIndex)!).cumulative;
+        distance += cumulative[cumulative.length - 1];
+        positions.set(stopProjectionKey(stops[stopIndex]), distance);
+      }
+    } else {
+      const index = preparePolylineDistanceIndex(path);
+      stops.forEach(stop => positions.set(stopProjectionKey(stop), positionAlongPolyline(stop, index)));
+    }
     this.entries.delete(routeKey);
     this.entries.set(routeKey, { path, stopsKey, positions });
     if (this.entries.size > StopProjectionCache.MAX_ENTRIES) {
