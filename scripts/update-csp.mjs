@@ -37,6 +37,14 @@ const backendOrigin = backendOriginFromUrl(process.env.NEXT_PUBLIC_BACKEND_URL);
 const databaseHostname = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
   ? parseRtdbInstanceUrl(process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL).hostname
   : null;
+// Firebase can redirect long-polling to a different Google-owned shard. The
+// protocol loads JSONP scripts and a disconnect iframe at /.lp; permitting only
+// connect-src or the configured instance breaks clients after a socket failure.
+// Restrict these additional script/frame sources to that transport path.
+const rtdbLongPollSources = [
+  "https://*.firebaseio.com/.lp",
+  "https://*.firebasedatabase.app/.lp",
+];
 
 const sources = [
   "'self'",
@@ -46,6 +54,7 @@ const sources = [
   "https://www.google.com",
   "https://maps.googleapis.com",
   ...(databaseHostname ? [`https://${databaseHostname}`] : []),
+  ...rtdbLongPollSources,
 ].join(" ");
 csp.value = csp.value.replace(/script-src [^;]+;/, `script-src ${sources};`);
 const connectSources = [
@@ -78,6 +87,7 @@ const frameSources = [
   "'self'",
   "https://accounts.google.com",
   "https://*.firebaseapp.com",
+  ...rtdbLongPollSources,
 ].join(" ");
 csp.value = csp.value.replace(/frame-src [^;]+;/, `frame-src ${frameSources};`);
 await writeFile(firebasePath, `${JSON.stringify(firebase, null, 2)}\n`);

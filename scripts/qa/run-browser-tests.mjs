@@ -30,7 +30,10 @@ try {
   const require = createRequire(resolve(root, 'package.json'));
   const cli = require.resolve('@playwright/test/cli');
   const result = spawnSync(process.execPath, [cli, 'test', '--config', 'playwright.emulator.config.ts'], {
-    cwd: root, env: process.env, encoding: 'utf8', timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
+    // Forty serial mobile/desktop executions can exceed five minutes on a
+    // supported Windows host. Keep a finite budget below the launcher deadline
+    // while allowing the complete report and shutdown to finish.
+    cwd: root, env: process.env, encoding: 'utf8', timeout: 6 * 60_000, maxBuffer: 8 * 1024 * 1024 });
   process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '');
   writeFileSync(resolve(directory, 'browser-run.log'), (result.stdout ?? '') + (result.stderr ?? ''));
   report.exitCode = result.status; report.runnerError = result.error?.code ?? null;
