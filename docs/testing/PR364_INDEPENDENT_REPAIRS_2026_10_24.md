@@ -66,7 +66,12 @@ web/emulator reports; no execution or release gate was disabled.
 The required dependency audit also identified new advisories. The lockfile now
 resolves Next.js/eslint-config-next **16.4.3**, Vitest/mocker **4.1.12**,
 body-parser **2.4.0**, ip-address **10.7.4**, and zod **4.6.7**. The complete
-dependency audit reports zero vulnerabilities at verification time.
+dependency audit reports zero vulnerabilities at verification time. A subsequent
+CI audit received three newly published tooling advisories; the final lockfile
+also patches **fast-uri 3.1.9**, **serialize-javascript 7.1.4**, and
+**undici 8.12.3**. Only those three transitive package records changed. Fresh
+audit, 159 script cases, 98 targeted backend cases, 91 frontend component/client
+cases and the strict build passed after that last patch.
 
 The newer React lint rules are retained. Feedback loading resets on explicit
 retry and derives new-account loading from its scope; Places edits immediately
@@ -106,7 +111,12 @@ GNSS acceptance or all-controls coverage.
 - Before the dependency/hooks follow-up, the CSP/arrival repair stage passed
   **40/40 emulator browser cases** and **64/64 Firebase rules cases** against
   isolated demo emulators. Those older results are not promoted to exact-final-head
-  acceptance; the PR workflow reruns both suites on the pushed revision.
+  acceptance. The subsequent PR workflow reran **40/40 browser cases**,
+  **64/64 rules**, **8/8 API cases** and **85/85 native host assertions**
+  on its clean merge of `9909da5`, with Maps/Places and physical motion tiers
+  kept separate. Its application build and runtime audit passed; only the final
+  development audit found the three newly reported packages above. CI reruns
+  the full scope again after the lockfile correction.
 - Actual localhost admin still showed one online stationary device and zero
   services. The CSP comparison used genuine Firebase transport; it did not grant
   an unauthenticated read. Export preview guest hydration passed, but Google
