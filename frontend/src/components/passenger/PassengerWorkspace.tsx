@@ -305,8 +305,11 @@ export default function PassengerWorkspace() {
     busesOnRoute.find((bus) => bus.busId === selectedBusId) ??
     busesOnRoute[0];
   const activeSessionId = activeBusOnRoute?.sessionId;
-  const rideDirectionState = activeBusOnRoute?.directionState === "pending"
-    ? "pending" : normalizeRideDirection(activeBusOnRoute?.direction);
+  const directionPending = activeBusOnRoute?.directionState === "pending";
+  const normalizedDirection = normalizeRideDirection(activeBusOnRoute?.direction);
+  const rideDirectionState = directionPending ? "pending"
+    : normalizedDirection === "forward" ? "forward"
+    : normalizedDirection === "reverse" ? "reverse" : "pending";
   const directedRoute = useMemo(() => routeInRideDirectionState(activeRoute, rideDirectionState), [activeRoute, rideDirectionState]);
   // Forward order is only the configured preview, never a resolved direction.
   const preview = !directedRoute;

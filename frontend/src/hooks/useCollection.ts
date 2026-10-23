@@ -206,7 +206,7 @@ export function useCollection<T>(
       currentEntry.callbacks.forEach((callback) => callback());
     }
     setRetryGeneration((generation) => generation + 1);
-  }, [cacheKey, refreshAccess]);
+  }, [cacheKey, refreshAccess, setRetryGeneration]);
   const staleData = entry ? entry.data as T[] : [];
   return {
     data: entry?.error || entry?.loading ? [] : staleData,

@@ -56,6 +56,27 @@ recovery, boarding, chat, completion and distinct return service, feedback and
 history, operator/vehicle CRUD, settings, and delay/interruption/restart flows.
 Providers remain synthetic; Auth, Firestore and RTDB are local demo emulators.
 
+## CI and dependency follow-up
+
+The exact-header security assertion now requires the two path-restricted
+long-poll frame sources and verifies that scripts do not gain unrestricted
+Firebase origins. The dependent evidence job must receive actual successful
+web/emulator reports; no execution or release gate was disabled.
+
+The required dependency audit also identified new advisories. The lockfile now
+resolves Next.js/eslint-config-next **16.4.3**, Vitest/mocker **4.1.12**,
+body-parser **2.4.0**, ip-address **10.7.4**, and zod **4.6.7**. The complete
+dependency audit reports zero vulnerabilities at verification time.
+
+The newer React lint rules are retained. Feedback loading resets on explicit
+retry and derives new-account loading from its scope; Places edits immediately
+clear old predictions and fence late cancelled responses. Boarding prop changes
+adjust only the corresponding state before commit, preserving draft choices
+and code, while a layout effect updates the session fence without mutating refs
+during render. Route direction memoization uses explicit primitive values and
+collection retries include their stable setter dependency. Regressions cover
+destination prop/local-edit behavior and cancelled Places results.
+
 ## Live and physical limits
 
 The connected stationary device produced fresh stopped/online backend receipts;
@@ -68,19 +89,24 @@ under receiver noise, or physical turnaround. Those remain field acceptance
 gates. Synthetic browser and emulator passes must not be promoted to moving
 GNSS acceptance or all-controls coverage.
 
-## Final validation of the working tree
+## Validation by repair stage
 
-- Full `npm test`: **159 script, 1,262 backend and 774 frontend cases passed**;
+- Final dependency/source checks: **159 script, 1,262 backend and 776 frontend cases passed**;
   64 opt-in backend cases were skipped. OpenAPI's 71-operation checker and UI
   source contracts passed; operation counts are separate from test cases.
 - Neighboring browser suites: **75 passed** (progress 8, admin access 32,
   passenger warning layouts 6, routing marker 2, production-audit fixture 27).
-  Together with the 40 emulator browser cases this is **115 browser executions**,
-  with provider tiers kept separate.
+  One initial narrow CPU-throttled case was interrupted by a Vite hot reload
+  (the trace records a second document request with a timestamped entry module).
+  The isolated case passed at all three widths, followed by a complete **27/27**
+  production-audit rerun with no concurrent build or source edits. The original
+  failure trace is retained locally; no retries or timeout increases hid it.
 - Full lint and strict production build passed. The build verified the configured
   backend CSP contract, real backend readiness and Hosting-origin CORS preflight.
-- Fresh Firebase rules execution: **64/64 passed** against the isolated demo
-  emulators, with no skipped or blocked cases in that rules scope.
+- Before the dependency/hooks follow-up, the CSP/arrival repair stage passed
+  **40/40 emulator browser cases** and **64/64 Firebase rules cases** against
+  isolated demo emulators. Those older results are not promoted to exact-final-head
+  acceptance; the PR workflow reruns both suites on the pushed revision.
 - Actual localhost admin still showed one online stationary device and zero
   services. The CSP comparison used genuine Firebase transport; it did not grant
   an unauthenticated read. Export preview guest hydration passed, but Google

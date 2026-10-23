@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { RouteData } from "@/hooks/useRoutes";
 import InAppSelect from "@/components/ui/InAppSelect";
 import { errorMessage } from "@/lib/errors";
@@ -86,31 +86,38 @@ export default function PassengerBoardingView({
 }: Props) {
   const codeHintId = useId();
   const [boardingStopId, setBoardingStopId] = useState("");
-  const [alightingStopId, setAlightingStopId] = useState("");
+  const [alightingStopId, setAlightingStopId] = useState(destinationStopId ?? "");
   const [boardingCode, setBoardingCode] = useState("");
   const [joinState, setJoinState] = useState<JoinState>("idle");
   const [joinError, setJoinError] = useState("");
   const [hasJoined, setHasJoined] = useState(false);
+  const [renderedSessionId, setRenderedSessionId] = useState(sessionId);
+  const [renderedDestination, setRenderedDestination] = useState(destinationStopId);
   const joinAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const sessionRef = useRef(sessionId);
-  sessionRef.current = sessionId;
-
-  useEffect(() => {
-    mountedRef.current = true;
+  // Adjust only the session result when props change. Keep the passenger's
+  // draft choices/code, and never commit a frame showing the previous join.
+  if (renderedSessionId !== sessionId) {
+    setRenderedSessionId(sessionId);
     setHasJoined(false);
     setJoinState("idle");
     setJoinError("");
+  }
+  if (renderedDestination !== destinationStopId) {
+    setRenderedDestination(destinationStopId);
+    if (destinationStopId !== undefined) setAlightingStopId(destinationStopId);
+  }
+
+  useLayoutEffect(() => {
+    sessionRef.current = sessionId;
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       joinAbortRef.current?.abort();
       joinAbortRef.current = null;
     };
   }, [sessionId]);
-
-  useEffect(() => {
-    if (destinationStopId !== undefined) setAlightingStopId(destinationStopId);
-  }, [destinationStopId]);
 
   useEffect(() => {
     if (!restoredBoarding) return;

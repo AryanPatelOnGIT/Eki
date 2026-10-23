@@ -15,6 +15,13 @@ export const productionAuditTestMap = [
     { path, name: 'admin and passenger label 90 to 200 second telemetry gaps and recover without reload', level: 'L3',
       semantics: 'Real admin and passenger components use the same shared receipt-age threshold with 90.001, 120 and 200 second synthetic gaps, then remove the warning on a fresh delivery without navigation refresh.' }],
   }, {
+    caseId: 'ROUTE05',
+    scope: 'Mounted Places search clears prior-query suggestions immediately and ignores a cancelled late HTTP response. HTTP/auth are mocked; genuine provider and broader error partitions remain separate.',
+    sourcePaths: ['frontend/src/components/admin/RouteManagementPanel.tsx'],
+    tests: [{ path: 'frontend/src/components/admin/RouteManagementPanel.test.tsx',
+      name: 'route editing and operation recovery > clears predictions immediately for a changed query and ignores a cancelled response', level: 'L1',
+      semantics: 'Changing a valid query hides its old selectable prediction before the next debounce; a response that settles after shortening the query cannot add a stale stop suggestion.' }],
+  }, {
     caseId: 'ROUTE08',
     scope: 'Local stop-rename sub-oracle: empty and whitespace Enter/blur retain the prior valid stop name with immediate inline feedback. Valid retry and Escape remain tested; persistence/provider acceptance is separate.',
     sourcePaths: ['frontend/src/components/admin/RouteManagementPanel.tsx'],

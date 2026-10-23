@@ -52,6 +52,20 @@ function delayedFetch(ms: number) {
 }
 
 describe("boarding preparation and API budgets", () => {
+  it("synchronizes changed destination props while preserving the boarding draft and local edits", () => {
+    const view = prepare();
+    const props = { sessionId: "qa-session", route, tripState: "in_service" as const, destinationStopId: "gamma" };
+    view.rerender(<PassengerBoardingView {...props} />);
+    expect(screen.getByLabelText("Destination station")).toHaveProperty("value", "gamma");
+    expect(screen.getByLabelText("Boarding stop")).toHaveProperty("value", "alpha");
+    expect(screen.getByLabelText("Boarding code")).toHaveProperty("value", "ABCDEFGH");
+    fireEvent.change(screen.getByLabelText("Destination station"), { target: { value: "beta" } });
+    view.rerender(<PassengerBoardingView {...props} />);
+    expect(screen.getByLabelText("Destination station")).toHaveProperty("value", "beta");
+    view.rerender(<PassengerBoardingView {...props} destinationStopId="" />);
+    expect(screen.getByLabelText("Destination station")).toHaveProperty("value", "");
+  });
+
   it("leaves a full network budget after nine seconds of GPS acquisition", async () => {
     const fetchMock = delayedFetch(9_000); const view = prepare(); view.board();
     await advance(9_000); expect(fetchMock).not.toHaveBeenCalled();
