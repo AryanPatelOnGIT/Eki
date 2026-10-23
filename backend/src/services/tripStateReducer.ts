@@ -43,6 +43,7 @@ export interface TripStateResult {
 export const STOP_ARRIVAL_GEOFENCE_M = 2.5;
 export const STOP_GEOFENCE_M = STOP_ARRIVAL_GEOFENCE_M;
 export const ORIGIN_DEPARTURE_M = 150;
+const MIN_ORIGIN_DEPARTURE_M = 10;
 const MAX_TELEMETRY_SEGMENT_M = 250;
 // Two one-second hardware heartbeats must span this interval. This is arrival
 // confirmation, independent of the post-completion turnaround wait.
@@ -137,7 +138,7 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
   const position = { lat, lng };
   const firstStop = stops[0];
   const departureRadius = stops.length > 1
-    ? Math.min(ORIGIN_DEPARTURE_M, Math.max(STOP_GEOFENCE_M, haversineMeters(firstStop, stops[1]) / 2))
+    ? Math.min(ORIGIN_DEPARTURE_M, Math.max(MIN_ORIGIN_DEPARTURE_M, haversineMeters(firstStop, stops[1]) / 2))
     : ORIGIN_DEPARTURE_M;
   const hasDepartedOrigin =
     input.hasDepartedOrigin ||

@@ -20,6 +20,18 @@ function input(overrides: Partial<Parameters<typeof reduceTripState>[0]> = {}) {
 }
 
 describe("reduceTripState", () => {
+  it.each(["pre_departure", "in_service"] as const)("retains the 10m origin departure minimum for short routes in %s", currentTripState => {
+    const shortStops = [origin, { ...origin, lat: origin.lat + 8 / 6_371_000 * 180 / Math.PI }];
+    const near = reduceTripState(input({ currentTripState, stops: shortStops, motionState: "moving",
+      lat: origin.lat + 5 / 6_371_000 * 180 / Math.PI }));
+    expect(near.hasDepartedOrigin).toBe(false);
+    expect(near.currentStopIndex).toBe(0);
+    expect(near.tripState).toBe(currentTripState);
+    const departed = reduceTripState(input({ currentTripState, stops: shortStops, motionState: "moving",
+      lat: origin.lat + 10.1 / 6_371_000 * 180 / Math.PI }));
+    expect(departed.hasDepartedOrigin).toBe(true);
+    expect(departed.currentStopIndex).toBe(1);
+  });
   it.each([
     { motionState: "moving" as const }, { motionState: "uncertain" as const },
     { gpsHdop: null }, { gpsHdop: 4.1 }, { speed: 2.6 },

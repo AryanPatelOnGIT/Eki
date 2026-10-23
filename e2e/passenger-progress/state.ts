@@ -8,23 +8,29 @@ import { getDistanceMeters } from "../../frontend/src/lib/mapUtils";
 
 const query = new URLSearchParams(window.location.search);
 const direction = query.get("direction") === "reverse" ? "reverse" : "forward";
-const configuredRoute = { id: "synthetic-progress", name: "Synthetic campus route", waypoints: [], color: "#22c55e",
+const standardRoute = { id: "synthetic-progress", name: "Synthetic campus route", waypoints: [], color: "#22c55e",
   configVersion: 1, geometryVersion: 1, polylineQuality: "HIGH_QUALITY" as const,
   polyline: "_ekkC_omvLgEgEgEgEgEgE", stops: ["Alpha", "Beta", "Gamma", "Delta"].map((name, index) => ({
     id: name.toLowerCase(), name, shortName: name[0], lat: 23 + index * 0.001, lng: 72 + index * 0.001 })) };
-Object.assign(configuredRoute, { forwardPolyline: encodePolyline(configuredRoute.stops), reversePolyline: encodePolyline([...configuredRoute.stops].reverse()) });
+const loopPath = [{ lat: 23, lng: 72 }, { lat: 23.001, lng: 72 }, { lat: 23.001, lng: 72.001 },
+  { lat: 23, lng: 72.001 }, { lat: 23, lng: 72 }, { lat: 23.001, lng: 72 }, { lat: 23.002, lng: 72 }];
+const configuredRoute = query.has("loop") ? { ...standardRoute,
+  stops: [0, 1, 3, 5, 6].map((index, visit) => ({ ...loopPath[index],
+    id: `visit-${visit}`, name: ["Origin", "First visit", "Turn", "Second visit", "End"][visit], shortName: `${visit}` })) } : standardRoute;
+const path = query.has("loop") ? loopPath : configuredRoute.stops;
+Object.assign(configuredRoute, { forwardPolyline: encodePolyline(path), reversePolyline: encodePolyline([...path].reverse()) });
 export const route = routeInRideDirection(configuredRoute, direction);
 const listeners = new Set<(snapshot: Record<string, unknown>) => void>();
 const changeListeners = new Set<(change: unknown) => void>();
 const storeListeners = new Set<() => void>();
 let revision = 0;
-function liveBus(index: number, point = { lat: 23.0015, lng: 72.0015 }) {
+function liveBus(index: number, point = query.has("loop") ? { lat: 23.0005, lng: 72 } : { lat: 23.0015, lng: 72.0015 }) {
   const now = Date.now();
   const alongRouteDistanceM = positionAlongPolyline(point, preparePolylineDistanceIndex(route.stops)) ?? 0;
   return { busId: "synthetic-bus", routeId: route.id, sessionId: "synthetic-session", driverId: "synthetic-driver",
     ...point, timestamp: now, backendReceivedAt: now, seq: 1, deviceState: "online", status: "active", tripState: "in_service",
     direction, directionState: "resolved", routeDirection: direction, routeVersion: 1, routeGeometryVersion: 1,
-    currentStopIndex: index, routeSource: "configured", routeState: "ON_ROUTE", motionState: "moving", speed: 20, heading: direction === "forward" ? 43 : 223,
+    currentStopIndex: index, routeSource: "configured", routeState: "ON_ROUTE", motionState: "moving", speed: 20, heading: query.has("loop") ? 0 : direction === "forward" ? 43 : 223,
     mapMatchSeq: 1, mapMatchSampledAt: now,
     rawLocation: { ...point, speed: 20, heading: 43, motionState: "moving", seq: 1, sampledAt: now },
     matchedLocation: { ...point, seq: 1, sampledAt: now, routeVersion: 1, matchConfidence: 0.99, distanceToRouteM: 0,
@@ -32,7 +38,7 @@ function liveBus(index: number, point = { lat: 23.0015, lng: 72.0015 }) {
 }
 let snapshot: Record<string, unknown> = { bus: query.has("pending")
   ? { ...liveBus(0), direction: null, directionState: "pending", tripState: "pre_departure" }
-  : liveBus(query.has("arrival") ? 1 : 2) };
+  : liveBus(query.has("arrival") || query.has("loop") ? 1 : 2) };
 function emit(bus: ReturnType<typeof liveBus> | Record<string, unknown>) {
   snapshot = { bus }; revision++;
   listeners.forEach(listener => listener(snapshot));

@@ -30,6 +30,16 @@ const base = { busPoint: { lat: 23.005, lng: 72 }, heading: 0, speedKmh: 30, del
 beforeEach(() => { counter.projections = 0; counter.itineraries = 0; });
 
 describe("route scoped stop projections", () => {
+  it("uses the immutable first required stop for a partial reroute itinerary", () => {
+    const cache = new StopProjectionCache();
+    const reroute = [{ lat: 23.005, lng: 72 }, ...path.slice(1)];
+    const positions = cache.positions("dynamic:v1", reroute, stops, 1);
+    expect(positions.has(JSON.stringify([stops[0].id, stops[0].lat, stops[0].lng]))).toBe(false);
+    expect(cache.busPosition("dynamic:v1", reroute[0], 0, 1)).toBe(0);
+    const position = cache.busPosition("dynamic:v1", { lat: 23.015, lng: 72 }, 0, 2)!;
+    expect(position).toBeCloseTo(getDistanceMeters(reroute[0], { lat: 23.015, lng: 72 }), 3);
+    expect(cache.positions("dynamic:v1", reroute, stops, 0)).not.toBe(positions);
+  });
   it("avoids all unchanged stop work on another tick and preserves legacy ETA values", () => {
     const legacy = busStopArrivalTimestamps(base);
     expect(counter.projections).toBe(4);

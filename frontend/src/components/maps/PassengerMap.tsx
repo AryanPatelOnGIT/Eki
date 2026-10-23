@@ -32,7 +32,6 @@ import {
   decodeRoutePathForDisplay,
 } from "@/lib/mapRouteGeometry";
 import { busStopArrivalTimestamps, StopProjectionCache } from "@/lib/busEta";
-import { positionAlongPolyline, preparePolylineDistanceIndex } from "@/lib/polylineDistance";
 import { useDynamicRouteGeometries } from "@/hooks/useDynamicRouteGeometries";
 import { useTelemetryRenderTrace } from "@/hooks/useTelemetryRenderTrace";
 import { stopLabel } from "@/lib/stopLabel";
@@ -192,6 +191,7 @@ function PassengerMapInner({
   const etaBusPositions = useRef(new Map<string, {
     path: readonly LatLng[]; point: LatLng; heading: number;
     routeVersion: number | undefined; direction: unknown; position: number | null;
+    sessionId: string | undefined; nextStopIndex: number; stopPositions: ReadonlyMap<string, number | null>;
   }>());
   const stopProjectionCache = useRef(new StopProjectionCache());
   useEffect(() => {
@@ -369,28 +369,29 @@ function PassengerMapInner({
         etaMarkerSelections.current.set(bus.busId, selection);
         etaSelectionInputs.current.set(bus.busId, bus);
         const busPoint = selection.position ?? { lat: bus.lat, lng: bus.lng };
-        const cachedPosition = etaBusPositions.current.get(bus.busId);
-        // An exact same-point hint is safe even for loops and divided roads.
-        // A moved point, changed heading/path/version/direction reacquires with
-        // the full search instead of constraining to nearby segments.
-        const busPathPosition = cachedPosition?.path === busPath &&
-          cachedPosition.point.lat === busPoint.lat && cachedPosition.point.lng === busPoint.lng &&
-          cachedPosition.heading === bus.heading && cachedPosition.routeVersion === bus.routeVersion &&
-          cachedPosition.direction === bus.routeDirection
-          ? cachedPosition.position
-          : positionAlongPolyline(busPoint, preparePolylineDistanceIndex(busPath), { headingDegrees: bus.heading });
-        etaBusPositions.current.set(bus.busId, {
-          path: busPath, point: busPoint, heading: bus.heading,
-          routeVersion: bus.routeVersion, direction: bus.routeDirection, position: busPathPosition,
-        });
         const geometryKey = bus.routeSource === "dynamic-reroute"
           ? ["dynamic", bus.busId, bus.routeVersion]
           : ["configured", route.id, route.geometryVersion];
+        const projectionKey = JSON.stringify([...geometryKey, route.rideDirection, route.configVersion]);
         const stopPositions = stopProjectionCache.current.positions(
-          JSON.stringify([...geometryKey, route.rideDirection, route.configVersion]),
-          busPath,
-          route.stops,
+          projectionKey, busPath, route.stops,
+          bus.routeSource === "dynamic-reroute" ? dynamicGeometries.get(bus.busId)?.firstStopIndex ?? 0 : 0,
         );
+        const cachedPosition = etaBusPositions.current.get(bus.busId);
+        // The same coordinate/heading can belong to another loop visit.
+        // Reuse only the same session, authoritative leg and itinerary revision.
+        const busPathPosition = cachedPosition?.path === busPath &&
+          cachedPosition.point.lat === busPoint.lat && cachedPosition.point.lng === busPoint.lng &&
+          cachedPosition.heading === bus.heading && cachedPosition.routeVersion === bus.routeVersion &&
+          cachedPosition.direction === bus.routeDirection && cachedPosition.sessionId === bus.sessionId &&
+          cachedPosition.nextStopIndex === nextStopIndex && cachedPosition.stopPositions === stopPositions
+          ? cachedPosition.position
+          : stopProjectionCache.current.busPosition(projectionKey, busPoint, bus.heading, nextStopIndex);
+        etaBusPositions.current.set(bus.busId, {
+          path: busPath, point: busPoint, heading: bus.heading,
+          routeVersion: bus.routeVersion, direction: bus.routeDirection, position: busPathPosition,
+          sessionId: bus.sessionId, nextStopIndex, stopPositions,
+        });
         const arrivals = busStopArrivalTimestamps({
           busPoint,
           heading: bus.heading,

@@ -43,6 +43,27 @@ beforeEach(() => {
 });
 
 describe("published passenger stop progress", () => {
+  it("reprojects identical bus coordinates and heading onto the authoritative itinerary visit", () => {
+    const a = { id: "a", name: "A", shortName: "A", lat: 23, lng: 72 };
+    const b = { id: "b", name: "B", shortName: "B", lat: 23.001, lng: 72 };
+    const d = { id: "d", name: "D", shortName: "D", lat: 23, lng: 72.001 };
+    const again = { ...b, id: "again", name: "B again" };
+    const end = { id: "end", name: "End", shortName: "End", lat: 23.002, lng: 72 };
+    const loop = { ...route, stops: [a, b, d, again, end],
+      polyline: "_ekkC_omvLgE??gEfE??fEgE?gE?", polylineQuality: "HIGH_QUALITY" as const };
+    const bus = { ...fixtureBus("forward"), lat: 23.0005, lng: 72, heading: 0, currentStopIndex: 1 };
+    state.snapshot = { bus };
+    render(<PassengerMap route={{ ...routeInRideDirection(loop, "forward"), polylineQuality: "HIGH_QUALITY" }} targetStop={end} />);
+    const first = state.arrivals.mock.lastCall?.[0].busPathPosition;
+    expect(first).toBeGreaterThan(50);
+    act(() => state.listener?.({ bus: { ...bus, currentStopIndex: 3 } }));
+    const later = state.arrivals.mock.lastCall?.[0].busPathPosition;
+    expect(later - first).toBeGreaterThan(400);
+    // An authoritative correction can move the itinerary back; never keep
+    // the later visit merely because its point and heading are unchanged.
+    act(() => state.listener?.({ bus: { ...bus, currentStopIndex: 1 } }));
+    expect(state.arrivals.mock.lastCall?.[0].busPathPosition).toBeCloseTo(first, 4);
+  });
   it("keeps computable fleet arrivals when another bus's reroute geometry is unavailable", () => {
     state.snapshot = { first: { ...fixtureBus("forward"), currentStopIndex: 1 },
       second: { ...fixtureBus("forward", "second-session", "second-bus"), currentStopIndex: 1, routeSource: "dynamic-reroute", routeVersion: 2 } };

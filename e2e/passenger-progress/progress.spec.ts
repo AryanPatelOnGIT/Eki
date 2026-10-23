@@ -1,5 +1,22 @@
 import { expect, test } from "@playwright/test";
 
+test("ETA follows the later itinerary visit at identical coordinates and heading", async ({ page }, info) => {
+  await page.goto("/?loop");
+  const picker = page.getByRole("combobox", { name: "Destination station" });
+  await picker.click();
+  const end = page.getByRole("option", { name: "End", exact: true });
+  const firstMinutes = Number(/(\d+)\s*min/.exec(await end.innerText())?.[1]);
+  expect(firstMinutes).toBeGreaterThan(2);
+  await picker.press("Escape");
+  await page.getByRole("button", { name: "Publish next stop", exact: true }).click();
+  await picker.click();
+  await expect(page.getByRole("option", { name: "First visit", exact: true })).toContainText("Passed");
+  await expect(end).toContainText(/min/);
+  const laterMinutes = Number(/(\d+)\s*min/.exec(await end.innerText())?.[1]);
+  expect(firstMinutes - laterMinutes).toBeGreaterThanOrEqual(2);
+  await page.screenshot({ path: info.outputPath("repeated-road-eta.png"), fullPage: true });
+});
+
 for (const direction of ["forward", "reverse"]) {
   test(`workspace shows ETA and authoritative 2.5m stop passage after credible ${direction} departure`, async ({ page }, info) => {
     const errors: string[] = [];
