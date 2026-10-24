@@ -170,21 +170,21 @@ describe("routing lifecycle through actual ingestion and listeners", () => {
     expect(state.docs.get(`ride_sessions/${f.sessionId}`)).toMatchObject({ direction: "forward", directionState: "resolved" });
     await f.send(23.0012, 15_000);
     expect(f.live()).toMatchObject({ tripState: "in_service", currentStopIndex: 1 });
-    await f.send(23.00195, 25_000);
+    await f.send(f.stops[1].lat - 2.4 / 6_371_000 * 180 / Math.PI, 25_000);
     expect(f.live()).toMatchObject({ tripState: "in_service", currentStopIndex: 2 });
     expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
       .filter((record: any) => record.stopId === f.stops[1].id)).toHaveLength(1);
   });
-  it("publishes the next stop and its history only after entering the 10m arrival circle", async () => {
+  it("publishes the next stop and its history only after entering the 2.5m arrival circle", async () => {
     const f = await fixture();
     await f.send(23, 0, "stopped");
     await f.send(23.001, 15_000);
     const middle = f.stops[1];
-    await f.send(middle.lat - 11 / 6_371_000 * 180 / Math.PI, 30_000);
+    await f.send(middle.lat - 2.6 / 6_371_000 * 180 / Math.PI, 30_000);
     expect(f.live().currentStopIndex).toBe(1);
     expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
       .some((record: any) => record.stopId === middle.id)).toBe(false);
-    await f.send(middle.lat - 9 / 6_371_000 * 180 / Math.PI, 35_000);
+    await f.send(middle.lat - 2.4 / 6_371_000 * 180 / Math.PI, 35_000);
     expect(f.live().currentStopIndex).toBe(2);
     const reached = Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached);
     expect(reached.filter((record: any) => record.stopId === middle.id)).toHaveLength(1);

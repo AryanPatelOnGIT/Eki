@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { AnchorHTMLAttributes } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WorkspaceLink from "./WorkspaceLink";
 
@@ -12,9 +12,36 @@ vi.mock("next/link", () => ({
     return <a {...props} />;
   },
 }));
-afterEach(() => { cleanup(); state.pending = false; state.prefetch.mockClear(); });
+afterEach(() => { cleanup(); state.pending = false; state.prefetch.mockClear(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("workspace navigation feedback", () => {
+  it("falls back once to a plain same-origin document link when client navigation stalls", async () => {
+    vi.useFakeTimers(); state.pending = true;
+    const nativeClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<WorkspaceLink href="/admin">Admin Panel</WorkspaceLink>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_999); });
+    expect(nativeClick).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(nativeClick).toHaveBeenCalledOnce();
+    const fallback = nativeClick.mock.instances[0] as HTMLAnchorElement;
+    expect(fallback.getAttribute("href")).toBe("/admin");
+    expect(fallback).not.toBe(screen.getByRole("link"));
+  });
+  it("cancels fallback after successful navigation and never forces an external or new-tab link", async () => {
+    vi.useFakeTimers(); state.pending = true;
+    const nativeClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const view = render(<WorkspaceLink href="/admin">Admin Panel</WorkspaceLink>);
+    state.pending = false;
+    view.rerender(<WorkspaceLink href="/admin">Admin Panel</WorkspaceLink>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(nativeClick).not.toHaveBeenCalled();
+    state.pending = true;
+    view.rerender(<WorkspaceLink href="https://example.org/admin">Admin Panel</WorkspaceLink>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    view.rerender(<WorkspaceLink href="/admin" target="_blank">Admin Panel</WorkspaceLink>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(nativeClick).not.toHaveBeenCalled();
+  });
   it("prefetches the route and shows immediate feedback only while Next navigation is pending", () => {
     const view = render(<WorkspaceLink href="/admin">Admin Panel</WorkspaceLink>);
     expect(screen.getByRole("link", { name: "Admin Panel" }).getAttribute("href")).toBe("/admin");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { busStopArrivalTimestamps } from "./busEta";
+import { busStopArrivalTimestamps, StopProjectionCache } from "./busEta";
 
 const A = { id: "a", lat: 23, lng: 72 };
 const B = { id: "b", lat: 23.01, lng: 72 };
@@ -16,6 +16,19 @@ const detourPath = [
 ];
 
 describe("busStopArrivalTimestamps", () => {
+  it("projects a revisited stop after its preceding itinerary stop, rather than onto an earlier road crossing", () => {
+    const origin = { id: "origin", lat: 23, lng: 72 };
+    const revisit = { id: "return", lat: 23.001, lng: 72 };
+    const turn = { id: "turn", lat: 23.002, lng: 72 };
+    const destination = { id: "destination", lat: 23, lng: 71.999 };
+    const path = [origin, revisit, turn, revisit, destination];
+    const positions = new StopProjectionCache().positions("return-road", path, [origin, turn, revisit, destination]);
+    const at = (stop: typeof origin) => positions.get(JSON.stringify([stop.id, stop.lat, stop.lng]))!;
+    expect(at(revisit)).toBeGreaterThan(at(turn)!);
+    const arrivals = busStopArrivalTimestamps({ busPoint: { lat: 23.0015, lng: 72 }, heading: 0,
+      speedKmh: 18, delayMinutes: 0, path, remainingStops: [turn, revisit, destination], now: 0, stopPositions: positions });
+    expect(arrivals.return - arrivals.turn).toBeGreaterThan(60_000);
+  });
   const base = {
     busPoint: { lat: 23, lng: 72 },
     heading: 90,

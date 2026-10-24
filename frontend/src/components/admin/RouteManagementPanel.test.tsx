@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RouteManagementPanel from "./RouteManagementPanel";
 import { ApiError } from "@/lib/apiClient";
@@ -15,9 +15,31 @@ vi.mock("@/lib/routeSaveClient", () => ({ saveRoute: mocks.save, newRouteSaveId:
 vi.mock("@vis.gl/react-google-maps", () => ({ Map: ({ children }: { children: ReactNode }) => <div>{children}</div>, AdvancedMarker: () => null, useMap: () => null }));
 vi.mock("@/components/maps/DirectionsRoute", () => ({ default: () => null }));
 beforeEach(() => { mocks.save.mockReset(); mocks.newId.mockReset().mockReturnValue("qa-save-operation"); });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 async function edit() { render(<RouteManagementPanel />); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Edit route QA route" })); return user; }
 describe("route editing and operation recovery", () => {
+  it("clears predictions immediately for a changed query and ignores a cancelled response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev");
+    let resolveLater!: (response: Response) => void;
+    const prediction = { name: "First result", lat: 23, lng: 72 };
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ results: [prediction] })))
+      .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveLater = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    await edit(); vi.useFakeTimers();
+    const input = screen.getByRole("searchbox", { name: "Search for a stop" });
+    fireEvent.change(input, { target: { value: "First" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(screen.getByRole("button", { name: "First result" })).toBeTruthy();
+    fireEvent.change(input, { target: { value: "Second" } });
+    expect(screen.queryByRole("button", { name: "First result" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.change(input, { target: { value: "x" } });
+    await act(async () => resolveLater(new Response(JSON.stringify({ results: [{ ...prediction, name: "Late result" }] }))));
+    expect(screen.queryByRole("button", { name: "Late result" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it.each([
     { draft: "", commit: "{Enter}" },
     { draft: "   ", commit: "{Enter}" },

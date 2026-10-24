@@ -51,9 +51,6 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
 
   useEffect(() => {
     if (value.trim().length < 3) {
-      setSearching(false);
-      setPredictions([]);
-      setSearchNotice("");
       return;
     }
     const controller = new AbortController();
@@ -68,6 +65,7 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
       setSearchNotice("");
       try {
         const token = await currentUser.getIdToken();
+        if (controller.signal.aborted) return;
         const payload = await apiRequest<{ results?: PlacePrediction[] }>(
           `/api/places/search?q=${encodeURIComponent(value)}`,
           {
@@ -76,6 +74,7 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
             fallbackError: "Place search is temporarily unavailable.",
           },
         );
+        if (controller.signal.aborted) return;
         const results = Array.isArray(payload.results) ? payload.results : [];
         setPredictions(results);
         setSearchNotice(results.length === 0 ? "No matching places found. Try a more specific search." : "");
@@ -115,9 +114,10 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
         onChange={(event) => {
           const nextValue = event.target.value;
           setValue(nextValue);
+          setSearching(false);
+          setPredictions([]);
           setSearchError("");
           setSearchNotice("");
-          if (nextValue.length < 3) setPredictions([]);
         }}
         placeholder="Search for a stop"
         aria-label="Search for a stop"

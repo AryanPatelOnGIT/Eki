@@ -244,7 +244,10 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
   const entries = scope && list.scope === scope ? list.entries : EMPTY_FEEDBACK;
   const loading = authLoading || Boolean(scope && (list.scope !== scope || list.loading));
   const loadError = scope && list.scope === scope ? list.error : null;
-  const retryFeedback = () => setRetryGeneration(value => value + 1);
+  const retryFeedback = () => {
+    setList({ scope, entries: [], loading: true, error: null });
+    setRetryGeneration(value => value + 1);
+  };
 
   useEffect(() => () => {
     if (pendingUpdate.current?.scope === scope) {
@@ -255,7 +258,6 @@ export default function FeedbackPanel({ embedded = false }: { embedded?: boolean
   useEffect(() => {
     if (!scope) return;
     let active = true;
-    setList({ scope, entries: [], loading: true, error: null });
     void (async () => {
       try {
         const firebaseUser = auth.currentUser;

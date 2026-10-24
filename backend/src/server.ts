@@ -35,7 +35,7 @@ import {
 import { OPERATION_EXECUTOR_ID, drainHttpOperations } from "./services/httpOperations";
 import { drainDurableRideRecovery } from "./services/durableRideRecovery";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
-import { createHealthState } from "./lib/healthState";
+import { createHealthState, probeRtdbConnection } from "./lib/healthState";
 import { createHttpMetricsMiddleware, registerOperationalMetrics } from "./lib/metrics";
 import { createBrowserAdmission, createBrowserIngressLimiter } from "./lib/browserAdmission";
 import { verifiedUserKeyGenerator } from "./lib/rateLimitIdentity";
@@ -203,7 +203,7 @@ registerOperationalMetrics({
   background: backgroundFailures.snapshot,
 });
 const probeFirestore = () => db.collection("_health").limit(1).get();
-const probeRtdb = () => rtdb.ref(".info/connected").once("value");
+const probeRtdb = () => probeRtdbConnection(rtdb);
 void health.probe(probeFirestore, probeRtdb);
 const healthProbeTimer = setInterval(() => {
   void health.probe(probeFirestore, probeRtdb);

@@ -1,5 +1,58 @@
 import { expect, test } from "@playwright/test";
 
+test("ETA follows the later itinerary visit at identical coordinates and heading", async ({ page }, info) => {
+  await page.goto("/?loop");
+  const picker = page.getByRole("combobox", { name: "Destination station" });
+  await picker.click();
+  const end = page.getByRole("option", { name: "End", exact: true });
+  const firstMinutes = Number(/(\d+)\s*min/.exec(await end.innerText())?.[1]);
+  expect(firstMinutes).toBeGreaterThan(2);
+  await picker.press("Escape");
+  await page.getByRole("button", { name: "Publish next stop", exact: true }).click();
+  await picker.click();
+  await expect(page.getByRole("option", { name: "First visit", exact: true })).toContainText("Passed");
+  await expect(end).toContainText(/min/);
+  const laterMinutes = Number(/(\d+)\s*min/.exec(await end.innerText())?.[1]);
+  expect(firstMinutes - laterMinutes).toBeGreaterThanOrEqual(2);
+  await page.screenshot({ path: info.outputPath("repeated-road-eta.png"), fullPage: true });
+});
+
+for (const direction of ["forward", "reverse"]) {
+  test(`workspace shows ETA and authoritative 2.5m stop passage after credible ${direction} departure`, async ({ page }, info) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`/?workspace&pending&direction=${direction}`);
+    await page.getByRole("button", { name: "Track Synthetic campus route", exact: true }).click();
+    const picker = page.getByRole("combobox", { name: "Destination station" });
+    await picker.click();
+    const nextStop = direction === "forward" ? "Beta" : "Gamma";
+    const followingStop = direction === "forward" ? "Gamma" : "Beta";
+    await expect(page.getByRole("option", { name: nextStop, exact: true })).toContainText("Direction pending");
+    await expect(page.locator('[data-road-color="#71717a"]')).toHaveCount(0);
+    await picker.press("Escape");
+    await page.getByRole("button", { name: "Replay credible departure", exact: true }).click();
+    await expect(page.getByText("Ride in service", { exact: true })).toBeVisible();
+    await picker.click();
+    await expect(page.getByRole("option", { name: nextStop, exact: true })).toContainText(/min/);
+    await expect(page.getByRole("option", { name: followingStop, exact: true })).toContainText(/min/);
+    await picker.press("Escape");
+    await page.getByRole("button", { name: "Fix outside arrival circle", exact: true }).click();
+    await picker.click();
+    await expect(page.getByRole("option", { name: nextStop, exact: true })).not.toContainText("Passed");
+    await picker.press("Escape");
+    await page.getByRole("button", { name: "Fix inside arrival circle", exact: true }).click();
+    await picker.click();
+    await expect(page.getByRole("option", { name: nextStop, exact: true })).toContainText("Passed");
+    await expect(page.getByRole("option", { name: followingStop, exact: true })).toContainText(/min/);
+    await expect(page.getByLabel(`${nextStop} — passed`, { exact: true })).toBeVisible();
+    await expect(page.locator('[data-road-color="#71717a"]')).toHaveCount(1);
+    await expect(page.locator('[role="img"] .lucide-bus-front')).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(errors).toEqual([]);
+    await page.screenshot({ path: info.outputPath(`${direction}-arrival-workspace.png`), fullPage: true });
+  });
+}
+
 test("destination ETA, passed stops, segmented road and one bus glyph stay consistent through silence and recovery", async ({ page }, info) => {
   await page.clock.install();
   await page.goto("/");

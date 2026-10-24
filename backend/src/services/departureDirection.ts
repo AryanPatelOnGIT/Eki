@@ -4,6 +4,7 @@ import type { RideDirection } from "../lib/rideDirection";
 import { matchRoutePosition, trajectoryHeading } from "./routeMatching";
 
 export interface DepartureSample extends LatLng { timestamp: number }
+const MAX_DEPARTURE_BACKSTEP_M = 2.5;
 
 /** Recover a missed stopped endpoint fix from sustained, unambiguous departure.
  * Only the first leg is eligible: starting after an unobserved intermediate
@@ -34,8 +35,15 @@ export function inferDepartureDirection(input: {
     if (matches.some(match => !match || match.isAmbiguous || match.distanceToRouteM > 15 ||
       match.matchConfidence < 0.7 || match.headingDifference === null || match.headingDifference > 35 ||
       match.alongRouteDistanceM > next.alongRouteDistanceM + 10)) return false;
-    return matches.every((match, index) => index === 0 ||
-      match!.alongRouteDistanceM > matches[index - 1]!.alongRouteDistanceM + 1) &&
+    // Reliable moving fixes can still wobble by a couple of metres. Require
+    // sustained net travel and bound jitter against the furthest accepted
+    // position, so several small reversals cannot accumulate into a U-turn.
+    let furthest = matches[0]!.alongRouteDistanceM;
+    return matches.every(match => {
+      if (match!.alongRouteDistanceM < furthest - MAX_DEPARTURE_BACKSTEP_M) return false;
+      furthest = Math.max(furthest, match!.alongRouteDistanceM);
+      return true;
+    }) &&
       matches.at(-1)!.alongRouteDistanceM - matches[0]!.alongRouteDistanceM >= 30;
   });
   return candidates.length === 1 ? candidates[0] : null;

@@ -7,9 +7,9 @@ export function Map({ children }: { children: ReactNode }) {
     <div id="road-overlays" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />{children}
   </div>;
 }
-export function AdvancedMarker({ children, position }: { children: ReactNode; position: { lat: number; lng: number } }) {
+export function AdvancedMarker({ children, position, zIndex = 30 }: { children: ReactNode; position: { lat: number; lng: number }; zIndex?: number }) {
   return <div data-position-marker="true" style={{ position: "absolute", left: `${15 + (position.lng - 72) * 20000}%`,
-    top: `${80 - (position.lat - 23) * 15000}%`, transform: "translate(-50%, -50%)" }}>{children}</div>;
+    top: `${80 - (position.lat - 23) * 15000}%`, transform: "translate(-50%, -50%)", zIndex }}>{children}</div>;
 }
 class ObservedPolyline {
   private element: SVGSVGElement;

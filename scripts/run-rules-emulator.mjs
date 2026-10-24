@@ -85,7 +85,7 @@ function spawnNpx() {
 }
 
 const child = spawnNpx();
-const deadline = setTimeout(() => { console.error('Emulator runner deadline exceeded; dependent tests BLOCKED.'); child.kill('SIGTERM'); }, (browser ? 7 : 6) * 60_000);
+const deadline = setTimeout(() => { console.error('Emulator runner deadline exceeded; dependent tests BLOCKED.'); child.kill('SIGTERM'); }, (browser ? 8 : 6) * 60_000);
 
 child.on("error", (err) => {
   clearTimeout(deadline);

@@ -920,7 +920,13 @@ describe("production security configuration", () => {
       "'self'",
       "https://accounts.google.com",
       "https://*.firebaseapp.com",
+      "https://*.firebaseio.com/.lp",
+      "https://*.firebasedatabase.app/.lp",
     ]);
+    for (const source of ["https://*.firebaseio.com/.lp", "https://*.firebasedatabase.app/.lp"]) {
+      expect(directives.get("script-src")).toContain(source);
+      expect(directives.get("script-src")).not.toContain(source.replace("/.lp", ""));
+    }
     expect(directives.get("connect-src")).not.toContain("https://www.google.com/recaptcha/");
     expect(directives.get("connect-src")).toContain("https://*.gstatic.com");
     expect(directives.get("connect-src")).toContain("https://*.ggpht.com");
