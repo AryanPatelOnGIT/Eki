@@ -161,6 +161,8 @@ function LiveDetailsDrawer({
       clearMessageLater();
       setShowWipeConfirm(false);
     } catch (error: unknown) {
+      // Close the confirmation so the reason, shown behind it, is visible.
+      setShowWipeConfirm(false);
       setMsg("Error: " + errorMessage(error));
     } finally {
       setIsWiping(false);
@@ -787,6 +789,8 @@ export default function DashboardPanel() {
       setArmStatus(`Ride ${entry.sessionId} ended early and was saved to history.`);
       setEndRideEntry(null);
     } catch (error) {
+      // Close the confirmation so the reason in the sidebar is visible.
+      setEndRideEntry(null);
       setArmStatus(errorMessage(error));
     } finally {
       setEndRidePending(false);

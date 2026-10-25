@@ -139,4 +139,25 @@ describe("admin service creation", () => {
     await screen.findByText("Delay updated to 1 minutes for qa-bus.");
     expect((screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }) as HTMLButtonElement).disabled).toBe(false);
   });
+  it("shows why ending a ride early failed instead of leaving the reason behind the dialog", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Ride session changed."}', { status: 409 })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await user.click(screen.getByRole("button", { name: "End ride early" }));
+    await user.click(within(screen.getByRole("dialog", { name: "End ride early?" })).getByRole("button", { name: "End ride" }));
+    expect(await screen.findByText("Ride session changed.")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "End ride early?" })).toBeNull();
+  });
+  it("shows why clearing ride messages failed instead of leaving the reason behind the dialog", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Messages are locked."}', { status: 409 })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await user.click(screen.getByRole("button", { name: "Open live details for qa-bus" }));
+    await user.click(screen.getByRole("button", { name: "Clear Messages" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Clear Messages?" })).getByRole("button", { name: "Clear Messages" }));
+    expect(await screen.findByText("Error: Messages are locked.")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Clear Messages?" })).toBeNull();
+  });
 });
