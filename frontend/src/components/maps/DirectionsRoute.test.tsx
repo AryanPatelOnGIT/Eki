@@ -26,6 +26,7 @@ it("shows all upcoming road blue, then keeps only confirmed grey road when a det
   // A confidence/quality gap must not erase a previously confirmed partial leg.
   for (const unavailable of [undefined, NaN, Infinity, -1, 1e9]) {
     view.rerender(<DirectionsRoute {...props} nextStopIndices={[1]} progressDistanceM={unavailable} />);
+    expect(visible().find(line => line.options.strokeColor === "#71717a")?.options.path).toEqual(covered);
     view.rerender(<DirectionsRoute {...props} nextStopIndices={[]} completedStopIndex={1} hideRemaining />);
     expect(visible()).toHaveLength(1);
     expect(visible()[0].options.strokeColor).toBe("#71717a");

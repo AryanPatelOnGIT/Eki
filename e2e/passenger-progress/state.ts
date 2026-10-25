@@ -46,6 +46,10 @@ function emit(bus: ReturnType<typeof liveBus> | Record<string, unknown>) {
   storeListeners.forEach(listener => listener());
 }
 export function publish(index: number) { dynamicGeometry = new Map(); emit(liveBus(index)); }
+export function publishUncertainFix() {
+  const bus = liveBus(2);
+  emit({ ...bus, matchedLocation: { ...bus.matchedLocation, matchConfidence: 0.1 } });
+}
 export function publishDetour(ready = true) {
   const point = { lat: 23.0015, lng: 72.0008 };
   const detour = [point, { lat: 23.002, lng: 72.0008 }, ...route.stops.slice(2)];
