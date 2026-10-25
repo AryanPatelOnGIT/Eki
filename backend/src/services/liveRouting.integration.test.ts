@@ -89,6 +89,15 @@ describe("live routing publication", () => {
     publish({ ...sample(2), ...ordered[0], speed: 0, motionState: "stopped" }); await drainTelemetryRouteProcessing();
     expect(state.compute).toHaveBeenCalledTimes(1);
   });
+  it.each(["", encodePolyline([{ lat: 23, lng: 72 }])])("does not publish unusable departure geometry %j", async encodedPolyline => {
+    state.values.set(key, { ...state.values.get(key), tripState: "pre_departure", currentStopIndex: 0 });
+    state.compute.mockResolvedValue({ encodedPolyline, distanceMeters: 0, duration: "0s" });
+    publish({ ...sample(1), ...stops[0], speed: 0, motionState: "stopped" }); await drainTelemetryRouteProcessing();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    expect(state.writes.some(path => path.startsWith("activeRouteGeometry/"))).toBe(false);
+    expect(state.values.get(key)).toMatchObject({ routeSource: "configured", routeTrafficState: "fallback",
+      departureRoute: { state: "failed", requestId: null } });
+  });
   it("refreshes an old parked preview only when departure is observed", async () => {
     let now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
