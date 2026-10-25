@@ -90,7 +90,7 @@ export function useAuth() { return { user }; }
 export function useRoutes() { useSyncExternalStore(subscribe, () => revision); return { routes: [configuredRoute], error: null, retry() {} }; }
 export function useSettings() { return { settings: { announcementActive: false, serviceStartTime: "8:00 am" } }; }
 const markSnapshotReceived = () => {};
-export function useRTDBResume() { return { isResuming: false, resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
+export function useRTDBResume() { return { isConnected: true, isResuming: false, resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
 export function useLiveRouteCatalog() { useSyncExternalStore(subscribe, () => revision); return {
   catalog: { [route.id]: { active: 1, available: 0 } }, projectionReady: true, catalogReady: true, error: null, retry() {} }; }
 export function subscribeLiveBusChangesByRoute(_id: string, listener: (change: unknown) => void) {
