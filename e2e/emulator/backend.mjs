@@ -141,7 +141,8 @@ const control = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url === '/telemetry/detour') {
       // All progress, matches and reroutes must come from authenticated HTTP
-      // fixes. These capture times preserve physically plausible 1Hz ordering.
+      // fixes. End with the same 20s capture lag as other moving controls so
+      // resetting a reused fixture session cannot move its sample clock back.
       const startedAt = Date.now();
       const observations = [];
       for (let index = 0; index < 3; index++) {
@@ -150,7 +151,7 @@ const control = createServer(async (req, res) => {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${deviceSecret}` },
           body: JSON.stringify({ lat: 23.0002 + index * 0.00015, lng: 72.0009,
             speed: 20, heading: 0, gpsHdop: 1, motionState: 'moving', seq,
-            timestamp: startedAt - 18000 + index * 4000, deviceSentAt: Date.now() }),
+            timestamp: startedAt - 28000 + index * 4000, deviceSentAt: Date.now() }),
           signal: AbortSignal.timeout(10000), redirect: 'error',
         });
         if (response.status !== 202) throw new Error(`Detour telemetry rejected: ${response.status}`);
