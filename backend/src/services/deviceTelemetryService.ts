@@ -710,9 +710,25 @@ export function parseDeviceAuthorization(
   return secret.length >= 20 && secret.length <= 512 ? secret : null;
 }
 
-async function executeDeviceTelemetry(
+async function authenticateTelemetryDevice(
   deviceId: string,
   secret: string,
+  now: number,
+  deadline: ExecutionDeadline,
+): Promise<DeviceCredentialResult> {
+  const credential: DeviceCredentialResult = SAFE_ID.test(deviceId)
+    ? await deadline.dependency("credentials", () => checkDeviceCredentials(deviceId, secret, now))
+    : { status: "invalid" };
+  if (credential.status !== "assigned") {
+    status.rejected += 1;
+    status.lastRejectedAt = new Date(now).toISOString();
+  }
+  return credential;
+}
+
+async function executeDeviceTelemetry(
+  deviceId: string,
+  assignment: DeviceAssignment,
   sample: TelemetryPayload,
   now: number,
   deadline: ExecutionDeadline,
@@ -723,19 +739,6 @@ async function executeDeviceTelemetry(
   // authenticate/rate-limit and RTDB transaction work.
   const serverReceivedAt = now;
   const processingStartedAt = now;
-  if (!SAFE_ID.test(deviceId)) {
-    status.rejected += 1;
-    status.lastRejectedAt = new Date(now).toISOString();
-    return { ok: false, reason: "credentials" };
-  }
-
-  const credential = await deadline.dependency("credentials", () => checkDeviceCredentials(deviceId, secret, now));
-  if (credential.status !== "assigned") {
-    status.rejected += 1;
-    status.lastRejectedAt = new Date(now).toISOString();
-    return { ok: false, reason: credential.status === "unassigned" ? "unassigned" : "credentials" };
-  }
-  const assignment = credential.assignment;
   const retryAfterMs = await deadline.dependency("rate limit", () => deviceRateLimitRetryAfterMs(deviceId, now));
   if (retryAfterMs !== null) {
     status.rejected += 1;
@@ -775,10 +778,21 @@ export async function ingestDeviceTelemetry(
 ): Promise<TelemetryIngestResult> {
   const deadline = new ExecutionDeadline();
   try {
-    const operation = ingestionExecution.run(deviceId, () => deadline.run(() => {
+    // Verify credentials before taking an ingestion slot. Pre-auth work is
+    // already bounded by the credential single-flight and KDF limiters; letting
+    // it occupy ingestion capacity would let unauthenticated requests stalled on
+    // scrypt reject every cached, legitimate device with 503.
+    const operation = deadline.run(async (): Promise<TelemetryIngestResult> => {
       deadline.assert();
-      return executeDeviceTelemetry(deviceId, secret, sample, now, deadline);
-    }));
+      const credential = await authenticateTelemetryDevice(deviceId, secret, now, deadline);
+      if (credential.status !== "assigned") {
+        return { ok: false, reason: credential.status === "unassigned" ? "unassigned" : "credentials" };
+      }
+      return ingestionExecution.run(deviceId, () => {
+        deadline.assert();
+        return executeDeviceTelemetry(deviceId, credential.assignment, sample, now, deadline);
+      });
+    });
     return await deadline.waitForResponse(operation);
   } catch (error) {
     if (error instanceof TelemetryExecutionFailure) throw error;

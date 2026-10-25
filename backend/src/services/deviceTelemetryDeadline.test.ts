@@ -115,6 +115,20 @@ describe("actual ingestion dependency deadlines", () => {
     expect(store.nodes.get(node).seq).toBe(3);
   });
 
+  it("keeps cached devices ingesting while unauthenticated requests wait on the KDF", async () => {
+    store.holdCrypto = true;
+    const flood = Array.from({ length: 48 }, (_, index) =>
+      ingestDeviceTelemetry(`unknown_device_${index}`, `guessed-secret-${index}-with-padding`, sample()).catch(error => error));
+    await flush();
+    await expect(ingestDeviceTelemetry(id, secret, sample(1))).resolves.toEqual({ ok: true, duplicate: false });
+    expect(store.nodes.get(node).seq).toBe(2);
+    store.holdCrypto = false;
+    for (const callback of store.cryptoCallbacks) callback(null, Buffer.alloc(64));
+    await vi.advanceTimersByTimeAsync(10_000);
+    const outcomes = await Promise.all(flood);
+    expect(outcomes.every(outcome => outcome instanceof Error || (outcome as { ok?: boolean }).ok === false)).toBe(true);
+  });
+
   it("aborts an expired SDK retry callback without publishing an old fix", async () => {
     const dispatch = gate(); store.before = async path => { if (path === node) await dispatch.promise; };
     let outcome: unknown;
