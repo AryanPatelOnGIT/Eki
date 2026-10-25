@@ -1389,6 +1389,16 @@
               }
             }
           },
+          "404": {
+            "description": "Device not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
             "content": {
@@ -1515,6 +1525,16 @@
           },
           "403": {
             "description": "Authenticated caller lacks the required role, assignment, proximity, or membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Device not found.",
             "content": {
               "application/json": {
                 "schema": {

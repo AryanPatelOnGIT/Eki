@@ -482,10 +482,17 @@ const disableDevice = async (req: Request, res: Response) => {
     return;
   }
   try {
-    await db.collection("devices").doc(deviceId).set(
-      { enabled: false, disabledAt: FieldValue.serverTimestamp() },
-      { merge: true },
-    );
+    // update() fails on a missing registry entry instead of creating a
+    // credential-less phantom device and reporting a mistyped ID as disabled.
+    try {
+      await db.collection("devices").doc(deviceId).update(
+        { enabled: false, disabledAt: FieldValue.serverTimestamp() },
+      );
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code !== 5) throw error;
+      res.status(404).json({ error: "Device not found." });
+      return;
+    }
     await publishDeviceCredentialInvalidation(deviceId);
     res.json({ disabled: true });
   } catch (error) {

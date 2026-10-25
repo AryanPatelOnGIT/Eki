@@ -265,7 +265,7 @@ Body: `{ "busId":"bus_01", "routeId":"route_01", "enabled":true }`. `enabled` is
 
 ### `POST /api/devices/:deviceId/disable` — admin
 
-Sets `enabled:false`/`disabledAt`, invalidates credential/rate cache. Returns `{disabled:true}` or 400/500.
+Sets `enabled:false`/`disabledAt` on an existing registry entry, invalidates credential/rate cache. An unknown device ID returns 404 without creating a registry entry. Returns `{disabled:true}` or 400/404/500.
 
 Device creation/secret rotation is deliberately local: `npm run provision-device --workspace=backend -- --device-id … --bus-id … --route-id …`. Transfer the one-time plaintext only into the ignored `hardware/include/secrets.h` inside the controlled signing environment, build the device-specific protected artifact, and reflash the tracker. Never commit the plaintext or retain an unencrypted firmware image.
 
