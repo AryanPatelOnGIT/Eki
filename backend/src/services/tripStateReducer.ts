@@ -11,11 +11,21 @@ interface TripRouteStop {
   lat: number;
   lng: number;
 }
+interface TripPosition extends TripRouteStop {
+  motionState?: MotionState;
+  gpsHdop?: number | null;
+}
+
+/** Legacy fixes omit HDOP; an explicitly bad quality measurement is never arrival evidence. */
+function unreliableTripFix(position: { motionState?: MotionState; gpsHdop?: number | null }): boolean {
+  return position.motionState === "uncertain" || (typeof position.gpsHdop === "number" &&
+    (!Number.isFinite(position.gpsHdop) || position.gpsHdop < 0 || position.gpsHdop > GNSS_HDOP_MAX));
+}
 
 export interface TripStateInput {
   lat: number;
   lng: number;
-  previousPosition?: TripRouteStop;
+  previousPosition?: TripPosition;
   motionState: MotionState;
   currentTripState: LegacyTripState;
   currentStopIndex: number;
@@ -82,11 +92,11 @@ function distanceToSegmentMeters(
 function wasStopReached(
   stop: TripRouteStop,
   position: TripRouteStop,
-  previousPosition: TripRouteStop | undefined,
+  previousPosition: TripPosition | undefined,
 ): boolean {
   if (haversineMeters(position, stop) <= STOP_GEOFENCE_M) return true;
   if (
-    !previousPosition ||
+    !previousPosition || unreliableTripFix(previousPosition) ||
     haversineMeters(previousPosition, position) > MAX_TELEMETRY_SEGMENT_M
   ) {
     return false;
@@ -123,7 +133,7 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
     };
   }
 
-  if (motionState === "uncertain" || (typeof input.now === "number" &&
+  if (unreliableTripFix(input) || (typeof input.now === "number" &&
     (!Number.isFinite(input.timestamp) || input.now - input.timestamp! > 60_000 || input.timestamp! > input.now + 10_000))) {
     return {
       tripState:

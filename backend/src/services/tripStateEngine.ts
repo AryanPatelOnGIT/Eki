@@ -78,6 +78,8 @@ interface TelemetrySample {
   timestamp: number;
   lat: number;
   lng: number;
+  gpsHdop?: number | null;
+  motionState?: "moving" | "stopped" | "uncertain";
 }
 interface RideCheckpoint {
   tripState: "pre_departure" | "in_service";
@@ -913,7 +915,7 @@ export function startTripStateEngine(): () => Promise<void> {
       lat: data.lat,
       lng: data.lng,
       previousPosition: previousTelemetry
-        ? { lat: previousTelemetry.lat, lng: previousTelemetry.lng }
+        ? previousTelemetry
         : undefined,
       motionState: data.motionState || "moving",
       currentTripState: data.tripState || "pre_departure",
@@ -1197,7 +1199,8 @@ export function startTripStateEngine(): () => Promise<void> {
     }
 
     if (isNewTelemetry) {
-      processedTelemetry.set(nodeKey, { timestamp: telemetryTimestamp, lat: data.lat, lng: data.lng, sessionId: data.sessionId, direction });
+      processedTelemetry.set(nodeKey, { timestamp: telemetryTimestamp, lat: data.lat, lng: data.lng,
+        gpsHdop: data.gpsHdop, motionState: data.motionState, sessionId: data.sessionId, direction });
     }
     persistFleetState({ ...data, tripState }, new Date().toISOString());
   };
