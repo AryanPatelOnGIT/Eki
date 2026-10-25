@@ -531,7 +531,7 @@ describe("production security configuration", () => {
     expect(cspBuild).not.toContain('recaptcha/');
     expect(cspBuild).toContain('"https://accounts.google.com"');
     expect(cspBuild).toContain("const frameSources");
-    expect(cspBuild).toContain("/frame-src [^;]+;/");
+    expect(cspBuild).toContain('replaceDirective("frame-src", frameSources);');
   });
 
   it("clears in-memory data caches on logout", () => {
