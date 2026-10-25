@@ -61,6 +61,16 @@ describe("ride chat user workflows", () => {
     act(() => mocks.listen.mock.calls[0][2]({ docs: [...history, message("d4", "driver")], metadata: { fromCache: false } }));
     expect(onUnreadCountChange).toHaveBeenCalledExactlyOnceWith(1);
   });
+  it("counts a new message from others as unread once the chat window is full at 200 messages", async () => {
+    const onUnreadCountChange = vi.fn();
+    panel({ onUnreadCountChange });
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    const message = (id: string) => ({ id, data: () => ({ from: "driver", senderId: "driver", text: id }) });
+    const history = Array.from({ length: 200 }, (_, index) => message(`d${index}`));
+    act(() => mocks.listen.mock.calls[0][2]({ docs: history, metadata: { fromCache: false } }));
+    act(() => mocks.listen.mock.calls[0][2]({ docs: [...history.slice(1), message("d200")], metadata: { fromCache: false } }));
+    expect(onUnreadCountChange).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it.each(["<html>proxy warning</html>", "null", "{}"])("preserves the draft on an invalid success acknowledgement: %s", async body => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
     panel(); await send();

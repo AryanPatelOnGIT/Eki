@@ -60,7 +60,8 @@ export default function MessagingPanel({
   const [rateLimitMsg, setRateLimitMsg] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // null until the first snapshot: history loaded on open is already seen.
-  const lastSeenCountRef = useRef<number | null>(null);
+  // IDs, not a count: at the 200-message window a new message evicts an old one.
+  const seenOthersRef = useRef<Set<string> | null>(null);
 
   // Messages belong to one session: after a session switch, prior-session
   // messages must not render as if they were the new session's chat (#47).
@@ -72,7 +73,7 @@ export default function MessagingPanel({
   const dialogRef = useDialogFocus<HTMLDivElement>(isOverlay, () => onClose?.());
 
   useEffect(() => {
-    lastSeenCountRef.current = null;
+    seenOthersRef.current = null;
 
     if (!sessionId) return;
 
@@ -108,14 +109,14 @@ export default function MessagingPanel({
 
             // Count messages from others to surface unread badge
             if (onUnreadCountChange) {
-              const othersCount = msgs.filter((m: Message) => m.senderId !== currentUserId).length;
-              if (lastSeenCountRef.current !== null && othersCount > lastSeenCountRef.current) {
-                onUnreadCountChange(othersCount - lastSeenCountRef.current);
-              }
+              const othersIds = msgs.filter((m: Message) => m.senderId !== currentUserId).map(m => m.id);
+              const seen = seenOthersRef.current;
+              const unseen = seen ? othersIds.filter(id => !seen.has(id)).length : 0;
+              if (unseen > 0) onUnreadCountChange(unseen);
               // A partial cached snapshot must not become the baseline, or the
               // server's older history would then be counted as new.
-              if (lastSeenCountRef.current !== null || !snapshot.metadata.fromCache) {
-                lastSeenCountRef.current = othersCount;
+              if (seen || !snapshot.metadata.fromCache) {
+                seenOthersRef.current = new Set([...(seen ?? []), ...othersIds]);
               }
             }
 
