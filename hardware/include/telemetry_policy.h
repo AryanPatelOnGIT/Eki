@@ -116,6 +116,20 @@ inline bool gnssFixFieldsAreFresh(
          (!courseValid || courseAgeMs <= GNSS_FIX_MAX_AGE_MS);
 }
 
+// Evaluate at least once per window: once an observation ages out it stays
+// invalid, so a 32-bit millis() rollover cannot make it look fresh again.
+inline bool latchFreshness(
+  bool &valid,
+  uint32_t observedAtMs,
+  uint32_t nowMs,
+  uint32_t maximumAgeMs
+) {
+  if (valid && static_cast<uint32_t>(nowMs - observedAtMs) > maximumAgeMs) {
+    valid = false;
+  }
+  return valid;
+}
+
 inline double adaptiveGnssErrorMeters(
   bool hdopValid,
   double hdop,

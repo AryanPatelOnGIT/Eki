@@ -1827,8 +1827,11 @@ TelemetryFix buildFixFromRmc() {
 TelemetryFix latestRmcFix{};
 
 TelemetryFix currentFix() {
+  // Loop-task owned. Latch staleness while millis() is still in this cycle,
+  // so a receiver that went silent cannot replay its last fix after rollover.
+  eki::telemetry::latchFreshness(
+    latestRmcFix.valid, latestRmcAt, millis(), GNSS_UTC_MAX_AGE_MS);
   TelemetryFix fix = latestRmcFix;
-  if (elapsed(latestRmcAt) > GNSS_UTC_MAX_AGE_MS) fix.valid = false;
   // Timestamp the capture; raw receiver UTC is recorded separately below.
   fix.timestamp = epochMilliseconds();
   return fix;

@@ -73,6 +73,23 @@ void test_receiver_hdop_must_fit_the_telemetry_contract() {
   TEST_ASSERT_FALSE(gnssHdopIsAcceptable(INFINITY));
 }
 
+void test_stale_receiver_fix_latches_invalid_before_millis_rollover() {
+  bool valid = true;
+  const uint32_t observedAt = 1000;
+  TEST_ASSERT_TRUE(latchFreshness(valid, observedAt, observedAt + 2000, 2000));
+  TEST_ASSERT_FALSE(latchFreshness(valid, observedAt, observedAt + 2001, 2000));
+  // One 32-bit millis() cycle later the subtraction looks fresh again. The
+  // latched result must not resurrect a fix the receiver never refreshed.
+  const uint32_t wrapped = observedAt + 500;
+  TEST_ASSERT_TRUE(static_cast<uint32_t>(wrapped - observedAt) <= 2000);
+  TEST_ASSERT_FALSE(latchFreshness(valid, observedAt, wrapped, 2000));
+  TEST_ASSERT_FALSE(valid);
+
+  bool rolledFresh = true;
+  TEST_ASSERT_TRUE(latchFreshness(rolledFresh, UINT32_MAX - 500, 1000, 2000));
+  TEST_ASSERT_TRUE(rolledFresh);
+}
+
 void test_motion_hysteresis_filters_single_noisy_readings() {
   MotionTracker tracker;
   TEST_ASSERT_EQUAL_STRING("stopped", tracker.update(3.0));
@@ -700,6 +717,7 @@ int main(int, char **) {
   RUN_TEST(test_out_of_range_coordinates_are_not_a_fix);
   RUN_TEST(test_implausible_speed_is_rejected_instead_of_clamped);
   RUN_TEST(test_receiver_hdop_must_fit_the_telemetry_contract);
+  RUN_TEST(test_stale_receiver_fix_latches_invalid_before_millis_rollover);
   RUN_TEST(test_motion_hysteresis_filters_single_noisy_readings);
   RUN_TEST(test_motion_hysteresis_requires_consecutive_qualifying_readings);
   RUN_TEST(test_telemetry_timing_policy_is_explicit_and_safe);
