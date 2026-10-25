@@ -4,7 +4,7 @@ import PassengerMap from "@/components/maps/PassengerMap";
 import PassengerBoardingView from "@/components/passenger/PassengerBoardingView";
 import PassengerWorkspace from "@/components/passenger/PassengerWorkspace";
 import type { PassengerStopEstimates } from "@/lib/passengerStopEstimates";
-import { publish, publishArrival, publishDeparture, route } from "./state";
+import { publish, publishArrival, publishDeparture, publishDetour, route } from "./state";
 import "../../frontend/src/app/globals.css";
 
 function Fixture() {
@@ -24,6 +24,8 @@ function Fixture() {
       <PassengerBoardingView sessionId="synthetic-session" route={route} tripState="in_service" stopEstimates={estimates} />
       <button onClick={() => publish(3)}>Publish next stop</button>
       <button onClick={() => publish(2)}>Publish fresh fix</button>
+      <button onClick={() => publishDetour()}>Publish detour</button>
+      <button onClick={() => publishDetour(false)}>Publish pending detour</button>
     </header>
     <div style={{ position: "relative", zIndex: 0, flex: 1, minHeight: 0 }}>
       <PassengerMap route={route} targetStop={route.stops[3]} selectedBusKey="session:synthetic-session" onStopEstimatesChange={setEstimates} />

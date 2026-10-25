@@ -589,6 +589,8 @@ function PassengerMapInner({
               !isLiveBusSignalLost(liveBusFreshnessTimestamp(firstBus))
               ? firstBus?.matchedLocation?.alongRouteDistanceM : undefined}
             completedStopIndex={progressBus?.routeSource === "dynamic-reroute" ? activeBusStopIndex : undefined}
+            hideRemaining={progressBus?.routeSource === "dynamic-reroute"}
+            progressContext={progressBus ? JSON.stringify([progressBus.sessionId, route.id, route.rideDirection, route.configVersion, route.geometryVersion]) : undefined}
             onGeometryReady={onConfiguredGeometryReady}
           />
 

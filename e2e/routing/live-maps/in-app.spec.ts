@@ -77,13 +77,14 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
     for (const view of ["Eki passenger map", "Eki admin map"]) {
       await expect.poll(async () => (await sdk()).lines.filter((line: any) => line.view === view && JSON.stringify(line.path) === JSON.stringify(expected)).length).toBe(2);
       const lines = (await sdk()).lines.filter((line: any) => line.view === view);
-      // The complete untraveled itinerary is green; gray is reserved for passed legs.
-      expect(lines.filter((line: any) => line.color === "#22c55e").map((line: any) => line.path)).toEqual([expected]);
+      // Every upcoming leg is blue; gray is reserved for confirmed progress.
+      expect(lines.filter((line: any) => line.color === "#22c55e")).toHaveLength(0);
       expect(lines.filter((line: any) => line.color === "#71717a")).toHaveLength(0);
       const blue = lines.filter((line: any) => line.color === "#3b82f6");
-      expect(blue).toHaveLength(1);
-      expect(blue[0].path.length).toBeGreaterThanOrEqual(2);
-      expect(blue[0].path.length).toBeLessThan(expected.length);
+      expect(blue).toHaveLength(2);
+      expect(blue.some((line: any) => JSON.stringify(line.path) === JSON.stringify(expected))).toBe(true);
+      const active = blue.find((line: any) => line.path.length < expected.length);
+      expect(active.path.length).toBeGreaterThanOrEqual(2);
     }
     await expect.poll(async () => (await sdk()).markers.filter((marker: any) => marker.title.includes("SIMULATED-BUS")).length).toBe(2);
   };

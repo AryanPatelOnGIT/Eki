@@ -139,6 +139,28 @@ const control = createServer(async (req, res) => {
     if (req.method === 'POST' && /^\/providers\/(routes|places)\/(valid|rate-limit|malformed|timeout)$/.test(req.url)) {
       const segments = req.url.split('/'); providers.setMode(segments[2], segments[3]); res.end('{}'); return;
     }
+    if (req.method === 'POST' && req.url === '/telemetry/detour') {
+      // All progress, matches and reroutes must come from authenticated HTTP
+      // fixes. These capture times preserve physically plausible 1Hz ordering.
+      const startedAt = Date.now();
+      const observations = [];
+      for (let index = 0; index < 3; index++) {
+        const seq = index + 2;
+        const response = await fetch('http://127.0.0.1:3116/api/devices/qa_device/telemetry', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${deviceSecret}` },
+          body: JSON.stringify({ lat: 23.0002 + index * 0.00015, lng: 72.0009,
+            speed: 20, heading: 0, gpsHdop: 1, motionState: 'moving', seq,
+            timestamp: startedAt - 18000 + index * 4000, deviceSentAt: Date.now() }),
+          signal: AbortSignal.timeout(10000), redirect: 'error',
+        });
+        if (response.status !== 202) throw new Error(`Detour telemetry rejected: ${response.status}`);
+        await waitForLifecycle(live => live?.seq === seq && live?.mapMatchSeq === seq);
+        const live = (await realtime.ref('activeBuses/qa_bus_qa_route').get()).val();
+        observations.push({ seq, state: live.routeState, routeSource: live.routeSource, currentStopIndex: live.currentStopIndex });
+      }
+      await waitForLifecycle(live => live?.routeSource === 'dynamic-reroute');
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ statuses: [202, 202, 202], observations })); return;
+    }
     if (req.method === 'POST' && ['/telemetry/middle', '/telemetry/middle-outside', '/telemetry/middle-inside', '/telemetry/end', '/telemetry/fresh-origin', '/telemetry/moving-after-end'].includes(req.url)) {
       // Real authenticated device HTTP ingestion; no direct completion writes.
       const samples = ['/telemetry/middle-outside', '/telemetry/middle-inside'].includes(req.url)
@@ -218,6 +240,7 @@ const control = createServer(async (req, res) => {
         routes: routes.docs.map(doc => ({ id: doc.id, ...doc.data() })), providers: providers.evidence(),
         live: (await realtime.ref('activeBuses/qa_bus_qa_route').get()).val(),
         publicRoute: (await realtime.ref('publicRouteBuses/route:qa_route').get()).val(),
+        activeGeometry: (await realtime.ref('activeRouteGeometry/qa_bus_qa_route').get()).val(),
         activeRide: (await db.collection('active_rides').doc('qa_bus_qa_route').get()).data() ?? null,
         lock: (await db.collection('_active_bus_locks').doc('qa_bus').get()).data() ?? null,
         settings: (await db.collection('settings').doc('global').get()).data(), transport: globalThis.__ekiQaNetworkGuard })); return;

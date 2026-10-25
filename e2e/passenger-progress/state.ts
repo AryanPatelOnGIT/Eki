@@ -45,7 +45,15 @@ function emit(bus: ReturnType<typeof liveBus> | Record<string, unknown>) {
   changeListeners.forEach(listener => listener({ type: "reset", snapshot, source: "listener" }));
   storeListeners.forEach(listener => listener());
 }
-export function publish(index: number) { emit(liveBus(index)); }
+export function publish(index: number) { dynamicGeometry = new Map(); emit(liveBus(index)); }
+export function publishDetour(ready = true) {
+  const point = { lat: 23.0015, lng: 72.0008 };
+  const detour = [point, { lat: 23.002, lng: 72.0008 }, ...route.stops.slice(2)];
+  dynamicGeometry = ready ? new Map([["synthetic-bus", { polyline: encodePolyline(detour), firstStopIndex: 2 }]]) : new Map();
+  const bus = liveBus(2, point);
+  emit({ ...bus, routeSource: "dynamic-reroute", routeVersion: 2, routeState: "ON_ROUTE",
+    matchedLocation: { ...bus.matchedLocation, routeVersion: 2, alongRouteDistanceM: 0 } });
+}
 export function publishArrival(distance: number) {
   const point = { lat: route.stops[1].lat + distance / 111_195, lng: route.stops[1].lng };
   const state = reduceTripState({ ...point, stops: route.stops, motionState: "moving", currentTripState: "in_service",
@@ -68,8 +76,8 @@ export function publishDeparture() {
 export function subscribeLiveBusesByRoute(_id: string, listener: (snapshot: Record<string, unknown>) => void) {
   listeners.add(listener); listener(snapshot); return () => { listeners.delete(listener); };
 }
-const empty = new Map();
-export function useDynamicRouteGeometries() { return empty; }
+let dynamicGeometry = new Map();
+export function useDynamicRouteGeometries() { return dynamicGeometry; }
 export const auth = { currentUser: { uid: "synthetic-passenger", getIdToken: async () => "synthetic-token" } };
 export function getAuthVerificationGeneration() { return 1; }
 const subscribe = (listener: () => void) => { storeListeners.add(listener); return () => { storeListeners.delete(listener); }; };

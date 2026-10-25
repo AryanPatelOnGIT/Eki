@@ -427,6 +427,29 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
 });
 
+test('credible off-route authenticated telemetry publishes a versioned detour and passenger ETA without skipping a stop', async ({ page, request }, testInfo) => {
+  await page.goto('/'); await login(page);
+  await page.getByRole('button', { name: 'Track Synthetic route', exact: true }).click();
+  const response = await request.post(`${control}/telemetry/detour`);
+  expect(response.ok()).toBe(true);
+  const result = await response.json(); expect(result.statuses).toEqual([202, 202, 202]);
+  expect(result.observations.map((item: { currentStopIndex: number }) => item.currentStopIndex)).toEqual([1, 1, 1]);
+  const stored = await evidence(request);
+  expect(stored.live).toMatchObject({ sessionId: 'qa_session', routeSource: 'dynamic-reroute', currentStopIndex: 1 });
+  expect(stored.live.rawLocation).toMatchObject({ lat: 23.0005, lng: 72.0009, seq: 4 });
+  expect(stored.live.routeVersion).toBeGreaterThan(1);
+  const geometry = stored.activeGeometry[String(stored.live.routeVersion)];
+  expect(geometry).toMatchObject({ firstStopIndex: 1, routeId: 'qa_route', sessionId: 'qa_session' });
+  expect(geometry.polyline.length).toBeGreaterThan(0);
+  await expect.poll(async () => Object.values((await evidence(request)).publicRoute.buses)
+    .some((bus: any) => bus.routeSource === 'dynamic-reroute' && bus.routeVersion === stored.live.routeVersion)).toBe(true);
+  const picker = page.getByRole('combobox', { name: 'Destination station', exact: true });
+  await picker.click();
+  await expect(page.getByRole('option', { name: 'Synthetic middle', exact: true })).toContainText(/min/);
+  await expect(page.getByRole('option', { name: 'Synthetic end', exact: true })).toContainText(/min/);
+  await page.screenshot({ path: testInfo.outputPath('authenticated-detour-etas.png'), fullPage: true });
+});
+
 test('2.5m stop arrival updates the real passenger timeline only after authenticated telemetry reaches the circle', async ({ page, request }, testInfo) => {
   await page.goto('/'); await login(page); await board(page);
   const timeline = page.getByRole('button', { name: 'Route Timeline', exact: true });

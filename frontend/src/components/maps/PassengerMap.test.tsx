@@ -27,7 +27,7 @@ vi.mock("@vis.gl/react-google-maps", () => ({
 vi.mock("@/lib/liveBusStore", () => ({ subscribeLiveBusesByRoute: (_routeId: string, listener: typeof state.listener, onReadError?: typeof state.onReadError) => {
   state.listener = listener; state.onReadError = onReadError; listener?.(state.snapshot); return state.unsubscribe;
 } }));
-vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices, firstStopIndex }: ComponentProps<typeof import("./DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} data-first={firstStopIndex}>Configured road geometry</div> }));
+vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices, firstStopIndex, hideRemaining }: ComponentProps<typeof import("./DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} data-first={firstStopIndex} data-hide-remaining={String(Boolean(hideRemaining))}>Configured road geometry</div> }));
 vi.mock("@/hooks/useDynamicRouteGeometries", () => ({ useDynamicRouteGeometries: () => state.geometries }));
 // Animation has its own real RAF suite; this test isolates map/session routing.
 vi.mock("@/hooks/useSmoothPosition", () => ({ useSmoothPosition: (position: unknown) => position }));
@@ -249,11 +249,13 @@ describe("published passenger stop progress", () => {
     expect(next()).toBeUndefined();
     for (const stop of stops) expect(row(stop.name).className).toContain("opacity-100");
     expect(screen.getAllByTestId("road").map(node => node.getAttribute("data-next"))).toEqual(["[1]", "[2]"]);
+    expect(screen.getAllByTestId("road")[0].getAttribute("data-hide-remaining")).toBe("false");
     expect(state.arrivals.mock.calls.map(call => call[0].remainingStops[0].id)).toEqual(expect.arrayContaining([stops[1].id, stops[2].id]));
     view.rerender(<PassengerMap route={directedRoute} targetStop={stops[3]} selectedBusKey="session:second-session" />);
     await openTimeline();
     expect(next()).toContain("Gamma");
     expect(screen.getAllByTestId("road").map(node => node.getAttribute("data-next"))).toEqual(["[]", "[2]"]);
+    expect(screen.getAllByTestId("road")[0].getAttribute("data-hide-remaining")).toBe("true");
   });
 
   it("keeps a configured preview separate from cached dynamic geometry and live progress", () => {
