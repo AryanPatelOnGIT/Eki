@@ -150,15 +150,20 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
   const departureRadius = stops.length > 1
     ? Math.min(ORIGIN_DEPARTURE_M, Math.max(MIN_ORIGIN_DEPARTURE_M, haversineMeters(firstStop, stops[1]) / 2))
     : ORIGIN_DEPARTURE_M;
+  // A first stop inside the minimum departure radius can be passed before the
+  // radius is cleared. Moving through it is departure evidence, or the later
+  // departure segment would no longer touch it and strand the ride at stop 1.
+  const crossedFirstStop = motionState === "moving" && stops.length > 1 &&
+    wasStopReached(stops[1], position, input.previousPosition);
   const hasDepartedOrigin =
     input.hasDepartedOrigin ||
     (currentTripState === "in_service" &&
-      haversineMeters(position, firstStop) >= departureRadius);
+      (haversineMeters(position, firstStop) >= departureRadius || crossedFirstStop));
 
   let leavingOrigin = false;
   if (currentTripState === "pre_departure") {
     const departed = motionState === "moving" &&
-      haversineMeters(position, firstStop) >= departureRadius;
+      (haversineMeters(position, firstStop) >= departureRadius || crossedFirstStop);
     if (!departed || stops.length < 2) {
       return {
         tripState: departed ? "in_service" : "pre_departure",

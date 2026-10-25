@@ -371,3 +371,27 @@ it("does not reuse prior terminal evidence in the update that leaves the origin"
   expect(result.tripState).toBe("in_service");
   expect(result.currentStopIndex).toBe(1);
 });
+
+it.each(["pre_departure", "in_service"] as const)(
+  "treats a %s crossing of a first stop inside the minimum departure radius as departure",
+  currentTripState => {
+    const north = (meters: number) => ({ lat: 23 + meters / 6_371_000 * 180 / Math.PI, lng: 72 });
+    // Stop 1 is 6m from the origin, inside the 10m minimum departure radius.
+    // The 3m->9m heartbeat passes it before departure is otherwise proven; the
+    // next 9m->14m segment no longer touches it, so the ride would be stranded.
+    const stops = [north(0), north(6), north(300)];
+    let state = { tripState: currentTripState as "pre_departure" | "in_service", currentStopIndex: 0, hasDepartedOrigin: false };
+    let previous: { lat: number; lng: number } | undefined;
+    for (const meters of [0, 3, 9, 14, 19]) {
+      const result = reduceTripState({ ...north(meters), previousPosition: previous, motionState: "moving",
+        currentTripState: state.tripState, currentStopIndex: state.currentStopIndex, stops,
+        hasDepartedOrigin: state.hasDepartedOrigin });
+      state = result as typeof state;
+      previous = north(meters);
+    }
+    expect(state).toEqual({ tripState: "in_service", currentStopIndex: 2, hasDepartedOrigin: true });
+    // Parked jitter across the stop is not departure evidence.
+    expect(reduceTripState({ ...north(7), previousPosition: north(3), motionState: "stopped", currentTripState,
+      currentStopIndex: 0, stops, hasDepartedOrigin: false })).toMatchObject({ currentStopIndex: 0, hasDepartedOrigin: false });
+  },
+);
