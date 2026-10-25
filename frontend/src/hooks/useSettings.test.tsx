@@ -62,4 +62,15 @@ describe("verified settings workflow", () => {
     renderHook(() => useSettings()); mocks.generation++;
     await act(async () => { resolve(); }); expect(mocks.listen).not.toHaveBeenCalled();
   });
+  it("reports a failed settings read instead of presenting defaults as stored values", async () => {
+    const hook = renderHook(() => useSettings());
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    act(() => mocks.listen.mock.calls[0][2]({ code: "permission-denied", message: "denied" }));
+    expect(hook.result.current.loading).toBe(false);
+    expect(hook.result.current.error).toBeTruthy();
+    act(() => clearSettingsCache());
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2));
+    act(() => mocks.listen.mock.calls[1][1]({ exists: () => false }));
+    expect(hook.result.current.error).toBeNull();
+  });
 });

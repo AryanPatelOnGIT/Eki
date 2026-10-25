@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPanel from "./SettingsPanel";
-const mocks = vi.hoisted(() => ({ save: vi.fn(), settings: {
+const mocks = vi.hoisted(() => ({ save: vi.fn(), error: null as string | null, settings: {
   serviceStartTime: "8:00 am", noBusesMessage: "No buses running", noBusesSubMessage: "Service starts at {time}", announcementText: "", announcementActive: false,
 } }));
-vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ settings: mocks.settings, loading: false, saveSettings: mocks.save }) }));
-beforeEach(() => { mocks.save.mockReset(); });
+vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ settings: mocks.settings, loading: false, error: mocks.error, saveSettings: mocks.save }) }));
+beforeEach(() => { mocks.save.mockReset(); mocks.error = null; });
 afterEach(cleanup);
 describe("admin settings editing", () => {
   it("returns to unchanged after reverting text and toggling an announcement twice", async () => {
@@ -73,5 +73,13 @@ describe("admin settings editing", () => {
     expect((screen.getByLabelText("Service Start Time") as HTMLInputElement).value).toBe("8:00 am edited");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText("Settings saved")).toBeTruthy(); expect(mocks.save).toHaveBeenCalledTimes(2);
+  });
+  it("does not offer default values for editing when stored settings failed to load", () => {
+    mocks.error = "Settings could not be loaded.";
+    render(<SettingsPanel />);
+    expect(screen.getByRole("alert").textContent).toContain("Settings could not be loaded.");
+    expect(screen.queryByLabelText("Service Start Time")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 });
