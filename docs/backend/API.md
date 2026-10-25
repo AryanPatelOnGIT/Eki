@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-25 22:30 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../api/HTTP_CONTRACT.md) for schema
@@ -384,7 +384,7 @@ Blocked by active ride/bus lock or bound device. Deletes bus and `bus_locations`
 
 ### `PUT /api/fleet/drivers/:id`
 
-Body: `{ "name":"…", "authUid":"…", "assignedBusId":"…" }` (`assignedBusId` may be null). UID must exist and be unique. Active ride prevents identity/bus reassignment. Updates Firestore profile, Auth claims/token revocation as needed and RTDB mirror. Returns `{saved:true}`, 400/409/500.
+Body: `{ "name":"…", "authUid":"…", "assignedBusId":"…" }` (`assignedBusId` may be null). UID must exist (an unknown UID returns 400 before any write) and be unique. A previous operator account that no longer exists is skipped rather than demoted, and its profile is not recreated. Active ride prevents identity/bus reassignment. Updates Firestore profile, Auth claims/token revocation as needed and RTDB mirror. Returns `{saved:true}`, 400/409/500.
 
 ### `DELETE /api/fleet/drivers/:id`
 

@@ -52,6 +52,17 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? "undefined";
 }
 
+async function authUserExists(authUid: string): Promise<boolean> {
+  try {
+    await auth.getUser(authUid);
+    return true;
+  } catch (error) {
+    const failure = error as { code?: unknown; errorInfo?: { code?: unknown } } | null;
+    if ((failure?.code ?? failure?.errorInfo?.code) === "auth/user-not-found") return false;
+    throw error;
+  }
+}
+
 async function demoteDriverAccount(authUid: string): Promise<void> {
   const user = await auth.getUser(authUid);
   const claims = { ...(user.customClaims ?? {}) };
@@ -427,11 +438,16 @@ router.put("/drivers/:id", fleetMutation(async (req: Request, res: Response) => 
     // operator record or user role. Authorization publication reads this again
     // after persistence, but validation there is too late to avoid partial state.
     if (assignedBusId !== null) await loadBusRouteIds(assignedBusId);
-    await auth.getUser(authUid);
+    if (!(await authUserExists(authUid))) {
+      res.status(400).json({ error: "No account exists for that Auth UID." });
+      return;
+    }
     if (validId(previousAuthUid) && previousAuthUid !== authUid) {
       // Revoke the old principal before reusing this driver ID. Otherwise the
       // old account retains claims that still match the RTDB assignment mirror.
-      await demoteDriverAccount(previousAuthUid);
+      // A deleted account has no claims to revoke, and writing its profile
+      // would recreate data that privacy deletion removed.
+      if (await authUserExists(previousAuthUid)) await demoteDriverAccount(previousAuthUid);
     }
     await db.collection("drivers").doc(id).set({ id, name, authUid, assignedBusId }, { merge: true });
     await db.collection("users").doc(authUid).set({ role: "driver" }, { merge: true });
