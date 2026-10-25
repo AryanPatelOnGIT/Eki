@@ -40,6 +40,7 @@ import type { TelemetryPayload } from "./telemetryPayload";
 import {
   evaluateRouteAdherence,
   matchRoutePosition,
+  ROUTE_MATCH_DISTANCE_M,
   trajectoryHeading,
   type PreviousRouteMatch,
   type RouteAdherenceState,
@@ -727,7 +728,10 @@ async function activateReroute(
   // A new session must never reuse a cached geometry version from an earlier ride.
   const nextVersion = Math.max(expectedVersion + 1, Date.now());
   const publicationCreatedAt = Date.now();
-  const path = decodePolyline(geometry.encodedPolyline);
+  const path = typeof geometry.encodedPolyline === "string" &&
+    geometry.encodedPolyline.length <= MAX_ENCODED_POLYLINE_LENGTH ? decodePolyline(geometry.encodedPolyline) : [];
+  // The matcher rejects such geometry on the next fix; never publish it.
+  if (path.length < 2) throw new Error("Provider returned unusable reroute geometry.");
   const match = matchRoutePosition(
     { lat: sample.lat, lng: sample.lng },
     path,
@@ -735,6 +739,12 @@ async function activateReroute(
     null,
     adaptiveGnssErrorMeters(sample.gpsHdop, sample.speed),
   );
+  // A deviation reroute starts at the bus. Geometry snapped far away would
+  // immediately confirm off-route again and, having cleared the backoff,
+  // re-dispatch a billable request on every fix.
+  if (!departure && (!match || match.distanceToRouteM > ROUTE_MATCH_DISTANCE_M)) {
+    throw new Error("Reroute geometry does not start at the bus.");
+  }
   // Store the full reroute geometry once in a version-keyed sibling node so
   // the live activeBuses child carries only pointer fields and is not
   // rewritten with the encoded polyline on every accepted fix.

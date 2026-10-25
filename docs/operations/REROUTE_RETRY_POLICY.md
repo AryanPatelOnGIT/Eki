@@ -45,6 +45,14 @@ a still-deviating ride can claim a new request subject to the persisted backoff
 and provider circuit. A late result from the lost request fails its request-ID
 guard.
 
+Provider geometry is published only when it decodes to at least two points
+and, for a deviation reroute, the triggering fix matches it within the 45 m
+route-match distance. Otherwise the request is released as failed under the
+persisted backoff (the provider call itself still counts as a success for the
+circuit). Without this, a bus on a road the provider does not know was snapped
+to distant geometry, immediately confirmed off-route again and, because
+publication clears the backoff, re-dispatched a billable request on every fix.
+
 The authenticated route-processing health status exposes provider failures,
 rejected admissions, probe state and remaining circuit delay under
 `rerouting.provider`. Inspect those counters alongside background rerouting
