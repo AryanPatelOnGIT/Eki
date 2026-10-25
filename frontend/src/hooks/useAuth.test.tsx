@@ -414,3 +414,26 @@ describe("verified auth publication", () => {
     expect(hook.result.current.roleError).toContain("timed out"); expect(opened).not.toHaveBeenCalled();
   });
 });
+describe("hostile browser storage and legacy profiles", () => {
+  it("admits a verified account when browser storage rejects writes", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    const hook = await mount(); const account = user("storage-blocked"); mocks.auth.currentUser = account;
+    const opened = vi.fn(); void waitForAuth().then(opened);
+    await act(async () => { await mocks.callback!(account); });
+    expect(hook.result.current.roleError).toBeNull();
+    expect(hook.result.current.user?.role).toBe("admin"); expect(opened).toHaveBeenCalledOnce();
+  });
+  it("still clears every principal cache when storage cleanup throws during sign-out", async () => {
+    const { clearCollectionCache } = await import("@/hooks/useCollection");
+    const { clearSettingsCache } = await import("@/hooks/useSettings");
+    const { invalidateLiveBusCache } = await import("@/lib/liveBusStore");
+    const hook = await mount(); const account = user("cleanup"); mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    mocks.signOut.mockImplementation(async () => { mocks.auth.currentUser = null; await mocks.callback!(null); });
+    await act(async () => { await hook.result.current.logout(); });
+    expect(clearCollectionCache).toHaveBeenCalledOnce(); expect(clearSettingsCache).toHaveBeenCalledOnce();
+    expect(invalidateLiveBusCache).toHaveBeenCalledOnce();
+    expect(hook.result.current.roleError).toBeNull(); expect(hook.result.current.user).toBeNull();
+  });
+});

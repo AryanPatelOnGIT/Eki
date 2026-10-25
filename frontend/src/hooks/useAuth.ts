@@ -25,6 +25,16 @@ function transientAccessFailure(error: unknown): boolean {
     (error instanceof Error && error.message === "Role verification timed out.");
 }
 
+// Role hints and workspace memory are conveniences. Blocked or full browser
+// storage must never deny a verified account or skip sign-out cache cleanup.
+function writeStorage(key: string, value: string): void {
+  try { window.localStorage.setItem(key, value); } catch { /* Storage can be unavailable. */ }
+}
+
+function removeStorage(key: string): void {
+  try { window.localStorage.removeItem(key); } catch { /* Storage can be unavailable. */ }
+}
+
 export type UserRole = "passenger" | "driver" | "admin" | null;
 
 interface AppUser {
@@ -194,7 +204,7 @@ function useAuthState(): AuthContextValue {
                 claimedRole === "admin"
               ) {
                 if (!isCurrentAuth()) return;
-                window.localStorage.setItem(`eki:role:${firebaseUser.uid}`, claimedRole);
+                writeStorage(`eki:role:${firebaseUser.uid}`, claimedRole);
                 setUser({
                   uid: firebaseUser.uid,
                   email: firebaseUser.email,
@@ -271,7 +281,7 @@ function useAuthState(): AuthContextValue {
                 }
               }
               setRoleError(null);
-              window.localStorage.setItem(`eki:role:${firebaseUser.uid}`, role || "passenger");
+              writeStorage(`eki:role:${firebaseUser.uid}`, role || "passenger");
 
               setUser({
                 uid: firebaseUser.uid,
@@ -511,9 +521,9 @@ function useAuthState(): AuthContextValue {
       // has confirmed sign-out (those imports can be slow on mobile).
       signingOut.current = false;
       if (signedOutUid) {
-        window.localStorage.removeItem(`eki:role:${signedOutUid}`);
+        removeStorage(`eki:role:${signedOutUid}`);
       }
-      window.localStorage.removeItem("eki:last-workspace");
+      removeStorage("eki:last-workspace");
       const [
         { clearCollectionCache },
         { clearSettingsCache },
