@@ -117,7 +117,7 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
   const baseColor = nextStopIndices !== undefined ? "#3b82f6" : (color ?? "#3b82f6");
   const singleProgress = (JSON.parse(activeIndices) as number[]).length === 1;
   const completedIndex = publishedStopIndex(completedStopIndex, stableStops.length);
-  const confirmedPrefix = useRef<{ path: LatLng[]; context: string; completed: LatLng[] } | null>(null);
+  const confirmedPrefix = useRef<{ path: LatLng[]; context: string; nextStopIndex: number; completed: LatLng[] } | null>(null);
 
   useEffect(() => {
     onGeometryReady?.(path);
@@ -182,7 +182,10 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
     for (const index of JSON.parse(activeIndices) as number[]) {
       if (singleProgress) {
         const sections = routeProgressPaths(path, legs, index, progressDistanceM);
-        if (progressContext && !hideRemaining) confirmedPrefix.current = { path, context: progressContext, completed: sections.completed };
+        if (progressContext && !hideRemaining && (sections.matchedDistanceM !== undefined ||
+            !confirmedPrefix.current || confirmedPrefix.current.nextStopIndex !== index)) {
+          confirmedPrefix.current = { path, context: progressContext, nextStopIndex: index, completed: sections.completed };
+        }
         add(sections.completed, "#71717a", 22);
         if (!hideRemaining) add(sections.active, "#3b82f6", 23);
       } else {
