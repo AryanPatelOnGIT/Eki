@@ -123,4 +123,20 @@ describe("admin service creation", () => {
     view.rerender(<DashboardPanel />);
     expect(screen.getByText("1 device online · 0 services")).toBeTruthy();
   });
+  it("keeps one bus's delay change locked while another bus's delay change completes", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry, { ...fixtureBus("forward", "qa-session-2", "qa-bus-2"), routeId: route.id } as ActiveBusEntry];
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { pending.push(resolve); })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    for (const card of screen.getAllByRole("button", { expanded: false })) await user.click(card);
+    await user.click(screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }));
+    await user.click(screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus-2" }));
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1](new Response('{"saved":true,"delayMinutes":1}'));
+    await screen.findByText("Delay updated to 1 minutes for qa-bus-2.");
+    expect((screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }) as HTMLButtonElement).disabled).toBe(true);
+    pending[0](new Response('{"saved":true,"delayMinutes":1}'));
+    await screen.findByText("Delay updated to 1 minutes for qa-bus.");
+    expect((screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });

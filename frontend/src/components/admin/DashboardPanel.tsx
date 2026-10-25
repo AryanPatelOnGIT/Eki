@@ -662,7 +662,8 @@ export default function DashboardPanel() {
   const [resumePending, setResumePending] = useState(false);
   const resumeInFlight = useRef(false);
   const resumeKeys = useRef(new Map<string, string>());
-  const [delayPending, setDelayPending] = useState("");
+  // Per ride: one bus finishing must not unlock another bus's in-flight change.
+  const [delayPending, setDelayPending] = useState<ReadonlySet<string>>(() => new Set());
   const [boardingCodes, setBoardingCodes] = useState<Record<string, string>>({});
   const [chatEntry, setChatEntry] = useState<ActiveBusEntry | null>(null);
   const [endRideEntry, setEndRideEntry] = useState<ActiveBusEntry | null>(null);
@@ -728,7 +729,7 @@ export default function DashboardPanel() {
     if (!entry.routeId || !entry.driverId) return;
     const operationId = `${entry.busId}_${entry.routeId}`;
     const delayMinutes = Math.max(0, Number(entry.delayMinutes ?? 0) + delta);
-    setDelayPending(operationId);
+    setDelayPending(current => new Set(current).add(operationId));
     setArmStatus("");
     try {
       await requestAdmin<{ delayMinutes: number }>("/api/shifts/delay", {
@@ -745,7 +746,11 @@ export default function DashboardPanel() {
     } catch (error) {
       setArmStatus(errorMessage(error));
     } finally {
-      setDelayPending("");
+      setDelayPending(current => {
+        const next = new Set(current);
+        next.delete(operationId);
+        return next;
+      });
     }
   };
 
@@ -922,7 +927,7 @@ export default function DashboardPanel() {
                 selected={selectedBusId === entry.busId}
                 onSelect={() => handleSelectBus(entry)}
                 onChangeDelay={(ride, delta) => void changeDelay(ride, delta)}
-                delayPending={delayPending === `${entry.busId}_${entry.routeId}`}
+                delayPending={delayPending.has(`${entry.busId}_${entry.routeId}`)}
                 boardingCode={entry.sessionId ? boardingCodes[entry.sessionId] : undefined}
                 onLoadBoardingCode={(ride) => void loadBoardingCode(ride)}
                 onOpenChat={setChatEntry}
