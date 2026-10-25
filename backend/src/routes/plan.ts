@@ -118,7 +118,7 @@ const planSegment = async (res: Response, input: PlanInput) => {
     const { route, forwardCoords, reverseCoords } = cached;
 
     if (!route.stops || route.stops.length < 2) {
-      res.status(422).json({ error: "Route has no stops data. Please re-seed the database." });
+      res.status(422).json({ error: "This route has no stops configured yet." });
       return;
     }
 
