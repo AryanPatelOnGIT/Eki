@@ -95,10 +95,12 @@ export function lifecycleDirection(data: Record<string, unknown>) {
 /**
  * Parses an environment-derived interval with a fallback and a lower bound.
  *
- * Returns `fallback` when `value` is not a finite number or is below
- * `minimum`; otherwise the floored parsed value.
+ * Returns `fallback` when `value` is blank, not a finite number or below
+ * `minimum`; otherwise the floored parsed value. `Number("")` is 0, so a
+ * blank value must be rejected before parsing.
  */
-function readIntervalMs(value: string | undefined, fallback: number, minimum: number): number {
+export function readIntervalMs(value: string | undefined, fallback: number, minimum: number): number {
+  if (!value?.trim()) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= minimum ? Math.floor(parsed) : fallback;
 }

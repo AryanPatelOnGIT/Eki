@@ -113,7 +113,7 @@ vi.mock("./tripStateReducer", () => ({
 }));
 vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => false) }));
 
-import { getTripStateQueueStatus, lifecycleDirection, startTripStateEngine } from "./tripStateEngine";
+import { getTripStateQueueStatus, lifecycleDirection, readIntervalMs, startTripStateEngine } from "./tripStateEngine";
 import { restoreDurableRide } from "./durableRideRecovery";
 import { WorkerFence } from "../lib/workerFence";
 import { endpointSnapshotVersion } from "../lib/endpointSnapshotVersion";
@@ -1250,5 +1250,12 @@ describe("trip-state direction boundary", () => {
   it("accepts only explicit travel directions", () => {
     expect(lifecycleDirection({ direction: "forward" })).toBe("forward");
     expect(lifecycleDirection({ direction: "reverse" })).toBe("reverse");
+  });
+  it("uses the default interval for an unset or blank environment value", () => {
+    // AUTOMATIC_TURNAROUND_DWELL_MS= must not silently disable the dwell.
+    for (const blank of [undefined, "", "  "]) expect(readIntervalMs(blank, 30_000, 0)).toBe(30_000);
+    expect(readIntervalMs("0", 30_000, 0)).toBe(0);
+    expect(readIntervalMs("4500.9", 30_000, 0)).toBe(4_500);
+    expect(readIntervalMs("-1", 30_000, 0)).toBe(30_000);
   });
 });
