@@ -1,6 +1,6 @@
 # Privileged database authorization (issue #315)
 
-Last updated: 2026-10-16 00:53 IST (UTC+05:30).
+Last updated: 2026-10-25 22:30 IST (UTC+05:30).
 
 Privileged ID tokens carry `authorizationVersion`. Firestore and Realtime
 Database compare it with backend-only `_userAuthorization/{uid}` records.
@@ -18,7 +18,9 @@ stale or incomplete privilege returns 403. Finish the claims backfill before
 directing admin traffic to this backend; unversioned legacy admin tokens fail
 closed at HTTP admission as well as at the database rules.
 
-Firestore additionally checks the current `users/{uid}.role`. Driver session
+Firestore and RTDB admin rules use the same claim contract: `role: "admin"`
+and `admin: true` together, so a token carrying only the role claim is denied
+in both databases. Firestore additionally checks the current `users/{uid}.role`. Driver session
 and message access requires the current driver registry's `authUid`, the
 assigned bus, and matching token/authorization assignment fields. Removing or
 reassigning a registry record therefore immediately closes its operator reads.
