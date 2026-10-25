@@ -528,12 +528,18 @@ export async function startAssignedService(assignment: ServiceAssignment, option
         // create that lock, so it must not fail the session or release its
         // lock merely because a different live session won the RTDB race.
         if (lockClaim.created) {
-          await sessionRef.set({
-            status: "failed",
-            endTime: Date.now(),
-            failureReason: "shift_conflict",
-          }, { merge: true });
-          await releaseActiveBusLock(assignment.busId, sessionRef.id);
+          // One commit: a failed session must never keep owning the bus lock,
+          // because only non-terminal sessions are reconciled later.
+          const failedAt = Date.now();
+          await runSessionTransaction(async (transaction) => {
+            const lock = await transaction.get(lockRef);
+            transaction.set(sessionRef, {
+              status: "failed",
+              endTime: failedAt,
+              failureReason: "shift_conflict",
+            }, { merge: true });
+            if (lock.data()?.sessionId === sessionRef.id) transaction.delete(lockRef);
+          });
         }
         throw new RideSessionStartError(409, ({ error: "This bus already has an active shift." }).error);
       }
