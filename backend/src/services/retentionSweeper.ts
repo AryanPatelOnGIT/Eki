@@ -100,7 +100,9 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
   const tripDays = readDays(process.env.COMPLETED_TRIP_RETENTION_DAYS, 180);
   const operationDays = readDays(process.env.OPERATION_LOG_RETENTION_DAYS, 90);
 
-  const [sessions, feedback, trips, fleetOperations, routeSaveOperations, previews, reconciliationJobs, lockRecoveries] = await Promise.all([
+  // Categories are independent: one failing category must not abandon the
+  // others mid-flight or skip the RTDB sweep. Failures are reported afterwards.
+  const outcomes = await Promise.allSettled([
     deleteDocuments(
       db.collection("ride_sessions")
         .where("status", "in", ["completed", "failed", "interrupted"])
@@ -149,7 +151,10 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
         .orderBy("recoveredAt").orderBy(FieldPath.documentId()),
     ),
   ]);
-  console.log("[Retention] Sweep complete", {
+  const failures = outcomes.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
+  const [sessions, feedback, trips, fleetOperations, routeSaveOperations, previews, reconciliationJobs, lockRecoveries] =
+    outcomes.map(outcome => outcome.status === "fulfilled" ? outcome.value : null);
+  console.log(failures.length ? "[Retention] Sweep partially failed" : "[Retention] Sweep complete", {
     resumedRideDeletions,
     resumedManualHistoryDeletions,
     sessions,
@@ -164,6 +169,8 @@ export async function runRetentionSweep(now = Date.now()): Promise<void> {
     legacyRetired: process.env.LEGACY_RTDB_RETIRED === "true",
   });
   console.log("[Retention] RTDB sweep complete", rtdbSummary);
+  if (failures.length === 1) throw failures[0];
+  if (failures.length) throw new AggregateError(failures, `${failures.length} Firestore retention categories failed.`);
 }
 
 export function startRetentionSweeper(): () => void {
