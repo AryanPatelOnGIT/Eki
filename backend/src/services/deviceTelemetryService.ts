@@ -132,6 +132,7 @@ export type TelemetryIngestResult =
     };
 
 const credentialCache = new Map<string, CredentialCacheEntry>();
+const rejectedCredentialCache = new Map<string, CredentialCacheEntry>();
 const credentialFills = createBoundedSingleFlight<DeviceCredentialResult>({
   maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
 });
@@ -259,14 +260,19 @@ function cacheCredential(
   cacheKey: string,
   value: CredentialCacheEntry,
 ): void {
+  // Verified and rejected entries are bounded separately so a flood of guessed
+  // device IDs or secrets cannot evict verified fleet credentials and force
+  // every legitimate device back through the shared KDF limiter.
+  const target = value.assignment ? credentialCache : rejectedCredentialCache;
+  (target === credentialCache ? rejectedCredentialCache : credentialCache).delete(cacheKey);
   if (
-    !credentialCache.has(cacheKey) &&
-    credentialCache.size >= MAX_CREDENTIAL_CACHE_ENTRIES
+    !target.has(cacheKey) &&
+    target.size >= MAX_CREDENTIAL_CACHE_ENTRIES
   ) {
-    const oldest = credentialCache.keys().next().value;
-    if (oldest) credentialCache.delete(oldest);
+    const oldest = target.keys().next().value;
+    if (oldest) target.delete(oldest);
   }
-  credentialCache.set(cacheKey, value);
+  target.set(cacheKey, value);
 }
 
 function ensureDeviceCredentialInvalidationListener(): void {
@@ -281,6 +287,7 @@ function ensureDeviceCredentialInvalidationListener(): void {
   const handleError = (error: Error) => {
     credentialInvalidationListenerStarted = false;
     credentialCache.clear();
+    rejectedCredentialCache.clear();
     credentialFills.invalidate();
     versions.off("child_added", invalidate);
     versions.off("child_changed", invalidate);
@@ -350,7 +357,7 @@ export async function checkDeviceCredentials(
   ensureDeviceCredentialInvalidationListener();
   const suppliedDigest = digestSecret(secret);
   const cacheKey = credentialCacheKey(deviceId, suppliedDigest);
-  const cached = credentialCache.get(cacheKey);
+  const cached = credentialCache.get(cacheKey) ?? rejectedCredentialCache.get(cacheKey);
   if (cached && cached.expiresAt > now && cached.expiresMonotonicAt > performance.now()) {
     credentialCacheHits += 1;
     if (
@@ -816,8 +823,10 @@ export function invalidateDeviceCredentialCache(deviceId: string): void {
   invalidateAutomaticServiceAdmission(deviceId);
   credentialFills.invalidate(deviceId);
   const prefix = `${deviceId}:`;
-  for (const key of credentialCache.keys()) {
-    if (key.startsWith(prefix)) credentialCache.delete(key);
+  for (const cache of [credentialCache, rejectedCredentialCache]) {
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix)) cache.delete(key);
+    }
   }
 }
 

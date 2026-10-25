@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-06 00:35 IST (UTC+05:30).
+Last updated: 2026-10-25 23:10 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -63,7 +63,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 
 ## Telemetry service detail
 
-Credential cache entries hold `{assignment, secretDigest, expiresAt}`; positive TTL is 60 seconds, negative TTL 5 seconds, and capacity 1,000. A SHA-256 digest makes cached comparisons constant-size; the durable store remains scrypt. Rate buckets are per device and one minute with a default budget of 90. Distributed mode reserves five tokens per shared transaction by default and bounds local leases to 1,000 devices. Local mode also tracks at most 1,000 devices and fails closed when that table is full.
+Credential cache entries hold `{assignment, secretDigest, expiresAt}`; positive TTL is 60 seconds, negative TTL 5 seconds, and capacity 1,000 verified entries plus a separate 1,000 rejected entries, so guessed device IDs or secrets cannot evict verified fleet credentials. A SHA-256 digest makes cached comparisons constant-size; the durable store remains scrypt. Rate buckets are per device and one minute with a default budget of 90. Distributed mode reserves five tokens per shared transaction by default and bounds local leases to 1,000 devices. Local mode also tracks at most 1,000 devices and fails closed when that table is full.
 
 The RTDB transaction compares `sample.timestamp` plus sequence to existing telemetry. Older/equal samples abort and return duplicate success. New data merges the accepted sample without overwriting an existing active lifecycle, preserves the authenticated fix in `rawLocation`, adds server timing, and derives `deviceState`/`signalState`. A missing active session schedules one coalesced Firestore recovery read per node with a 30-second negative cache.
 
