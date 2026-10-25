@@ -85,6 +85,11 @@ describe("passenger feedback workflow", () => {
     const label = screen.getByRole("status").textContent ?? "";
     expect(Number(/Wait (\d+)h/.exec(label)?.[1] ?? 0)).toBeLessThanOrEqual(24);
   });
+  it("keeps line breaks when a pasted comment is trimmed to the word limit", () => {
+    render(<FeedbackModal userId="qa-passenger" onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "line\n".repeat(205) } });
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(Array(200).fill("line").join("\n"));
+  });
   it("supports close and Escape without submitting an empty form", async () => {
     const user = userEvent.setup(); const close = vi.fn();
     render(<FeedbackModal userId="qa-passenger" onClose={close} />);

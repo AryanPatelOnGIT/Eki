@@ -23,10 +23,9 @@ const countWords = (value: string) => {
 };
 
 const trimToWordLimit = (value: string) => {
-  const words = value.trim().match(/\S+/g);
-  return words && words.length > FEEDBACK_WORD_LIMIT
-    ? words.slice(0, FEEDBACK_WORD_LIMIT).join(" ")
-    : value;
+  // Cut after the last allowed word so pasted line breaks and spacing survive.
+  const limited = value.match(new RegExp(`^\\s*(?:\\S+\\s+){${FEEDBACK_WORD_LIMIT - 1}}\\S+`));
+  return limited ? limited[0] : value;
 };
 
 const formatCooldown = (ms: number) => {
