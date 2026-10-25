@@ -43,7 +43,7 @@ function MapsReady({ children }: { children: ReactNode }) {
         view: map.getDiv().closest("section")?.getAttribute("aria-label"), tilesLoaded: state.tilesLoaded, tileLoads: state.tileLoads,
         renderingType: map.getRenderingType(), zoom: map.getZoom(), center: map.getCenter()?.toJSON(),
       })),
-      lines: lines.filter(line => line.getMap()).map(line => ({ view: (line.getMap() as google.maps.Map).getDiv().closest("section")?.getAttribute("aria-label"), color: line.get("strokeColor"), path: line.getPath().getArray().map(point => point.toJSON()) })),
+      lines: lines.filter(line => line.getMap()).map(line => ({ view: (line.getMap() as google.maps.Map).getDiv().closest("section")?.getAttribute("aria-label"), color: line.get("strokeColor"), zIndex: line.get("zIndex"), path: line.getPath().getArray().map(point => point.toJSON()) })),
       markers: markers.filter(item => item.map).map(item => {
         const map = item.map as google.maps.Map, div = map.getDiv(), bounds = div.getBoundingClientRect();
         const position = item.position ? { lat: typeof item.position.lat === "function" ? item.position.lat() : item.position.lat,

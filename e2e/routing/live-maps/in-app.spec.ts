@@ -96,13 +96,13 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
   }).toBe(true);
   await page.screenshot({ path: info.outputPath("eki-in-app-forward.png"), fullPage: true });
   // Stop progress is supplied by the backend-style tuple at simulated arrival.
-  const firstLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+  const firstLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6" && line.zIndex === 23);
   await page.getByRole("button", { name: "Reach next stop", exact: true }).click();
   await expect.poll(async () => {
-    const blue = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+    const blue = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6" && line.zIndex === 23);
     return blue.length === 2 && blue.every((line: any, index: number) => JSON.stringify(line.path) !== JSON.stringify(firstLeg[index].path));
   }).toBe(true);
-  const secondLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+  const secondLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6" && line.zIndex === 23);
   const passedLegs = (await sdk()).lines.filter((line: any) => line.color === "#71717a");
   expect(passedLegs).toHaveLength(2);
   expect(passedLegs[0].path).toEqual(passedLegs[1].path);

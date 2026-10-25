@@ -30,6 +30,10 @@ it("shows all upcoming road blue, then keeps only confirmed grey road when a det
   // Neither a new session nor changed geometry may inherit old partial progress.
   view.rerender(<DirectionsRoute {...props} progressContext="session:two" nextStopIndices={[]} completedStopIndex={1} hideRemaining />);
   expect(visible()).toHaveLength(0);
+  view.rerender(<DirectionsRoute {...props} nextStopIndices={[1]} progressDistanceM={500} />);
+  expect(visible().filter(line => line.options.strokeColor === "#71717a")).toHaveLength(1);
+  view.rerender(<DirectionsRoute {...props} polyline="_ekkC_omvLgEgEgEgE" nextStopIndices={[]} completedStopIndex={1} hideRemaining />);
+  expect(visible()).toHaveLength(0);
   view.unmount(); vi.unstubAllGlobals();
 });
 it("reports unavailable geometry, then publishes authenticated repaired road geometry", async () => {
