@@ -126,4 +126,12 @@ describe("fleet and personnel controls", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ name: "QA Bus renamed", assignedRoutes: ["qa-route"] });
   }, 15_000);
+  it.each([["vehicle QA Bus", "Vehicle"], ["operator QA Driver", "Operator"]])("shows why deleting %s failed instead of leaving the error behind the dialog", async (target, kind) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Still bound to an active ride."}', { status: 409 })));
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: `Delete ${target}` }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete/ }));
+    expect(await screen.findByText(`Failed to delete ${kind}: Still bound to an active ride.`)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  }, 15_000);
 });

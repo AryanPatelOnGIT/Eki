@@ -193,6 +193,8 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       await fleetRequest(`/buses/${encodeURIComponent(id)}`, "DELETE");
       setConfirmDeleteBusId(null);
     } catch (error: unknown) {
+      // Close the dialog so the error banner behind its backdrop is visible.
+      setConfirmDeleteBusId(null);
       setErrorMsg("Failed to delete Vehicle: " + errorMessage(error));
     } finally {
       setIsDeleting(false);
@@ -268,6 +270,7 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       await fleetRequest(`/drivers/${encodeURIComponent(id)}`, "DELETE");
       setConfirmDeleteDriverId(null);
     } catch (error: unknown) {
+      setConfirmDeleteDriverId(null);
       setErrorMsg("Failed to delete Operator: " + errorMessage(error));
     } finally {
       setIsDeleting(false);
