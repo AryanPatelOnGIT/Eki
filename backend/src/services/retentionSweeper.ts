@@ -9,9 +9,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 200;
 const DELETION_JOBS = "_retention_deletion_jobs";
 
+// Longer windows predate every record; cap them so a "keep forever" value
+// cannot produce an out-of-range Firestore Timestamp and abort every sweep.
+const MAX_RETENTION_DAYS = 36_500;
+
 function readDays(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : fallback;
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? Math.min(parsed, MAX_RETENTION_DAYS) : fallback;
 }
 
 async function deleteDocuments(query: Query, recursive = false): Promise<number> {

@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-25 22:40 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -75,6 +75,11 @@ runtime secret/configuration system.
 The exact defaults and comments are maintained in [`backend/.env.example`](../backend/.env.example).
 Configuration is loaded before Firebase initialization; changing it requires a
 backend restart.
+
+The `*_RETENTION_DAYS` values must be whole numbers of at least `1`; missing,
+blank, fractional or nonpositive values use the default (`180`, or `90` for
+operation logs). Values above `36500` are capped at `36500` days so a
+"keep forever" setting cannot abort the daily retention sweep.
 
 ## Frontend variables
 

@@ -58,3 +58,17 @@ describe("retention query boundaries", () => {
     expect(mocks.filters.get("ride_sessions")?.[1]).toEqual(["endTime", "<", now - 180 * 86400000]);
   });
 });
+
+describe("retention window configuration bounds", () => {
+  it.each(["FEEDBACK_RETENTION_DAYS", "COMPLETED_TRIP_RETENTION_DAYS", "OPERATION_LOG_RETENTION_DAYS", "RIDE_SESSION_RETENTION_DAYS"])(
+    "treats an effectively-forever %s as long retention instead of aborting every sweep", async name => {
+      mocks.rtdbRoots.length = 0;
+      vi.stubEnv(name, "99999999999");
+      const now = Date.UTC(2026, 9, 2, 10);
+      await expect(runRetentionSweep(now)).resolves.toBeUndefined();
+      // Every other category and the RTDB sweep still ran.
+      expect(mocks.rtdbRoots).toContain("activeRouteGeometry");
+      expect(mocks.filters.get("feedbacks")).toHaveLength(1);
+      expect(mocks.filters.get("_fleet_lock_recoveries")).toHaveLength(1);
+    });
+});
