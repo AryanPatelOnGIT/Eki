@@ -202,7 +202,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const startEditBus = (bus: BusData) => {
     setEditingBusId(bus.id);
     setEditBusName(bus.name);
-    setEditBusRoutes(bus.assignedRoutes ?? []);
+    // Saving always replaces the legacy single-route field, so carry it into the draft.
+    setEditBusRoutes(Array.isArray(bus.assignedRoutes)
+      ? bus.assignedRoutes
+      : bus.assignedRouteId ? [bus.assignedRouteId] : []);
     setEditingDriverId(null);
   };
 
