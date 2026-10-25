@@ -288,6 +288,11 @@ router.put("/buses/:id", fleetMutation(async (req: Request, res: Response) => {
   try {
     const routeDocs = await settleTogether(assignedRoutes.map(routeId => db.collection("routes").doc(routeId).get()));
     if (routeDocs.some(route => !route.exists)) { res.status(400).json({ error: "One or more assigned routes do not exist." }); return; }
+    if (assignedRoutes.length === 0 && !(await db.collection("drivers").where("assignedBusId", "==", id).limit(1).get()).empty) {
+      // An assigned operator's authorization requires at least one route; saving
+      // first would fail publication and leave the old route mirror in place.
+      res.status(409).json({ error: "Unassign every operator before removing the vehicle's last route." }); return;
+    }
     for await (const rides of reconciliationPages(db.collection("active_rides").where("busId", "==", id))) {
       if (rides.some(ride => !assignedRoutes.includes(ride.data().routeId))) {
         res.status(409).json({ error: "An active ride route cannot be removed before its final stop." }); return;
@@ -487,7 +492,8 @@ router.delete("/drivers/:id", fleetMutation(async (req: Request, res: Response) 
     const authUid = driverDoc.data()?.authUid;
     // Keep the registry record until invalidation succeeds, so a failed
     // offboarding can be retried instead of losing its principal lookup.
-    if (validId(authUid)) {
+    // A deleted account has no claims left to revoke (see the reassignment path).
+    if (validId(authUid) && await authUserExists(authUid)) {
       await demoteDriverAccount(authUid);
     }
     await settleTogether([

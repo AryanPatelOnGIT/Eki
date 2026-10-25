@@ -560,6 +560,26 @@ describe("fleet operation resources", () => {
       expect(state.docs.get("buses/bus_1")).toEqual(bus);
     }
   });
+  it("rejects clearing every route from a vehicle with an assigned operator before persisting", async () => {
+    state.docs.set("routes/route_1", { name: "Route 1" });
+    const bus = { id: "bus_1", name: "Before", assignedRoutes: ["route_1"] };
+    state.docs.set("buses/bus_1", bus);
+    state.mirrors.driver_1 = { bus_1: { route_1: true } };
+    const response = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "After", assignedRoutes: [] }) });
+    expect(response.status).toBe(409);
+    expect(state.docs.get("buses/bus_1")).toEqual(bus);
+    expect(state.mirrors.driver_1).toEqual({ bus_1: { route_1: true } });
+  });
+  it("deletes an operator whose Auth account was already deleted", async () => {
+    state.missingUsers.add("auth_uid");
+    state.mirrors.driver_1 = { bus_1: { route_1: true } };
+    const response = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" });
+    expect(response.status).toBe(200);
+    expect(state.docs.has("drivers/driver_1")).toBe(false);
+    expect(state.docs.has("users/auth_uid")).toBe(false);
+    expect(state.mirrors.driver_1).toBeUndefined();
+  });
   it("drains accepted fleet work while rejecting late mutation admission", async () => {
     let release!: () => void; state.gate = new Promise<void>(done => { release = done; });
     const accepted = contractFetch(`${base}/api/fleet/reconcile`, { method: "POST" });

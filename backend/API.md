@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-25 22:55 IST (UTC+05:30).
+Last updated: 2026-10-25 23:00 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -376,7 +376,7 @@ Rebuilds driver Auth claims and RTDB assignment mirrors from Firestore. Returns 
 
 ### `PUT /api/fleet/buses/:id`
 
-Body: `{ "name":"Campus Bus 1", "assignedRoutes":["route_01"] }`. Routes must exist; cannot remove a route used by an active ride or bound device. Only `id`, trimmed `name`, and deduplicated `assignedRoutes` are written; unrelated timestamps and metadata are preserved with a merge, and legacy `assignedRouteId` is explicitly deleted. Extra request fields never become bus fields. The same policy creates a new bus without accepting caller-supplied metadata. Updates driver authorization after save. Returns `{saved:true}`, 400/409/500.
+Body: `{ "name":"Campus Bus 1", "assignedRoutes":["route_01"] }`. Routes must be an array of safe IDs (a malformed list returns 400 without changing the vehicle) and must exist; cannot remove a route used by an active ride or bound device, or the last route while an operator is assigned (409). Only `id`, trimmed `name`, and deduplicated `assignedRoutes` are written; unrelated timestamps and metadata are preserved with a merge, and legacy `assignedRouteId` is explicitly deleted. Extra request fields never become bus fields. The same policy creates a new bus without accepting caller-supplied metadata. Updates driver authorization after save. Returns `{saved:true}`, 400/409/500.
 
 ### `DELETE /api/fleet/buses/:id`
 
@@ -388,7 +388,7 @@ Body: `{ "name":"…", "authUid":"…", "assignedBusId":"…" }` (`assignedBusId
 
 ### `DELETE /api/fleet/drivers/:id`
 
-Blocked by active ride. Deletes driver/mirror, demotes Auth account to passenger and revokes tokens. Returns `{deleted:true}` or 400/404/409/500.
+Blocked by active ride. Deletes driver/mirror, demotes Auth account to passenger and revokes tokens; an Auth account that no longer exists is skipped rather than demoted. Returns `{deleted:true}` or 400/404/409/500.
 
 ### `GET /api/analytics/fleet` — admin
 
