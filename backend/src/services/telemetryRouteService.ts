@@ -51,6 +51,13 @@ const rerouteProviderCircuit = new RerouteProviderCircuit();
 const MATCHED_POSITION_CONFIDENCE = 0.45;
 const MAX_ENCODED_POLYLINE_LENGTH = 500_000;
 
+/** GNSS heading is noise while stationary; send it to the provider only when moving. */
+function movingHeading(sample: TelemetryPayload): number | undefined {
+  return sample.speed >= 3 && sample.motionState === "moving" && Number.isFinite(sample.heading)
+    ? sample.heading
+    : undefined;
+}
+
 interface RouteStop extends LatLng {
   id: string;
 }
@@ -855,8 +862,10 @@ async function refreshDepartureRoute(
         : remainingRerouteStops(route.stops, direction, Number(live.currentStopIndex) || 0);
       const origin = claimedPlan.phase === "ready" ? ordered[0] : { lat: Number(live.lat), lng: Number(live.lng) };
       if (!origin || !remaining.length || !validLatLng(origin)) throw new Error("No departure itinerary");
+      const originHeading = claimedPlan.phase === "ready" ? undefined : movingHeading(sample);
       const geometry = await computeRouteGeometry(origin, remaining.at(-1)!, remaining.slice(0, -1), {
         routingPreference: "TRAFFIC_AWARE_OPTIMAL", timeoutMs: LIVE_REROUTE_TIMEOUT_MS,
+        ...(originHeading === undefined ? {} : { originHeading }),
       }).then(result => { finishProvider(true); return result; }, error => { finishProvider(false); throw error; });
       const published = await activateReroute(nodeKey, requestId, expectedVersion, sessionId, direction,
         assignment.routeId, sample, geometry, route.cacheGeneration, claimedPlan,
@@ -968,6 +977,7 @@ async function requestReroute(
       const destination = remainingStops[remainingStops.length - 1];
       const intermediates = remainingStops.slice(0, -1);
       if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) throw new Error("Route configuration changed before rerouting.");
+      const originHeading = movingHeading(sample);
       const geometry = await computeRouteGeometry(
         { lat: sample.lat, lng: sample.lng },
         destination,
@@ -975,6 +985,7 @@ async function requestReroute(
         {
           routingPreference: "TRAFFIC_AWARE",
           timeoutMs: LIVE_REROUTE_TIMEOUT_MS,
+          ...(originHeading === undefined ? {} : { originHeading }),
         },
       ).then(result => { finishProvider(true); return result; }, error => { finishProvider(false); throw error; });
       if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) {

@@ -191,6 +191,21 @@ describe("live routing publication", () => {
     expect(state.writes.indexOf(geometryPath)).toBeLessThan(state.writes.lastIndexOf(key));
   });
 
+  it("requests geometry from a moving bus with its heading, and from a stopped bus without one", async () => {
+    state.compute.mockRejectedValue(new Error("mock provider outage"));
+    publish(sample(1)); await drainTelemetryRouteProcessing();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    expect(state.compute.mock.calls[0][0]).toEqual({ lat: 23.002, lng: 72.003 });
+    expect(state.compute.mock.calls[0][3]).toMatchObject({ originHeading: 90 });
+
+    state.compute.mockReset(); state.compute.mockRejectedValue(new Error("mock provider outage"));
+    state.values.set(key, { ...assignment, sessionId: "parked", driverId: "driver", status: "active", tripState: "in_service", direction: "forward", directionState: "resolved", directionFirestoreSynced: true, currentStopIndex: 4 });
+    invalidateTelemetryRoute(assignment.routeId);
+    publish({ ...sample(2), speed: 0.5, heading: 270, motionState: "stopped" }); await drainTelemetryRouteProcessing();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    expect(state.compute.mock.calls[0][3]?.originHeading).toBeUndefined();
+  });
+
   it("discards an old outbound reroute when the return session starts", async () => {
     let resolve!: (value: unknown) => void;
     state.compute.mockImplementation(() => new Promise(done => { resolve = done; }));
