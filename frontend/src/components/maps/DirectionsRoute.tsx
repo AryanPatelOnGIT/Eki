@@ -103,8 +103,9 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
     repairedGeometry.direction === direction
       ? repairedGeometry.polyline
       : undefined;
+  // Repair is only a fallback: a later trusted route edit must replace it.
   const path = useMemo(() => {
-    return repairedPolyline
+    return repairedPolyline && storedPath.length < 2
       ? routeDisplayPath(repairedPolyline, stableStops, Boolean(routeId))
       : storedPath;
   }, [repairedPolyline, routeId, stableStops, storedPath]);

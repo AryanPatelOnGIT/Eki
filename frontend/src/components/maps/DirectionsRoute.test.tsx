@@ -114,3 +114,13 @@ it("keeps failed or corrupt repair unavailable", async () => {
   await waitFor(() => expect(state.request).toHaveBeenCalled());
   expect(ready).toHaveBeenLastCalledWith([]);
 });
+it("replaces a repaired fallback when the route later publishes trusted road geometry", async () => {
+  state.request.mockResolvedValue({ forwardPolyline: "_ekkC_omvLo}@o}@" });
+  const ready = vi.fn();
+  const stops = [{ lat: 23, lng: 72 }, { lat: 23.02, lng: 72.02 }];
+  const view = render(<DirectionsRoute routeId="edited" stops={stops} direction="forward" onGeometryReady={ready} />);
+  await waitFor(() => expect(ready).toHaveBeenLastCalledWith([{ lat: 23, lng: 72 }, { lat: 23.01, lng: 72.01 }]));
+  view.rerender(<DirectionsRoute routeId="edited" stops={stops} direction="forward" onGeometryReady={ready}
+    polyline="_ekkC_omvLo}@o}@o}@o}@" polylineQuality="HIGH_QUALITY" />);
+  expect(ready).toHaveBeenLastCalledWith([{ lat: 23, lng: 72 }, { lat: 23.01, lng: 72.01 }, { lat: 23.02, lng: 72.02 }]);
+});
