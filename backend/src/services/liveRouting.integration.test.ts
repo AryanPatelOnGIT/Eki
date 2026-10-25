@@ -31,6 +31,8 @@ import { drainTelemetryRouteProcessing, getRouteProcessingStatus, invalidateTele
 const assignment = { busId: "bus", routeId: "long-route" };
 const key = "activeBuses/bus_long-route";
 const stops = Array.from({ length: 100 }, (_, i) => ({ id: `s${i}`, lat: 23, lng: 72 + i / 1000 }));
+// A deviation reroute starts at the off-route bus fix used by sample().
+const fromBus = encodePolyline([{ lat: 23.002, lng: 72.003 }, ...stops.slice(4)]);
 
 function sample(seq: number): TelemetryPayload {
   return { lat: 23.002, lng: 72.003, speed: 20, heading: 90, gpsHdop: 2, motionState: "moving", seq, timestamp: Date.now(), deviceSentAt: Date.now() };
@@ -152,7 +154,7 @@ describe("live routing publication", () => {
   });
   it("does not publish an aged geometry pointer after a stall between storing geometry and the pointer transaction", async () => {
     const started = Date.now();
-    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
+    state.compute.mockResolvedValue({ encodedPolyline: fromBus, distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
     state.onGeometryWrite = () => { vi.spyOn(Date, "now").mockReturnValue(started + 181 * 24 * 60 * 60 * 1000); };
     try {
       publish(sample(1));
@@ -162,7 +164,7 @@ describe("live routing publication", () => {
     } finally { vi.restoreAllMocks(); }
   });
   it("discards a reroute pointer if route editing occurs during sibling publication", async () => {
-    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
+    state.compute.mockResolvedValue({ encodedPolyline: fromBus, distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
     state.onGeometryWrite = () => invalidateTelemetryRoute(assignment.routeId);
     publish(sample(1)); await drainTelemetryRouteProcessing();
     expect(state.writes.some(path => path.startsWith("activeRouteGeometry/"))).toBe(true);
@@ -212,7 +214,7 @@ describe("live routing publication", () => {
     publish(sample(1));
     await vi.waitFor(() => expect(state.compute).toHaveBeenCalledTimes(1));
     state.values.set(key, { ...state.values.get(key), sessionId: "return", direction: "reverse", routeSource: "configured", routeState: "ON_ROUTE" });
-    resolve({ encodedPolyline: encodePolyline(stops), distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
+    resolve({ encodedPolyline: fromBus, distanceMeters: 10000, duration: "1000s", polylineQuality: "HIGH_QUALITY" });
     await drainTelemetryRouteProcessing();
     expect(state.values.get(key)).toMatchObject({ sessionId: "return", direction: "reverse", routeSource: "configured" });
   });
