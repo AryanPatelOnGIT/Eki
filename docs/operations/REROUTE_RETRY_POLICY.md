@@ -36,7 +36,14 @@ Circuit state is local to each backend replica and resets on restart. It is a
 failure budget, not a global billing quota; a geometry operation may contain
 multiple provider calls for long itineraries. Per-ride RTDB backoff is shared
 across replicas, but this change does not introduce a distributed provider
-circuit or change crash recovery for a node stranded in `REROUTING`.
+circuit.
+
+A `REROUTING` claim whose `lastRerouteAttemptAt` is more than 60 seconds old
+(or missing) is treated as lost, for example after a replica restarted between
+claim and release. The next accepted fix evaluates adherence as `OFF_ROUTE`, so
+a still-deviating ride can claim a new request subject to the persisted backoff
+and provider circuit. A late result from the lost request fails its request-ID
+guard.
 
 The authenticated route-processing health status exposes provider failures,
 rejected admissions, probe state and remaining circuit delay under
