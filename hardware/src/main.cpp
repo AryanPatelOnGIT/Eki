@@ -101,7 +101,6 @@ void prepareTelemetryTlsKey();
 void releaseTelemetryTlsKey();
 
 namespace {
-constexpr double HDOP_REJECT_THRESHOLD = eki::telemetry::GNSS_HDOP_MAX;
 constexpr uint32_t GNSS_UTC_MAX_AGE_MS = 2000;
 constexpr uint32_t GNSS_EPOCH_REFERENCE_MAX_AGE_MS = 24UL * 60 * 60 * 1000;
 constexpr uint32_t NTP_CROSS_CHECK_INTERVAL_MS = 6UL * 60 * 60 * 1000;
@@ -1799,7 +1798,7 @@ TelemetryFix buildFixFromRmc() {
       gps.course.isValid(),
       gps.course.age()
     ) ||
-    (gps.hdop.isValid() && gps.hdop.hdop() > HDOP_REJECT_THRESHOLD)
+    (gps.hdop.isValid() && !eki::telemetry::gnssHdopIsAcceptable(gps.hdop.hdop()))
   ) {
     // Reject mixed-epoch GNSS fields as one sample; publishing only the fresh
     // subset would misrepresent receiver quality and motion at this position.

@@ -32,6 +32,12 @@ constexpr double GNSS_ERROR_MIN_M = 15.0;
 constexpr double GNSS_ERROR_MAX_M = 50.0;
 constexpr double GNSS_STATIONARY_SPEED_KMH = 2.5;
 constexpr double GNSS_HDOP_MAX = 4.0;
+
+// TinyGPS++ parses HDOP as a signed decimal. A negative value is not receiver
+// quality evidence and the telemetry API rejects it, so treat it as no fix.
+inline bool gnssHdopIsAcceptable(double hdop) {
+  return std::isfinite(hdop) && hdop >= 0.0 && hdop <= GNSS_HDOP_MAX;
+}
 constexpr uint32_t GNSS_MAX_TRANSITION_GAP_MS = 60UL * 1000;
 constexpr uint32_t GNSS_REACQUIRE_AFTER_MS = 5UL * 60 * 1000;
 // Telemetry is evaluated from the GNSS owner task at this cadence. Keep the
