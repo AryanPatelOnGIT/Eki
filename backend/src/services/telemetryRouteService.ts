@@ -272,6 +272,19 @@ function validRouteState(value: unknown): RouteAdherenceState | undefined {
     : undefined;
 }
 
+/**
+ * A live reroute finishes within the provider timeout. A claim older than this
+ * was lost (replica restart or failed release write), so it must not suppress
+ * every later reroute; a late result still fails its request-ID guard.
+ */
+const STRANDED_REROUTE_AFTER_MS = 60_000;
+function adherencePreviousState(live: Record<string, unknown>, now: number): RouteAdherenceState | undefined {
+  const state = validRouteState(live.routeState);
+  if (state !== "REROUTING") return state;
+  const startedAt = Number(live.lastRerouteAttemptAt);
+  return Number.isFinite(startedAt) && now - startedAt <= STRANDED_REROUTE_AFTER_MS ? state : "OFF_ROUTE";
+}
+
 export function previousMatch(
   value: unknown,
   routeVersion: number,
@@ -1122,7 +1135,7 @@ async function processTelemetryRoute(
       : undefined,
   );
   const adherence = evaluateRouteAdherence(
-    matchingContextChanged ? undefined : validRouteState(live?.routeState),
+    matchingContextChanged ? undefined : adherencePreviousState(live, Date.now()),
     matchingContextChanged || !Number.isInteger(live?.offRouteSampleCount)
       ? 0
       : Number(live?.offRouteSampleCount),

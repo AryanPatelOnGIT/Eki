@@ -89,6 +89,19 @@ describe("reroute scheduling with persisted backoff", () => {
     await tick();
     expect(state.values.get(key())).toMatchObject({ routeState: "REROUTING", rerouteRequestId: "new-request", routeVersion: 1 });
   });
+  it("recovers a ride stranded in REROUTING by a process that died mid-request", async () => {
+    // Claim committed, then the replica restarted before any failure/success write.
+    state.values.set(key(), { ...state.values.get(key()), routeState: "REROUTING", offRouteSampleCount: 2,
+      rerouteRequestId: "lost-request", lastRerouteAttemptAt: now - 5000 });
+    await tick();
+    expect(state.compute).not.toHaveBeenCalled();
+    expect(state.values.get(key())).toMatchObject({ routeState: "REROUTING", rerouteRequestId: "lost-request" });
+    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 1000, duration: "100s" });
+    now += 120_000; await tick();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    expect(state.values.get(key())).toMatchObject({ routeState: "ON_NEW_ROUTE", rerouteRequestId: null });
+  });
+
   it("reduces a minute of persistent failures from the legacy 12 attempts to 3", async () => {
     for (let elapsed = 0; elapsed < 60_000; elapsed += 1000) { await tick(); now += 1000; }
     expect(state.compute).toHaveBeenCalledTimes(3);
