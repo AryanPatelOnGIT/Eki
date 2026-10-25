@@ -59,7 +59,8 @@ export default function MessagingPanel({
   const [sending, setSending] = useState(false);
   const [rateLimitMsg, setRateLimitMsg] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const lastSeenCountRef = useRef(0);
+  // null until the first snapshot: history loaded on open is already seen.
+  const lastSeenCountRef = useRef<number | null>(null);
 
   // Messages belong to one session: after a session switch, prior-session
   // messages must not render as if they were the new session's chat (#47).
@@ -71,7 +72,7 @@ export default function MessagingPanel({
   const dialogRef = useDialogFocus<HTMLDivElement>(isOverlay, () => onClose?.());
 
   useEffect(() => {
-    lastSeenCountRef.current = 0;
+    lastSeenCountRef.current = null;
 
     if (!sessionId) return;
 
@@ -108,10 +109,14 @@ export default function MessagingPanel({
             // Count messages from others to surface unread badge
             if (onUnreadCountChange) {
               const othersCount = msgs.filter((m: Message) => m.senderId !== currentUserId).length;
-              if (othersCount > lastSeenCountRef.current) {
+              if (lastSeenCountRef.current !== null && othersCount > lastSeenCountRef.current) {
                 onUnreadCountChange(othersCount - lastSeenCountRef.current);
               }
-              lastSeenCountRef.current = othersCount;
+              // A partial cached snapshot must not become the baseline, or the
+              // server's older history would then be counted as new.
+              if (lastSeenCountRef.current !== null || !snapshot.metadata.fromCache) {
+                lastSeenCountRef.current = othersCount;
+              }
             }
 
             if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);

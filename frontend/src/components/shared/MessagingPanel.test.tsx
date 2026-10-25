@@ -49,6 +49,18 @@ describe("ride chat user workflows", () => {
     expect(screen.getByText("Administrator").parentElement?.textContent).toContain("Campus Team");
     expect(screen.getByText("Operator").parentElement?.textContent).toContain("Campus Driver");
   });
+  it("treats history loaded on open as seen and counts only later messages from others as unread", async () => {
+    const onUnreadCountChange = vi.fn();
+    panel({ onUnreadCountChange });
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    const message = (id: string, senderId: string) => ({ id, data: () => ({ from: "driver", senderId, text: id }) });
+    const history = [message("d1", "driver"), message("d2", "driver"), message("p1", "qa-passenger"), message("d3", "driver")];
+    act(() => mocks.listen.mock.calls[0][2]({ docs: history.slice(2), metadata: { fromCache: true } }));
+    act(() => mocks.listen.mock.calls[0][2]({ docs: history, metadata: { fromCache: false } }));
+    expect(onUnreadCountChange).not.toHaveBeenCalledWith(expect.any(Number));
+    act(() => mocks.listen.mock.calls[0][2]({ docs: [...history, message("d4", "driver")], metadata: { fromCache: false } }));
+    expect(onUnreadCountChange).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it.each(["<html>proxy warning</html>", "null", "{}"])("preserves the draft on an invalid success acknowledgement: %s", async body => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
     panel(); await send();
