@@ -96,7 +96,10 @@ router.post(
     const secret = parseDeviceAuthorization(req.get("authorization"));
     let encodedLength = Number.POSITIVE_INFINITY;
     try {
-      encodedLength = Buffer.byteLength(JSON.stringify(req.body), "utf8");
+      // Express leaves req.body undefined when the JSON parser skips a request
+      // (missing or non-JSON Content-Type); that is a shape error, not a 413.
+      const encoded: string | undefined = JSON.stringify(req.body);
+      encodedLength = encoded === undefined ? 0 : Buffer.byteLength(encoded, "utf8");
     } catch {
       // parseTelemetryValue returns the generic shape error below.
     }

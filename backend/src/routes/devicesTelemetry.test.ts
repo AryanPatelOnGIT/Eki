@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => ({
   result: { ok: true, duplicate: false } as IngestResult,
   diagnosticsAccepted: "accepted" as "accepted" | "credentials" | "unassigned",
   failure: undefined as Error | undefined,
+  realParser: false,
 }));
 
 vi.mock("../middleware/requireAdmin", () => ({
@@ -20,8 +21,10 @@ vi.mock("../middleware/requireAdmin", () => ({
 
 vi.mock("../lib/firebaseAdmin", () => ({ db: {} }));
 
-vi.mock("../services/telemetryPayload", () => ({
-  parseTelemetryValue: () => ({
+vi.mock("../services/telemetryPayload", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/telemetryPayload")>();
+  return {
+  parseTelemetryValue: (value: unknown, now?: number) => harness.realParser ? actual.parseTelemetryValue(value, now) : ({
     ok: true,
     value: {
       deviceSentAt: Date.now(),
@@ -34,7 +37,8 @@ vi.mock("../services/telemetryPayload", () => ({
       timestamp: Date.now(),
     },
   }),
-}));
+  };
+});
 
 vi.mock("../services/deviceTelemetryService", () => ({
   authenticateDeviceCredentials: async () => null,
@@ -85,6 +89,7 @@ beforeEach(() => {
   harness.result = { ok: true, duplicate: false };
   harness.diagnosticsAccepted = "accepted";
   harness.failure = undefined;
+  harness.realParser = false;
 });
 
 function sendTelemetry() {
@@ -169,6 +174,24 @@ describe("device telemetry HTTP responses", () => {
       error: "Telemetry rate limit exceeded.",
       retryAfterMs: 1_234,
     });
+  });
+
+  it.each([
+    ["text/plain", "{}"],
+    ["application/x-www-form-urlencoded", "lat=23"],
+    [undefined, undefined],
+  ])("rejects a %s body the JSON parser skipped as invalid, not oversized", async (contentType, body) => {
+    harness.realParser = true;
+    const response = await fetch(`${baseUrl}/api/devices/device_1/telemetry`, {
+      method: "POST",
+      headers: {
+        ...(contentType ? { "Content-Type": contentType } : {}),
+        Authorization: `Device ${"a".repeat(20)}`,
+      },
+      body,
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid telemetry payload." });
   });
 
   it("does not attach retry guidance to credential rejection", async () => {
