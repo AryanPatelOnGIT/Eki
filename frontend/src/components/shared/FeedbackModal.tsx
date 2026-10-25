@@ -69,7 +69,8 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
         }
         const lastSubmittedAt = Number(raw);
         const now = Date.now();
-        const remaining = ONE_DAY_MS - (now - lastSubmittedAt);
+        // A stamp from a clock that was ahead must not lock feedback beyond one day.
+        const remaining = Math.min(ONE_DAY_MS, ONE_DAY_MS - (now - lastSubmittedAt));
         setCooldownRemaining(Number.isFinite(lastSubmittedAt) && remaining > 0 ? remaining : 0);
       } catch {
         setCooldownRemaining(0);
@@ -149,6 +150,10 @@ export default function FeedbackModal({ userId, busId, driverId, sessionId, onCl
       if (err instanceof Error && "retryAfterMs" in err && typeof (err as { retryAfterMs?: number }).retryAfterMs === "number") {
         const remaining = (err as { retryAfterMs?: number }).retryAfterMs ?? 0;
         setCooldownRemaining(remaining);
+        // Persist the server cooldown so the minute refresh and a reopen keep it.
+        try {
+          localStorage.setItem(cooldownStorageKey, String(Date.now() - (ONE_DAY_MS - remaining)));
+        } catch {}
         setError(`Limit reached. Please try again in ${formatCooldown(remaining)}.`);
       } else {
         setError(feedbackErrorMessage(err, "Failed to send. Please try again."));

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import FeedbackModal from "./FeedbackModal";
 
@@ -62,6 +62,28 @@ describe("passenger feedback workflow", () => {
     await submitGeneral();
     expect(await screen.findByText(/Limit reached. Please try again in/)).toBeTruthy();
     expect(screen.queryByText("Thank you!")).toBeNull();
+  });
+  it("keeps the server cooldown after the minute refresh and on reopen", async () => {
+    store.submitFeedback.mockRejectedValue(Object.assign(new Error("limit"), { status: 429, retryAfterMs: 3_600_000 }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const { unmount } = render(<FeedbackModal userId="qa-passenger" onClose={vi.fn()} />);
+      await user.type(screen.getByRole("textbox"), "The route card should open reliably.");
+      await user.click(screen.getByRole("button", { name: "Submit Feedback" }));
+      await screen.findByText(/Limit reached/);
+      await act(async () => { vi.advanceTimersByTime(61_000); });
+      expect((screen.getByRole("button", { name: /^Wait/ }) as HTMLButtonElement).disabled).toBe(true);
+      unmount();
+      render(<FeedbackModal userId="qa-passenger" onClose={vi.fn()} />);
+      expect((screen.getByRole("button", { name: /^Wait/ }) as HTMLButtonElement).disabled).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it("never locks feedback for longer than one day after a device clock jump", () => {
+    localStorage.setItem("feedbackCooldown:qa-passenger", String(Date.now() + 365 * 86_400_000));
+    render(<FeedbackModal userId="qa-passenger" onClose={vi.fn()} />);
+    const label = screen.getByRole("status").textContent ?? "";
+    expect(Number(/Wait (\d+)h/.exec(label)?.[1] ?? 0)).toBeLessThanOrEqual(24);
   });
   it("supports close and Escape without submitting an empty form", async () => {
     const user = userEvent.setup(); const close = vi.fn();
