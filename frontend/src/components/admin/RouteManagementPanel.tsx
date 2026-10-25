@@ -17,7 +17,7 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import AlertModal from "@/components/ui/AlertModal";
 import { MAP_OPTIONS, MAPS_MAP_ID, DEFAULT_CENTER } from "@/config/maps";
 import { errorMessage } from "@/lib/errors";
-import { ApiError, apiRequest, acknowledgedField } from "@/lib/apiClient";
+import { ApiError, apiRequest, acknowledgedField, isApiRecord } from "@/lib/apiClient";
 import { placeSearchErrorMessage } from "@/lib/placeSearchErrors";
 import { newRouteSaveId, saveRoute } from "@/lib/routeSaveClient";
 import {
@@ -75,6 +75,7 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
           },
         );
         if (controller.signal.aborted) return;
+        if (!isApiRecord(payload)) throw new Error("Place search is temporarily unavailable.");
         const results = Array.isArray(payload.results) ? payload.results : [];
         setPredictions(results);
         setSearchNotice(results.length === 0 ? "No matching places found. Try a more specific search." : "");
