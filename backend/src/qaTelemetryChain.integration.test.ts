@@ -18,6 +18,8 @@ import { hashDeviceSecret, invalidateDeviceCredentialCache } from "./services/de
 import { startTelemetryRouteWatcher, drainTelemetryRouteProcessing } from "./services/telemetryRouteService";
 import { startTripStateEngine } from "./services/tripStateEngine";
 import { startLiveBusProjection } from "./services/liveBusProjection";
+import { drainAutomaticServiceAdmission } from "./services/automaticServiceAdmission";
+import { drainDurableRideRecovery } from "./services/durableRideRecovery";
 import { createStaleBusSweeper } from "./services/staleBusSweeper";
 import { WorkerFence, WORKER_LEASE_ID } from "./lib/workerFence";
 import { encodePolyline } from "./lib/polylineUtils";
@@ -55,7 +57,7 @@ integration("authenticated telemetry to durable lifecycle and public emulator pr
   });
   beforeEach(async () => {
     epoch = Date.now() - 45000;
-    for (const name of ["devices", "buses", "drivers", "routes", "ride_sessions", "active_rides", "completed_trips", "_active_bus_locks", "bus_locations", "_worker_leases"])
+    for (const name of ["devices", "buses", "drivers", "routes", "ride_sessions", "_ride_session_creation_keys", "active_rides", "completed_trips", "_active_bus_locks", "bus_locations", "_worker_leases"])
       await state.firestore!.recursiveDelete(state.firestore!.collection(name));
     await state.realtime!.ref().set(null); invalidateDeviceCredentialCache(device);
     await state.firestore!.collection("devices").doc(device).set({ busId: bus, routeId: route, enabled: true, secretHash: await hashDeviceSecret(secret) });
@@ -67,6 +69,94 @@ integration("authenticated telemetry to durable lifecycle and public emulator pr
     stopWatcher = startTelemetryRouteWatcher();
     stopEngine = fence.run(startTripStateEngine); stopProjection = fence.run(startLiveBusProjection);
   }, 30000);
+  it("automatically admits one stationary service from authenticated telemetry without a start request", async () => {
+    await state.firestore!.collection("drivers").doc("qa_auto_driver").set({assignedBusId:bus});
+    const stopped = (seq:number) => ({...fix(seq,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()});
+    expect((await send(stopped(1))).status).toBe(202);
+    await vi.waitFor(async () => {
+      const live=(await state.realtime!.ref(node).get()).val();
+      expect(live?.sessionId).toEqual(expect.any(String));
+      expect(live).toMatchObject({driverId:"qa_auto_driver",status:"active",direction:"forward"});
+    },{timeout:10000});
+    const original=(await state.realtime!.ref(node).get()).val().sessionId;
+    expect((await send(stopped(2))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(publicNode).get()).val()?.sessionId).toBe(original),{timeout:10000});
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(1);
+    expect((await state.firestore!.collection("_active_bus_locks").doc(bus).get()).data()?.sessionId).toBe(original);
+  },20000);
+  it("repairs an interrupted automatic setup on the next fresh fix", async () => {
+    await state.firestore!.collection("drivers").doc("qa_setup_driver").set({assignedBusId:bus});
+    const stopped=(seq:number)=>({...fix(seq,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()});
+    expect((await send(stopped(1))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.sessionId).toEqual(expect.any(String)),{timeout:10000});
+    await drainAutomaticServiceAdmission();
+    const id=(await state.realtime!.ref(node).get()).val().sessionId;
+    await state.firestore!.collection("ride_sessions").doc(id).set({status:"pending"},{merge:true});
+    await state.firestore!.collection("active_rides").doc(`${bus}_${route}`).delete();
+    await state.realtime!.ref(node).update({serviceSetupPending:true});
+    expect((await send(stopped(2))).status).toBe(202);
+    await vi.waitFor(async()=>{
+      expect((await state.realtime!.ref(node).get()).val()?.serviceSetupPending).toBe(false);
+      expect((await state.firestore!.collection("active_rides").doc(`${bus}_${route}`).get()).data()?.sessionId).toBe(id);
+    },{timeout:10000});
+  },25000);
+  it("admits a repaired assignment on the next authenticated fix after credential invalidation", async () => {
+    const stopped=(seq:number)=>({...fix(seq,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()});
+    expect((await send(stopped(1))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.automaticServiceState).toBe("assignment_required"),{timeout:10000});
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(0);
+    await state.firestore!.collection("drivers").doc("qa_repaired_driver").set({assignedBusId:bus});
+    invalidateDeviceCredentialCache(device);
+    expect((await send(stopped(2))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.sessionId).toEqual(expect.any(String)),{timeout:10000});
+  },25000);
+  it("keeps a stationary midpoint session pending and recovers the same session after RTDB loss", async () => {
+    await state.firestore!.collection("drivers").doc("qa_midpoint_driver").set({assignedBusId:bus});
+    const stopped=(seq:number)=>({...fix(seq,0,stops[1].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()});
+    expect((await send(stopped(1))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()).toMatchObject({directionState:"pending",tripState:"pre_departure",currentStopIndex:0}),{timeout:10000});
+    const id=(await state.realtime!.ref(node).get()).val().sessionId;
+    expect(id).toEqual(expect.any(String));
+    await state.realtime!.ref(node).remove();
+    expect((await send(stopped(2))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.sessionId).toBe(id),{timeout:10000});
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(1);
+  },25000);
+  it.each(["paused","ambiguous","poor-fix"])("does not automatically start an unsafe %s service", async kind => {
+    await state.firestore!.collection("drivers").doc("qa_guard_driver").set({assignedBusId:bus});
+    if(kind==="paused")await state.firestore!.collection("bus_locations").doc(bus).set({automaticServicePaused:true});
+    if(kind==="ambiguous")await state.firestore!.collection("drivers").doc("qa_other_driver").set({assignedBusId:bus});
+    const sample={...fix(1,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now(),gpsHdop:kind==="poor-fix"?9:1};
+    expect((await send(sample)).status).toBe(202);
+    await drainDurableRideRecovery(); await drainAutomaticServiceAdmission();
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(0);
+    expect((await state.realtime!.ref(node).get()).val()?.sessionId).toBeUndefined();
+  },15000);
+  it("exposes a terminal automatic intent for explicit resume without resurrecting it", async () => {
+    await state.firestore!.collection("drivers").doc("qa_terminal_auto_driver").set({assignedBusId:bus});
+    const stopped=(seq:number)=>({...fix(seq,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()});
+    expect((await send(stopped(1))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.sessionId).toEqual(expect.any(String)),{timeout:10000});
+    await drainAutomaticServiceAdmission();
+    const id=(await state.realtime!.ref(node).get()).val().sessionId;
+    await state.firestore!.collection("ride_sessions").doc(id).set({status:"interrupted"},{merge:true});
+    await state.firestore!.collection("active_rides").doc(`${bus}_${route}`).delete();
+    await state.firestore!.collection("_active_bus_locks").doc(bus).delete();
+    await state.realtime!.ref(node).remove();
+    expect((await send(stopped(2))).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.automaticServiceState).toBe("paused"),{timeout:10000});
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(1);
+    expect((await state.firestore!.collection("ride_sessions").doc(id).get()).data()?.status).toBe("interrupted");
+  },25000);
+  it("does not wait forever for an already failed consumed return", async () => {
+    await state.firestore!.collection("drivers").doc("qa_failed_return_driver").set({assignedBusId:bus});
+    await state.firestore!.collection("ride_sessions").doc("qa_failed_return").set({status:"failed",busId:bus,routeId:route});
+    await state.firestore!.collection("bus_locations").doc(bus).set({terminalJourney:{consumedBy:"qa_failed_return"}});
+    const sample={...fix(1,0,stops[0].lat),motionState:"stopped",speed:0,timestamp:Date.now(),deviceSentAt:Date.now()};
+    expect((await send(sample)).status).toBe(202);
+    await vi.waitFor(async()=>expect((await state.realtime!.ref(node).get()).val()?.automaticServiceState).toBe("paused"),{timeout:10000});
+    expect((await state.firestore!.collection("ride_sessions").get()).docs).toHaveLength(1);
+  },15000);
   it("recovers a qualified terminal after actual stale deletion and a leader restart, exactly once", async () => {
     const driverId = "qa_terminal_driver";
     await state.firestore!.collection("drivers").doc(driverId).set({ assignedBusId: bus });
@@ -111,6 +201,8 @@ integration("authenticated telemetry to durable lifecycle and public emulator pr
     expect((await state.firestore!.collection("bus_locations").doc(bus).get()).data()!.terminalJourney.consumedBy).toBe(returnSession.id);
   }, 75000);
   afterEach(async () => {
+    await drainDurableRideRecovery();
+    await drainAutomaticServiceAdmission();
     await drainTelemetryRouteProcessing();
     await stopEngine?.(); await stopProjection?.(); stopWatcher?.();
     stopEngine = undefined; stopProjection = undefined; stopWatcher = undefined;

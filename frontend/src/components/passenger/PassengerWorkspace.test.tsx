@@ -30,6 +30,11 @@ vi.mock("@/components/shared/FeedbackModal", () => ({ default: () => <div>QA fee
 beforeEach(() => setScenario("pending"));
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("passenger workspace navigation", () => {
+  it("labels an initial connection separately from reconnecting", () => {
+    const resume=vi.spyOn(fixtures,"useRTDBResume").mockReturnValue({isResuming:true,resumeGeneration:0,connectionGeneration:0,markSnapshotReceived:()=>{}});
+    try { render(<PassengerWorkspace />);expect(screen.getByText("Connecting to live bus data...")).toBeTruthy(); }
+    finally {resume.mockRestore();}
+  });
   it("acknowledges a ready empty catalog without waiting for a nonexistent bus subscription", async () => {
     setScenario("empty");
     const received = vi.fn();

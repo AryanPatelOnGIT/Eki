@@ -39,7 +39,7 @@ describe("passenger bus availability", () => {
   });
 
   it.each([
-    { timestamp: now - 120_000 },
+    { timestamp: now - 300_000 },
     { deviceState: "offline" },
     { routeId: "" },
   ])("hides stale, offline, or unassigned devices: %o", (overrides) => {

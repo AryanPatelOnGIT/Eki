@@ -14,7 +14,7 @@ let scenario = "pending";
 const subscribe = (fn: () => void) => { subscribers.add(fn); return () => { subscribers.delete(fn); }; };
 export function setScenario(next: string) {
   scenario = next;
-  const bus = fixtureBus(next === "pending" ? null : next === "reverse" ? "reverse" : "forward");
+  const bus = fixtureBus(next === "pending" || next === "reconnecting" ? null : next === "reverse" ? "reverse" : "forward");
   snapshot = next === "empty" ? {} : next === "device" ? { bus: { busId: bus.busId, routeId: bus.routeId, deviceState: "online", status: "offline", timestamp: Date.now(), lat: 23.004, lng: 72.004, heading: 0, speed: 0, motionState: "stopped" } } : next === "multiple" ? { bus, second: fixtureBus("reverse", "qa-session-2", "qa-bus-2") } : { bus };
   if (next === "completed") snapshot = { bus: { ...bus, tripState: "completed" } };
   if (next === "two-routes") snapshot = { bus, second: { ...fixtureBus("reverse", "qa-session-B", "qa-bus-B"), routeId: "qa-route-2" } };
@@ -43,7 +43,7 @@ export function useSettings() {
   } };
 }
 const markSnapshotReceived = () => {};
-export function useRTDBResume() { return { isResuming: false, resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
+export function useRTDBResume() { const current = useScenario(); return { isResuming: current === "reconnecting", resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
 
 export function subscribeLiveBusesByRoute(routeId: string, listener: (value: Record<string, unknown>) => void) {
   return subscribeLiveBusChanges((change: unknown) => {

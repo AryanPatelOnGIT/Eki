@@ -370,7 +370,8 @@ describe("production security configuration", () => {
     expect(passengerNormalizer).toContain(
       "hasValidBusCoordinates(candidate.lat, candidate.lng)",
     );
-    expect(operations).toContain("assignedRouteIds(selectedBus)");
+    expect(operations).toContain("operators.length !== 1");
+    expect(workspaceFile("backend/src/services/automaticServiceAdmission.ts")).toContain("routes.includes(assignment.routeId)");
   });
 
   it("removes the driver workspace and keeps operations in the admin surface", () => {
@@ -774,7 +775,7 @@ describe("production security configuration", () => {
     const passengerBoarding = workspaceFile(
       "frontend/src/components/passenger/PassengerBoardingView.tsx",
     );
-    const shifts = workspaceFile("backend/src/routes/shifts.ts");
+    const shifts = workspaceFile("backend/src/routes/shifts.ts") + workspaceFile("backend/src/services/rideSessionStart.ts");
     const engine = workspaceFile("backend/src/services/tripStateEngine.ts");
 
     expect(server).toContain('app.use("/api/shifts"');
@@ -788,16 +789,16 @@ describe("production security configuration", () => {
     expect(shifts).toContain("inferRideDirectionFromTelemetry");
     expect(shifts).toContain("directionState");
     expect(operations).not.toContain('ariaLabel="Travel direction"');
-    expect(operations).toContain("Travel direction is inferred from fresh stopped GPS");
-    expect(operations).toContain("directionLabelState(inferredDirection");
-    expect(operations).toContain("direction pending");
+    expect(operations).toContain("Services start automatically");
+    expect(shifts).toContain("inferRideDirectionFromTelemetry");
+    expect(operations).toContain("Direction resolves at an endpoint");
     expect(shifts).toContain("inferRideDirectionFromTelemetry");
     expect(engine).toContain("maybeArmAutomaticTurnaround");
     expect(passengerBoarding).toContain("Ride in service");
   });
 
   it("keeps terminal ride-history deletion behind the admin API", () => {
-    const shifts = workspaceFile("backend/src/routes/shifts.ts");
+    const shifts = workspaceFile("backend/src/routes/shifts.ts") + workspaceFile("backend/src/services/rideSessionStart.ts");
     const deletion = workspaceFile("backend/src/services/rideHistoryDeletion.ts");
 
     expect(shifts).toContain('router.delete("/:sessionId/history", requireAdmin');
@@ -842,12 +843,12 @@ describe("production security configuration", () => {
       "backend/src/services/deviceTelemetryService.ts",
     );
     expect(telemetry).toContain("durableRideRestores");
-    expect(telemetry).toContain("scheduleDurableRideRestore(assignment, sample, persisted.claimId, persisted.recoverTerminal)");
+    expect(telemetry).toContain("scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal,");
     expect(telemetry).not.toContain("await restoreDurableRide(assignment, sample)");
   });
 
   it("serializes one active session per bus and makes completion session-safe", () => {
-    const shifts = workspaceFile("backend/src/routes/shifts.ts");
+    const shifts = workspaceFile("backend/src/routes/shifts.ts") + workspaceFile("backend/src/services/rideSessionStart.ts");
     const engine = workspaceFile("backend/src/services/tripStateEngine.ts");
     const reconciler = workspaceFile(
       "backend/src/services/abandonedRideReconciler.ts",

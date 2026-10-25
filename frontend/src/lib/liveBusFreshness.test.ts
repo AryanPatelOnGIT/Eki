@@ -1,12 +1,16 @@
 import { liveBusFreshnessTimestamp } from "./liveBusFreshness";
 import { describe, expect, it } from "vitest";
 import {
+  BUS_EXPIRY_MS,
   SIGNAL_LOST_MS,
   isLiveBusSignalLost,
   isLiveBusTimestamp,
 } from "./liveBusFreshness";
 
 describe("live bus freshness", () => {
+  it("uses the same default five-minute expiry in local and deployed builds", () => {
+    expect(BUS_EXPIRY_MS).toBe(300000);
+  });
   const now = 1_800_000_000_000;
 
   it("uses the shared signal-loss threshold", () => {

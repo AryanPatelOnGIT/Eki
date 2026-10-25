@@ -17,7 +17,7 @@ import {
 } from "@/lib/passengerLiveBus";
 import { passengerRerouteNotice } from "@/lib/passengerRouteStatus";
 
-import { WifiOff, Navigation } from "lucide-react";
+import { WifiOff, Navigation, Route as RouteOverviewIcon } from "lucide-react";
 import { MAP_OPTIONS, MAPS_MAP_ID } from "@/config/maps";
 import {
   directionsMatch,
@@ -116,30 +116,49 @@ function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
   hasBus: boolean;
 }) {
   const map = useMap();
+  const [bottomInset, setBottomInset] = useState(160);
+  useEffect(() => {
+    const viewport = map?.getDiv?.();
+    if (!viewport) return;
+    const sheet = viewport.closest("[data-passenger-map]")?.querySelector<HTMLElement>("[data-map-sheet]");
+    const measure = () => {
+      const bounds = viewport.getBoundingClientRect();
+      const overlay = sheet?.getBoundingClientRect();
+      const overlap = overlay ? Math.max(0, bounds.bottom - Math.max(bounds.top, overlay.top)) : 0;
+      setBottomInset(Math.round(Math.min(bounds.height * 0.65, overlap + 24)));
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(viewport);
+    if (sheet) observer?.observe(sheet);
+    sheet?.addEventListener("transitionend", measure);
+    return () => { observer?.disconnect(); sheet?.removeEventListener("transitionend", measure); };
+  }, [map]);
   const fittedStage = useRef<string | null>(null);
   useEffect(() => {
     if (!map || !isCentered) return;
     if (previewPoints) {
       // Fit once for the route, and once when its first GPS fix arrives.
       // Subsequent fixes must not repeatedly zoom or override a manual drag.
-      const stage = hasBus ? "bus" : "route";
+      const stage = `${hasBus ? "bus" : "route"}:${bottomInset}`;
       if (fittedStage.current === stage) return;
-      const points = [...previewPoints, ...(hasBus && target ? [target] : [])]
+      const points = previewPoints
         .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
       if (points.length === 0) return;
       const bounds = points.reduce((result, point) => ({
         north: Math.max(result.north, point.lat), south: Math.min(result.south, point.lat),
         east: Math.max(result.east, point.lng), west: Math.min(result.west, point.lng),
       }), { north: -Infinity, south: Infinity, east: -Infinity, west: Infinity });
-      map.fitBounds(bounds, { top: 220, bottom: 160, left: 48, right: 72 });
+      map.fitBounds(bounds, { top: 32, bottom: bottomInset, left: 32, right: 32 });
       fittedStage.current = stage;
       return;
     }
     if (isCentered && target && map) {
       map.panTo(target);
-      map.setZoom(16);
+      if (fittedStage.current !== "follow") map.setZoom(16);
+      fittedStage.current = "follow";
     }
-  }, [isCentered, target, map, previewPoints, hasBus]);
+  }, [isCentered, target, map, previewPoints, hasBus, bottomInset]);
   return null;
 }
 
@@ -176,7 +195,8 @@ function PassengerMapInner({
   const [geolocationNotice, setGeolocationNotice] = useState<string | null>(null);
   const [liveReadFailed, setLiveReadFailed] = useState(false);
   const [isCentered, setIsCentered] = useState(true);
-  const [focusBus, setFocusBus] = useState(false);
+  const [focusBus, setFocusBus] = useState(!preview);
+  const [inspectedStopId, setInspectedStopId] = useState<string | null>(null);
   const arrivalTimestampsRef = useRef<Record<string, number>>({});
   const routeStops = useMemo(() => {
     return route.stops?.map(s => ({ lat: s.lat, lng: s.lng })) ?? [];
@@ -474,21 +494,22 @@ function PassengerMapInner({
   }, [firstBusMarker.position, mapCenter]);
 
   return (
-    <>
+    <div data-passenger-map className="relative h-full w-full">
+      <div className="pointer-events-none absolute left-4 right-20 top-4 z-40 flex flex-col gap-2">
       {liveReadFailed && (
-        <div className="absolute top-10 left-4 right-4 z-50 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
+        <div className="rounded-xl px-4 py-2.5 text-[12px] font-semibold"
           style={{ background: "var(--status-warning-bg)", color: "var(--status-warning)" }} role="alert">
           Live bus updates are unavailable. Check your connection and reload to retry.
         </div>
       )}
-      {preview && buses.size === 0 && (
-        <div className="absolute top-[190px] left-4 right-4 z-40 rounded-xl bg-zinc-950/90 p-3 text-sm" role="status">
-          Waiting for a valid GPS fix. The configured route remains available.
+      {preview && buses.size === 0 && !liveReadFailed && (
+        <div className="rounded-xl bg-zinc-950/90 p-3 text-sm" role="status">
+          Waiting for live location. The configured route remains available.
         </div>
       )}
       {/* Telemetry silence does not identify a receiver or network failure. */}
       {!liveReadFailed && signalLostBuses.length > 0 && (
-        <div className="absolute top-10 left-4 right-4 z-50 animate-slide-down" role="status" aria-live="polite">
+        <div role="status" aria-live="polite">
           <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
             style={{ 
               background: "var(--status-warning-bg)", 
@@ -506,7 +527,7 @@ function PassengerMapInner({
         </div>
       )}
       {!liveReadFailed && rerouteNotice && signalLostBuses.length === 0 && (
-        <div className="absolute top-10 left-4 right-4 z-50" role="status">
+        <div role="status">
           <div
             className="flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
             style={{
@@ -521,7 +542,7 @@ function PassengerMapInner({
         </div>
       )}
       {!liveReadFailed && geolocationNotice && signalLostBuses.length === 0 && !rerouteNotice && (
-        <div className="absolute top-10 left-4 right-4 z-50" role="status">
+        <div role="status">
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
             style={{
@@ -536,6 +557,7 @@ function PassengerMapInner({
         </div>
       )}
 
+      </div>
       <div className="absolute inset-0 z-0" style={{ background: "var(--surface-0)" }} onPointerDown={() => setIsCentered(false)} onTouchStart={() => setIsCentered(false)}>
         <GoogleMap
           mapId={MAPS_MAP_ID}
@@ -545,7 +567,7 @@ function PassengerMapInner({
           {...MAP_OPTIONS}
         >
           <MapCenterer target={centerTarget} isCentered={isCentered}
-            previewPoints={preview && !focusBus ? (routePath.length ? routePath : routeStops) : undefined}
+            previewPoints={!focusBus ? (routePath.length ? routePath : routeStops) : undefined}
             hasBus={Boolean(firstBusMarker.position)} />
           <DirectionsRoute
             key={`${route.id}:${route.rideDirection}:configured`}
@@ -594,67 +616,31 @@ function PassengerMapInner({
             <BusMarker key={bus.busId} bus={bus} signalLost={bus.deviceState !== "online" || isLiveBusSignalLost(liveBusFreshnessTimestamp(bus))} />
           ))}
 
-          {/* Stop markers */}
+          {/* Ordinary stops stay compact; labels are reserved for the current selection. */}
           {route.stops?.map((stop, i) => {
             const isTarget = stop.id === selectedDestinationStopId;
             const isPast = activeBusStopIndex !== undefined && i < activeBusStopIndex;
-            const dotColor = isPast ? "#71717a" : "var(--accent)";
-            
-            // Native halo text style (White text, thick black halo)
-            const labelStyle: React.CSSProperties = {
-              marginTop: 4,
-              color: "#ffffff",
-              fontSize: isTarget ? 11 : 9.5,
-              fontWeight: 800,
-              whiteSpace: "nowrap",
-              textShadow: "2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000, 1px 1px #000, -1px -1px #000, 1px -1px #000, -1px 1px #000, 0 4px 8px rgba(0,0,0,0.8)",
-              zIndex: 50
-            };
-
-            return (
-              <AdvancedMarker key={`stop-${stop.id || i}`} position={{ lat: stop.lat, lng: stop.lng }}>
-                {isPast ? (
-                  <div title={`${stop.name} — passed`} aria-label={`${stop.name} — passed`} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, background: dotColor, opacity: 0.6, borderRadius: "50%" }}>
-                    <span style={{ color: "#ffffff", fontWeight: 800, fontSize: 7 }}>{stopLabel(i)}</span>
-                  </div>
-                ) : isTarget ? (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <div style={{ position: "absolute", top: 2, width: 26, height: 26, background: dotColor, borderRadius: "50%", animation: "ripple 2s infinite" }} />
-                    <div style={{ width: 26, height: 26, background: dotColor, border: `3.5px solid #000000`, borderRadius: "50%", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.5)" }}>
-                      <span style={{ color: "#ffffff", fontWeight: 900, fontSize: 12 }}>{stopLabel(i)}</span>
-                    </div>
-                    <span style={labelStyle}>
-                      {stop.shortName}
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <div style={{ width: 20, height: 20, background: dotColor, border: `3px solid #000000`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 4px rgba(0,0,0,0.4)" }}>
-                      <span style={{ color: "#ffffff", fontWeight: 800, fontSize: 9 }}>{stopLabel(i)}</span>
-                    </div>
-                    <span style={labelStyle}>
-                      {stop.shortName}
-                    </span>
-                  </div>
-                )}
-              </AdvancedMarker>
-            );
+            const showLabel = isTarget || i === activeBusStopIndex || stop.id === inspectedStopId;
+            return <AdvancedMarker key={`stop-${stop.id || i}`} position={{lat:stop.lat,lng:stop.lng}} anchorLeft="-50%" anchorTop="-50%">
+              <button type="button" aria-label={`Show stop ${stop.name}`} title={`${stop.name}${isPast ? " — passed" : ""}`}
+                onClick={() => setInspectedStopId(stop.id)} onFocus={() => setInspectedStopId(stop.id)}
+                className="relative flex size-11 items-center justify-center" style={{opacity:isPast ? 0.6 : 1}}>
+                <span aria-label={isPast ? `${stop.name} — passed` : undefined} className="flex size-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white shadow-sm"
+                  style={{background:isPast ? "#71717a" : "var(--accent)",outline:isTarget ? "2px solid #18181b" : undefined}}>{stopLabel(i)}</span>
+                {showLabel && <span className="absolute top-10 max-w-40 truncate rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-semibold text-zinc-900 shadow-sm">{stop.shortName || stop.name}</span>}
+              </button>
+            </AdvancedMarker>;
           })}
         </GoogleMap>
       </div>
 
-      <style>{`
-        @keyframes ripple {
-          0% { transform: scale(1); opacity: 0.6; }
-          70% { transform: scale(3.5); opacity: 0; }
-          100% { transform: scale(3.5); opacity: 0; }
-        }
-      `}</style>
 
-      <div className="absolute top-[220px] right-4 z-40">
+
+      <div className="absolute top-4 right-4 z-40 flex flex-col gap-2">
         <button
+          disabled={!firstBusMarker.position}
           onClick={() => { setFocusBus(true); setIsCentered(true); }}
-          className="flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 border active:scale-95 shadow-lg"
+          className="flex size-12 items-center justify-center rounded-xl border shadow-lg disabled:opacity-40"
           style={{
             background: isCentered ? "rgba(59, 130, 246, 0.15)" : "var(--surface-2)",
             borderColor: isCentered ? "rgba(59, 130, 246, 0.3)" : "var(--border-default)",
@@ -664,6 +650,10 @@ function PassengerMapInner({
           aria-label="Center on bus"
         >
           <Navigation className="w-5 h-5" fill={isCentered ? "currentColor" : "none"} />
+        </button>
+        <button type="button" aria-label="Show route overview" onClick={() => {setFocusBus(false);setIsCentered(true);}}
+          className="flex size-12 items-center justify-center rounded-xl border border-zinc-500 bg-zinc-950 text-white shadow-lg">
+          <RouteOverviewIcon className="size-5" aria-hidden="true" />
         </button>
       </div>
 
@@ -678,7 +668,7 @@ function PassengerMapInner({
         aggregateArrivals={aggregateArrivals}
         geometryUnavailable={geometryUnavailable}
       />
-    </>
+    </div>
   );
 }
 

@@ -2,6 +2,33 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { decodePolyline } from "../../../frontend/src/lib/polyline";
 const probe = JSON.parse(readFileSync("artifacts/routing-provider/result.json", "utf8"));
+
+test.describe("mobile real Maps",()=>{
+  test.use({viewport:{width:360,height:800},hasTouch:true});
+  test("keeps the passenger marker and stop controls usable at phone width",async({page},info)=>{
+    const errors:string[]=[],blocked:string[]=[];
+    page.on("pageerror",error=>errors.push(error.message.replace(/AIza[\w-]+/g,"[redacted]")));
+    await page.route("**/*",async route=>{
+      const u=new URL(route.request().url());
+      if(["127.0.0.1","localhost"].includes(u.hostname)&&u.port==="3163")return route.continue();
+      if(["maps.googleapis.com","mapsresources-pa.googleapis.com","maps.gstatic.com","fonts.googleapis.com","fonts.gstatic.com"].includes(u.hostname))return route.continue();
+      blocked.push(u.hostname);return route.abort();
+    });
+    await page.goto("/");
+    const passenger=page.getByRole("region",{name:"Eki passenger map",exact:true});
+    await passenger.scrollIntoViewIfNeeded();
+    await expect.poll(async()=>page.evaluate(()=>(window as any).__ekiInAppMaps?.snapshot().maps.some((m:any)=>m.view==="Eki passenger map"&&m.tilesLoaded)??false),{timeout:30000}).toBe(true);
+    const center=passenger.getByRole("button",{name:"Center on bus"});
+    await center.scrollIntoViewIfNeeded();
+    expect(await center.evaluate(el=>{const r=el.getBoundingClientRect(),top=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return top===el||el.contains(top);})).toBe(true);
+    await center.click();
+    await expect.poll(async()=>page.evaluate(()=>(window as any).__ekiInAppMaps.snapshot().maps.find((m:any)=>m.view==="Eki passenger map")?.zoom)).toBe(16);
+    await expect(passenger.getByRole("button",{name:/Show stop/}).first()).toBeAttached();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+    await passenger.screenshot({path:info.outputPath("passenger-phone-real-maps.png")});
+    expect(errors).toEqual([]);expect(blocked).toEqual([]);
+  });
+});
 test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus) await page.screenshot({ path: info.outputPath("failed-map-view.png"), fullPage: true }).catch(() => {});
   const snapshot = await page.evaluate(() => (window as any).__ekiInAppMaps?.snapshot()).catch(() => null);
@@ -19,7 +46,7 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
     const url = new URL(request.request().url());
     if (["127.0.0.1", "localhost"].includes(url.hostname) && url.port === "3163") return request.continue();
     // Real Maps SDK/tiles/traffic only. No Firebase, Eki backend, or new Routes calls.
-    if (url.hostname === "maps.googleapis.com" || url.hostname === "maps.gstatic.com" ||
+    if (url.hostname === "maps.googleapis.com" || url.hostname === "mapsresources-pa.googleapis.com" || url.hostname === "maps.gstatic.com" ||
         url.hostname.endsWith(".googleapis.com") && /^(?:maps|khms\d*|streetviewpixels-pa)\./.test(url.hostname) ||
         ["fonts.googleapis.com", "fonts.gstatic.com"].includes(url.hostname)) {
       providers.set(url.hostname, (providers.get(url.hostname) ?? 0) + 1);
@@ -39,7 +66,9 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
     for (const view of ["Eki passenger map", "Eki admin map"]) {
       await expect.poll(async () => (await sdk()).lines.filter((line: any) => line.view === view && JSON.stringify(line.path) === JSON.stringify(expected)).length).toBe(2);
       const lines = (await sdk()).lines.filter((line: any) => line.view === view);
-      expect(lines.filter((line: any) => line.color === "#71717a").map((line: any) => line.path)).toEqual([expected]);
+      // The complete untraveled itinerary is green; gray is reserved for passed legs.
+      expect(lines.filter((line: any) => line.color === "#22c55e").map((line: any) => line.path)).toEqual([expected]);
+      expect(lines.filter((line: any) => line.color === "#71717a")).toHaveLength(0);
       const blue = lines.filter((line: any) => line.color === "#3b82f6");
       expect(blue).toHaveLength(1);
       expect(blue[0].path.length).toBeGreaterThanOrEqual(2);
@@ -62,6 +91,10 @@ test("real Eki passenger/admin Maps SDK renders directional roads and stable sim
     return blue.length === 2 && blue.every((line: any, index: number) => JSON.stringify(line.path) !== JSON.stringify(firstLeg[index].path));
   }).toBe(true);
   const secondLeg = (await sdk()).lines.filter((line: any) => line.color === "#3b82f6");
+  const passedLegs = (await sdk()).lines.filter((line: any) => line.color === "#71717a");
+  expect(passedLegs).toHaveLength(2);
+  expect(passedLegs[0].path).toEqual(passedLegs[1].path);
+  for (let i = 0; i < 2; i++) expect(passedLegs[i].path.at(-1)).toEqual(secondLeg[i].path[0]);
   expect(secondLeg[0].path).toEqual(secondLeg[1].path);
   for (let i = 0; i < 2; i++) expect(secondLeg[i].path[0]).toEqual(firstLeg[i].path.at(-1));
   const adminTileLoads = (await sdk()).maps.find((map: any) => map.view === "Eki admin map").tileLoads;

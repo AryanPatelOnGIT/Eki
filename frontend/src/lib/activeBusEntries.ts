@@ -27,6 +27,8 @@ export interface ActiveBusEntry {
   currentStopIndex?: number;
   delayMinutes?: number;
   sessionId?: string;
+  automaticServicePaused?: boolean;
+  automaticServiceState?: "assignment_required" | "paused" | "awaiting_return" | "setup_pending";
   /** Untrusted RTDB value; resolve through normalizeRideDirection before use. */
   direction?: unknown;
   directionState?: "pending" | "resolved";

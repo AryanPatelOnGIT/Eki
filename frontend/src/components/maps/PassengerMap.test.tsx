@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ComponentProps, ReactNode } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import PassengerMap from "./PassengerMap";
@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   unsubscribe: vi.fn(), arrivals: vi.fn(), panTo: vi.fn(), setZoom: vi.fn(), fitBounds: vi.fn(),
   markerRenders: new Map<string, number>(),
 }));
-const map = { panTo: state.panTo, setZoom: state.setZoom, fitBounds: state.fitBounds };
+const map = { panTo: state.panTo, setZoom: state.setZoom, fitBounds: state.fitBounds, getDiv: vi.fn<() => HTMLElement | undefined>() };
 vi.mock("@vis.gl/react-google-maps", () => ({
   Map: ({ children }: { children: ReactNode }) => <div aria-label="Map">{children}</div>,
   AdvancedMarker: ({ children, position, anchorLeft, anchorTop }: { children: ReactNode; position: unknown; anchorLeft?: string; anchorTop?: string }) => {
@@ -37,12 +37,37 @@ vi.mock("@/lib/busEta", async (importOriginal) => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks(); state.listener = undefined; state.onReadError = undefined; state.geometries.clear();
+  map.getDiv.mockReturnValue(undefined);
   state.markerRenders.clear();
   state.snapshot = { bus: { ...fixtureBus("forward"), currentStopIndex: 0 } };
   state.arrivals.mockReturnValue({ b: Date.now() + 60_000 });
 });
 
 describe("published passenger stop progress", () => {
+  it("fits above the measured bottom sheet rather than a fixed inset", () => {
+    const frame=document.createElement("div"), viewport=document.createElement("div"),sheet=document.createElement("div");
+    frame.setAttribute("data-passenger-map","");sheet.setAttribute("data-map-sheet","");frame.append(viewport,sheet);
+    viewport.getBoundingClientRect=()=>({top:0,bottom:600,left:0,right:360,width:360,height:600,x:0,y:0,toJSON:()=>({})});
+    sheet.getBoundingClientRect=()=>({top:400,bottom:700,left:0,right:360,width:360,height:300,x:0,y:400,toJSON:()=>({})});
+    map.getDiv.mockReturnValue(viewport);
+    render(<PassengerMap route={routeInRideDirection(route,"forward")} targetStop={route.stops[1]} preview />);
+    expect(state.fitBounds).toHaveBeenLastCalledWith(expect.any(Object),expect.objectContaining({bottom:224}));
+  });
+  it("reveals an ordinary stop label on selection rather than crowding the overview", async () => {
+    const dense={...route,stops:[route.stops[0],{id:"middle",name:"Middle district",shortName:"Middle district",lat:23.005,lng:72.005},route.stops[1]]};
+    const view=render(<PassengerMap route={routeInRideDirection(dense,"forward")} targetStop={dense.stops[2]} />);
+    const marker=view.container.querySelector('[data-marker=\'{"lat":23.005,"lng":72.005}\']') as HTMLElement;
+    expect(within(marker).queryByText("Middle district")).toBeNull();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Show stop Middle district"}));
+    expect(within(marker).getByText("Middle district")).toBeTruthy();
+  });
+  it("keeps the configured route readable when its bus is far away", () => {
+    state.snapshot={bus:{...fixtureBus(null),lat:24,lng:73}};
+    render(<PassengerMap route={routeInRideDirection(route,"forward")} targetStop={route.stops[1]} preview />);
+    const bounds=state.fitBounds.mock.lastCall?.[0];
+    expect(bounds.north).toBeLessThan(24);
+    expect(bounds.east).toBeLessThan(73);
+  });
   it("reprojects identical bus coordinates and heading onto the authoritative itinerary visit", () => {
     const a = { id: "a", name: "A", shortName: "A", lat: 23, lng: 72 };
     const b = { id: "b", name: "B", shortName: "B", lat: 23.001, lng: 72 };
@@ -302,12 +327,12 @@ describe("passenger map device and ride contexts", () => {
     expect(screen.queryByText("Boarding Stop")).toBeNull();
     expect(state.arrivals).not.toHaveBeenCalled();
   });
-  it("frames an off-route stationary bus with the route, then lets the passenger focus the bus", async () => {
+  it("keeps route overview stable, then lets the passenger focus an off-route bus", async () => {
     const device = { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, lat: 23.1, lng: 72.1 };
     state.snapshot = { bus: device };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview />);
     expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
-    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.1, south: 23, east: 72.1, west: 72 }, expect.any(Object));
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.01, south: 23, east: 72.01, west: 72 }, expect.any(Object));
     const fitted = state.fitBounds.mock.calls.length;
     act(() => state.listener?.({ bus: { ...device, lat: 23.11, seq: 2 } }));
     expect(state.fitBounds).toHaveBeenCalledTimes(fitted);
@@ -318,14 +343,18 @@ describe("passenger map device and ride contexts", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Center on bus" }));
     expect(state.panTo).toHaveBeenLastCalledWith({ lat: 23.12, lng: 72.1 });
     expect(state.setZoom).toHaveBeenLastCalledWith(16);
+    const beforeOverview = state.fitBounds.mock.calls.length;
+    await userEvent.setup().click(screen.getByRole("button", {name:"Show route overview"}));
+    expect(state.fitBounds.mock.calls.length).toBeGreaterThan(beforeOverview);
+    expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.01,south:23,east:72.01,west:72},expect.any(Object));
   });
-  it("frames the route while GPS is missing and includes the first fix without resetting on every update", async () => {
+  it("keeps route framing stable when the first off-route fix arrives", async () => {
     state.snapshot = {};
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview />);
     expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.01, south: 23, east: 72.01, west: 72 }, expect.any(Object));
     act(() => state.listener?.({ bus: { ...fixtureBus(), sessionId: undefined, status: "offline", tripState: undefined, lat: 23.1, lng: 72.1 } }));
     expect(await screen.findByTitle(/qa-bus/)).toBeTruthy();
-    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.1, south: 23, east: 72.1, west: 72 }, expect.any(Object));
+    expect(state.fitBounds).toHaveBeenLastCalledWith({ north: 23.01, south: 23, east: 72.01, west: 72 }, expect.any(Object));
   });
   it("keeps a direction-pending session visible as raw GPS without inferred progress", async () => {
     state.snapshot = { bus: fixtureBus() };
@@ -351,10 +380,13 @@ describe("passenger map device and ride contexts", () => {
     expect(state.panTo).toHaveBeenLastCalledWith({ lat: 23.005, lng: 72.005 });
     expect(state.unsubscribe).toHaveBeenCalled();
   });
-  it("shows a waiting message for an online device that has no usable GPS fix", () => {
+  it("does not diagnose a receiver fault from a missing map location", () => {
     state.snapshot = { bus: { ...fixtureBus(), sessionId: undefined, tripState: undefined, status: "offline", lat: undefined, lng: undefined } };
     render(<PassengerMap route={directed} targetStop={route.stops[1]} preview />);
-    expect(screen.getByRole("status").textContent).toContain("Waiting for a valid GPS fix");
+    expect(screen.getByRole("status").textContent).toContain("Waiting for live location");
+    act(() => state.onReadError?.(new Error("permission denied")));
+    expect(screen.queryByText(/Waiting for live location/)).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Live bus updates are unavailable");
     expect(state.arrivals).not.toHaveBeenCalled();
   });
   it("announces delayed location without diagnosing GNSS loss when an armed bus goes silent", async () => {

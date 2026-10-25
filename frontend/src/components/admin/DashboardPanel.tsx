@@ -22,12 +22,11 @@ import { errorMessage } from "@/lib/errors";
 import {
   Activity, Navigation2, Clock, AlertTriangle,
   TrendingUp, X, ChevronDown, ChevronUp,
-  Eye, Wifi, WifiOff, MessageCircle, Play, RefreshCw, TicketCheck,
+  Eye, Wifi, WifiOff, MessageCircle, TicketCheck,
 } from "lucide-react";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { ApiError, apiRequest, isApiRecord, acknowledgedField, type ApiRequestOptions } from "@/lib/apiClient";
-import CustomSelect from "@/components/ui/CustomSelect";
+import { apiRequest, isApiRecord, acknowledgedField, type ApiRequestOptions } from "@/lib/apiClient";
 import MessagingPanel from "@/components/shared/MessagingPanel";
 import DirectionsRoute from "@/components/maps/DirectionsRoute";
 import TrafficLayer from "@/components/maps/TrafficLayer";
@@ -52,7 +51,7 @@ import {
 
 /* â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const TRIP_STATE: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-  not_armed:     { label: "Ride Not Armed", color: "text-white/40", bg: "bg-white/5", dot: "bg-white/20" },
+  not_armed:     { label: "Service setup pending", color: "text-white/40", bg: "bg-white/5", dot: "bg-white/20" },
   direction_pending: { label: "Direction Pending", color: "text-amber-300", bg: "bg-amber-500/10", dot: "bg-amber-300" },
   pre_departure: { label: "Awaiting Stop 1", color: "text-white/50", bg: "bg-white/5", dot: "bg-white/30" },
   in_service:    { label: "In Service", color: "text-emerald-400", bg: "bg-emerald-500/10", dot: "bg-emerald-400" },
@@ -63,6 +62,18 @@ const MOTION_STATE: Record<string, { label: string; color: string }> = {
   stopped:   { label: "Stopped", color: "text-amber-400" },
   uncertain: { label: "Motion uncertain",  color: "text-amber-400" },
 };
+function servicePresentation(entry: ActiveBusEntry) {
+  if (!entry.sessionId) {
+    const label = entry.automaticServicePaused || entry.automaticServiceState === "paused" ? "Tracking paused"
+      : entry.automaticServiceState === "assignment_required" ? "Assignment required"
+      : entry.automaticServiceState === "awaiting_return" ? "Awaiting return service" : null;
+    if (label) return {label,color:"text-amber-300",bg:"bg-amber-500/10",dot:"bg-amber-300"};
+  }
+  if (entry.sessionId && (entry.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(entry)))) {
+    return {label:"Service paused",color:"text-amber-300",bg:"bg-amber-500/10",dot:"bg-amber-300"};
+  }
+  return TRIP_STATE[rideServiceState(entry)];
+}
 function timeSince(t?: string | number): string {
   if (!t) return "—";
   const ms = typeof t === "number" ? Date.now() - t : Date.now() - new Date(t).getTime();
@@ -76,9 +87,7 @@ function headingLabel(d?: number): string {
   return dirs[Math.round(d / 45) % 8] + ` ${Math.round(d)}°`;
 }
 
-function assignedRouteIds(bus: { assignedRoutes?: string[]; assignedRouteId?: string } | undefined) {
-  return bus?.assignedRoutes ?? (bus?.assignedRouteId ? [bus.assignedRouteId] : []);
-}
+
 
 async function requestAdmin<T>(path: string, init: ApiRequestOptions): Promise<T> {
   const currentUser = auth.currentUser;
@@ -176,7 +185,7 @@ function LiveDetailsDrawer({
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
               <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Trip state</p>
-              <p className="mt-1 text-sm font-semibold text-white">{TRIP_STATE[rideServiceState(entry)].label}</p>
+              <p className="mt-1 text-sm font-semibold text-white">{servicePresentation(entry).label}</p>
             </div>
             <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
               <p className="text-[10px] text-white/30 uppercase tracking-widest font-black">Signal</p>
@@ -283,7 +292,7 @@ function BusMarker({
   entry: ActiveBusEntry;
   onClick: (position: { lat: number; lng: number }) => void;
 }) {
-  const ts = TRIP_STATE[rideServiceState(entry)];
+  const ts = servicePresentation(entry);
   const serviceState = rideServiceState(entry);
   const markerColor =
     serviceState === "in_service"
@@ -371,7 +380,7 @@ function FleetCard({
   const directionState = normalizeRideDirection(entry.direction);
   const directedRoute = routeInRideDirectionState(route, directionState);
   const driver = drivers.find(d => d.id === entry.driverId);
-  const ts = TRIP_STATE[rideServiceState(entry)];
+  const ts = servicePresentation(entry);
   const ms = MOTION_STATE[entry.motionState ?? "uncertain"] ?? MOTION_STATE.uncertain;
   const stopCount = directedRoute?.stops?.length ?? 0;
   const nextStopIndex = isActiveService(entry)
@@ -649,13 +658,10 @@ export default function DashboardPanel() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [, setFreshnessNow] = useState(() => Date.now());
-  const [driverId, setDriverId] = useState("");
-  const [busId, setBusId] = useState("");
-  const [routeId, setRouteId] = useState("");
   const [armStatus, setArmStatus] = useState("");
-  const [armPending, setArmPending] = useState(false);
-  const startKeys = useRef(new Map<string, string>());
-  const startInFlight = useRef(false);
+  const [resumePending, setResumePending] = useState(false);
+  const resumeInFlight = useRef(false);
+  const resumeKeys = useRef(new Map<string, string>());
   const [delayPending, setDelayPending] = useState("");
   const [boardingCodes, setBoardingCodes] = useState<Record<string, string>>({});
   const [chatEntry, setChatEntry] = useState<ActiveBusEntry | null>(null);
@@ -668,10 +674,11 @@ export default function DashboardPanel() {
   }, []);
 
   // â”€â”€ Traffic layer rendered imperatively â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const inService = countActiveServices(activeEntries, "in_service");
-  const awaitingStart = countActiveServices(activeEntries, "pre_departure");
+  const liveEntries = activeEntries.filter(entry => entry.deviceState === "online" && !isLiveBusSignalLost(liveBusFreshnessTimestamp(entry)));
+  const inService = countActiveServices(liveEntries, "in_service");
+  const awaitingStart = countActiveServices(liveEntries, "pre_departure");
   const directionPending = new Set(
-    activeEntries
+    liveEntries
       .filter((entry) => rideServiceState(entry) === "direction_pending")
       .map((entry) => entry.sessionId)
       .filter((sessionId): sessionId is string => Boolean(sessionId)),
@@ -682,7 +689,7 @@ export default function DashboardPanel() {
   const unavailableDevices = activeEntries.filter(
     (entry) => devicePresence(entry) !== "online",
   ).length;
-  const activeServices = countActiveServices(activeEntries);
+  const activeServices = countActiveServices(liveEntries);
 
   const handleSelectBus = useCallback((
     entry: ActiveBusEntry,
@@ -697,59 +704,24 @@ export default function DashboardPanel() {
     if (markerPoint) setMapCenter(markerPoint);
   }, []);
 
-  const selectedBus = buses.find((bus) => bus.id === busId);
-  const allowedRouteIds = assignedRouteIds(selectedBus);
-  const allowedRoutes = routes.filter((route) => allowedRouteIds.includes(route.id));
-
-  const selectDriver = (nextDriverId: string) => {
-    const driver = drivers.find((candidate) => candidate.id === nextDriverId);
-    const nextBusId = driver?.assignedBusId ?? "";
-    const nextBus = buses.find((bus) => bus.id === nextBusId);
-    const nextRoutes = assignedRouteIds(nextBus);
-    setDriverId(nextDriverId);
-    setBusId(nextBusId);
-    setRouteId(nextRoutes.length === 1 ? nextRoutes[0] : "");
-    setArmStatus("");
-  };
-
-  const armRide = async () => {
-    if (!driverId || !busId || !routeId || startInFlight.current) return;
-    startInFlight.current = true;
-    const assignment = JSON.stringify([driverId, busId, routeId]);
-    const key = startKeys.current.get(assignment) ?? crypto.randomUUID();
-    startKeys.current.set(assignment, key);
-    setArmPending(true);
-    setArmStatus("");
+  const resumeAutomaticService = async (entry: ActiveBusEntry) => {
+    if (resumeInFlight.current || !entry.routeId) return;
+    const operators = drivers.filter(driver => driver.assignedBusId === entry.busId);
+    if (operators.length !== 1) { setArmStatus("Assign exactly one operator before resuming tracking."); return; }
+    resumeInFlight.current = true;
+    setResumePending(true);
+    const identity = JSON.stringify([operators[0].id, entry.busId, entry.routeId]);
+    const key = resumeKeys.current.get(identity) ?? crypto.randomUUID();
+    resumeKeys.current.set(identity, key);
     try {
-      const result = await requestAdmin<{
-        sessionId?: string;
-        resumed?: boolean;
-        direction?: unknown;
-      }>(
-        "/api/v2/ride-sessions",
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": key },
-          body: JSON.stringify({ driverId, busId, routeId }),
-          validateResponse: value => isApiRecord(value) && typeof value.sessionId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId),
-        },
-      );
-      startKeys.current.delete(assignment);
-      const inferredDirection = normalizeRideDirection(result.direction);
-      setArmStatus(
-        result.resumed
-          ? `Active service restored (${result.sessionId}).`
-          : inferredDirection === "pending"
-            ? `Service started (${result.sessionId}); direction pending.`
-            : `Service started (${result.sessionId}) for ${directionLabelState(inferredDirection, routes.find((route) => route.id === routeId)?.stops ?? [])}.`,
-      );
-    } catch (error) {
-      if (error instanceof ApiError && !error.outcomeUnknown && error.status !== null && error.status < 500) startKeys.current.delete(assignment);
-      setArmStatus(errorMessage(error));
-    } finally {
-      startInFlight.current = false;
-      setArmPending(false);
-    }
+      await requestAdmin("/api/v2/ride-sessions", { method: "POST", headers: { "Idempotency-Key": key },
+        body: JSON.stringify({ driverId: operators[0].id, busId: entry.busId, routeId: entry.routeId }),
+        validateResponse: value => isApiRecord(value) && typeof value.sessionId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId),
+      });
+      resumeKeys.current.delete(identity);
+      setArmStatus(`Automatic tracking resumed for ${entry.busId}.`);
+    } catch (error) { setArmStatus(errorMessage(error)); }
+    finally { resumeInFlight.current = false; setResumePending(false); }
   };
 
   const changeDelay = async (entry: ActiveBusEntry, delta: number) => {
@@ -902,64 +874,14 @@ export default function DashboardPanel() {
 
       {/* â”€â”€ Sidebar â”€â”€ */}
       <div className="flex max-h-[55%] min-h-0 w-full shrink-0 flex-col overflow-y-auto overscroll-contain border-t border-white/5 lg:max-h-none lg:w-[360px] lg:overflow-hidden lg:border-l lg:border-t-0">
-        <section className="shrink-0 border-b border-white/5 p-3">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-bold text-white">Start service</h2>
-              <p className="mt-0.5 text-[10px] text-white/35">Create the protected ride session. GNSS controls movement and completion.</p>
-            </div>
-            <Play className="size-4 text-white/30" aria-hidden="true" />
-          </div>
-          <div className="grid gap-2">
-            <CustomSelect
-              name="service-operator"
-              ariaLabel="Operator"
-              value={driverId}
-              onChange={selectDriver}
-              options={[
-                { value: "", label: "Select operator…" },
-                ...drivers.map((driver) => ({ value: driver.id, label: `${driver.name} (${driver.id})` })),
-              ]}
-              placeholder="Select operator…"
-            />
-            <CustomSelect
-              name="service-vehicle"
-              ariaLabel="Assigned vehicle"
-              value={busId}
-              onChange={() => undefined}
-              disabled
-              options={[
-                { value: "", label: "No assigned vehicle" },
-                ...buses.map((bus) => ({ value: bus.id, label: `${bus.name} (${bus.id})` })),
-              ]}
-              placeholder="Assigned vehicle"
-            />
-            <CustomSelect
-              name="service-route"
-              ariaLabel="Route"
-              value={routeId}
-              onChange={setRouteId}
-              disabled={!busId}
-              options={[
-                { value: "", label: "Select route…" },
-                ...allowedRoutes.map((route) => ({ value: route.id, label: route.name })),
-              ]}
-              placeholder="Select route…"
-            />
-          </div>
-          <p className="text-xs text-white/45">
-            Travel direction is inferred from fresh stopped GPS at the first or last stop.
-            After completion, the return service starts automatically following the turnaround dwell.
-          </p>
-          <button
-            type="button"
-            onClick={() => void armRide()}
-            disabled={armPending || !driverId || !busId || !routeId}
-            className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-xs font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {armPending ? <RefreshCw className="size-4 animate-spin" /> : <Play className="size-4" />}
-            Start service
-          </button>
+        <section className="shrink-0 border-b border-white/5 p-4">
+          <h2 className="text-sm font-bold text-white">Automatic service</h2>
+          <p className="mt-2 text-pretty text-xs text-white/60">Services start automatically when an assigned receiver sends a fresh, reliable GPS fix. Direction resolves at an endpoint or after a qualified departure.</p>
+          <p className="mt-2 text-pretty text-xs text-white/45">An offline session is retained for recovery. Movement, stop arrivals and return services follow GNSS evidence.</p>
+          {activeEntries.filter(entry => entry.automaticServicePaused || entry.automaticServiceState === "paused").map(entry => <button key={entry.busId} type="button"
+            aria-label={`Resume automatic tracking for ${entry.busId}`} disabled={resumePending}
+            onClick={() => void resumeAutomaticService(entry)}
+            className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50">Resume tracking · {entry.busId}</button>)}
           {armStatus && <p className="mt-2 text-xs text-white/65" role="status">{armStatus}</p>}
         </section>
         {/* Stats row */}
@@ -1020,7 +942,7 @@ export default function DashboardPanel() {
               currentUserId={user.uid}
               isOverlay
               onClose={() => setChatEntry(null)}
-              unavailableMessage={chatEntry.sessionId ? undefined : "Start service for this online bus to create the protected ride chat session."}
+              unavailableMessage={chatEntry.sessionId ? undefined : "Waiting for automatic service setup for this assigned receiver."}
             />
           </div>
         </div>

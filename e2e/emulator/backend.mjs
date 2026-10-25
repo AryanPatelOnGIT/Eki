@@ -60,7 +60,7 @@ async function reset() {
   providers.reset();
   epoch = Date.now() - 45000;
   for (const collection of ['ride_sessions', 'routes', 'buses', 'users', 'feedbacks', 'feedbackCooldowns',
-    'completed_trips', 'drivers', 'devices', 'active_rides', 'bus_locations', '_active_bus_locks', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations', '_userAuthorization'])
+    'completed_trips', 'drivers', 'devices', 'active_rides', 'bus_locations', '_active_bus_locks', '_ride_session_creation_keys', '_feedback_idempotency', '_privacy_deletion_requests', '_route_save_operations', '_userAuthorization'])
     await db.recursiveDelete(db.collection(collection));
   for (const uid of ['qa_passenger', 'qa_other', 'qa_admin']) {
     // Deletion acceptance retires an actual emulator identity. Recreate only
@@ -116,6 +116,19 @@ async function waitForLifecycle(predicate) {
 const control = createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && req.url === '/reset') { await reset(); res.end('{}'); return; }
+    if (req.method === 'POST' && req.url === '/automatic-service') {
+      await db.collection('buses').doc('qa_auto_bus').set({name:'Synthetic automatic bus',assignedRoutes:[route.id],active:true});
+      await db.collection('drivers').doc('qa_auto_driver').set({name:'Synthetic automatic operator',assignedBusId:'qa_auto_bus'});
+      await db.collection('devices').doc('qa_auto_device').set({busId:'qa_auto_bus',routeId:route.id,enabled:true,secretHash});
+      invalidateDeviceCredentialCache('qa_auto_device');
+      const now=Date.now();
+      const response=await fetch('http://127.0.0.1:3116/api/devices/qa_auto_device/telemetry',{
+        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Device ${deviceSecret}`},
+        body:JSON.stringify({seq:1,lat:23,lng:72,heading:0,gpsHdop:1,motionState:'stopped',speed:0,timestamp:now,deviceSentAt:now}),
+        signal:AbortSignal.timeout(10000),redirect:'error',
+      });
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify({status:response.status}));return;
+    }
     if (req.method === 'POST' && req.url === '/privacy/drain') {
       // Only this guarded loopback fixture exposes a deterministic scan. Use
       // the real worker and its leadership/claim fences, not direct deletions.
