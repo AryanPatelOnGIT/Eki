@@ -187,6 +187,8 @@ export function matchRoutePosition(
   const candidates: Array<{
     segmentIndex: number;
     score: number;
+    point: LatLng;
+    alongRouteDistanceM: number;
   }> = [];
 
   for (let segmentIndex = firstSegment; segmentIndex < endSegment; segmentIndex += 1) {
@@ -222,7 +224,7 @@ export function matchRoutePosition(
       backwardsM * 2 +
       segmentJump * 3;
 
-    candidates.push({ segmentIndex, score });
+    candidates.push({ segmentIndex, score, point: projection.point, alongRouteDistanceM });
 
     if (!best || score < best.score) {
       best = {
@@ -246,11 +248,15 @@ export function matchRoutePosition(
     Math.min(12, Math.max(0, positionUncertaintyM) * 0.25),
   );
   // Adjacent segments are one continuous route leg, including at a sharp
-  // turn. Exclude them before looking for a genuinely competing crossing
-  // farther along a self-intersecting route.
+  // turn, and so is a nearby projection reached by about its straight-line
+  // distance along the route (densely sampled vertices). Exclude them before
+  // looking for a genuinely competing crossing farther along a self-intersecting
+  // route, which is reached only by travelling a loop or out-and-back leg.
   let competingScore = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {
-    if (!segmentsAreContinuous(cumulative, candidate.segmentIndex, best.segmentIndex)) {
+    if (!segmentsAreContinuous(cumulative, candidate.segmentIndex, best.segmentIndex) &&
+        Math.abs(candidate.alongRouteDistanceM - best.alongRouteDistanceM) >
+          haversineMeters(candidate.point, best.point) + ambiguityWindow) {
       competingScore = Math.min(competingScore, candidate.score);
     }
   }

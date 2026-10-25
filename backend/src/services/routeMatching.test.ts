@@ -166,6 +166,26 @@ describe("route matching", () => {
     }
   });
 
+  it("does not treat densely sampled vertices of one road as competing geometry", () => {
+    // High-quality provider polylines place vertices a few metres apart on
+    // curves; nearby non-adjacent segments of the same leg are not a crossing.
+    const straight = Array.from({ length: 201 }, (_, index) => ({ lat: 23, lng: 72 + index * 0.00002 }));
+    const curve = Array.from({ length: 84 }, (_, index) => {
+      const angle = index * 3 / 80;
+      return { lat: 23 + 80 * Math.sin(angle) / 111_195, lng: 72 + 80 * (1 - Math.cos(angle)) / 102_350 };
+    });
+    for (const path of [straight, curve]) {
+      for (const index of [10, 41, 77]) {
+        const point = { lat: (path[index].lat + path[index + 1].lat) / 2, lng: (path[index].lng + path[index + 1].lng) / 2 };
+        for (const heading of [undefined, 90]) {
+          const match = matchRoutePosition(point, path, heading, null, 10);
+          expect(match?.isAmbiguous).toBe(false);
+          expect(evaluateRouteAdherence("ON_ROUTE", 0, match, true).routeState).toBe("ON_ROUTE");
+        }
+      }
+    }
+  });
+
   it("does not treat an ordinary sharp turn as competing geometry", () => {
     const match = matchRoutePosition(
       { lat: 23, lng: 72.001 },
