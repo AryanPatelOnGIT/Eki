@@ -42,7 +42,7 @@ import { createBrowserAdmission, createBrowserIngressLimiter } from "./lib/brows
 import { verifiedUserKeyGenerator } from "./lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "./lib/rateLimitShard";
 import { requireAdmin } from "./middleware/requireAdmin";
-import { clientRequestErrorHandler, unhandledRequestErrorHandler } from "./lib/requestErrors";
+import { clientRequestErrorHandler, notFoundHandler, unhandledRequestErrorHandler } from "./lib/requestErrors";
 import { assertRetentionConfiguration } from "./services/retentionSweeper";
 import { startWorkerCoordinator } from "./services/workerCoordinator";
 import { getTripStateQueueStatus } from "./services/tripStateEngine";
@@ -280,6 +280,7 @@ app.get("/api/health", requireAdmin, (_req, res) => {
   });
 });
 
+app.use(notFoundHandler);
 app.use(clientRequestErrorHandler);
 app.use(unhandledRequestErrorHandler);
 

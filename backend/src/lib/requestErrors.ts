@@ -1,4 +1,4 @@
-import type { ErrorRequestHandler } from "express";
+import type { ErrorRequestHandler, RequestHandler } from "express";
 import { recordActiveSpanException } from "../instrumentation";
 
 /**
@@ -23,6 +23,11 @@ function clientErrorStatus(error: unknown): number | null {
 const CLIENT_ERROR_MESSAGES: Record<number, string> = {
   413: "Request body is too large.",
   415: "Unsupported request body encoding.",
+};
+
+/** Unmatched paths and methods keep the documented `{ "error": "…" }` JSON shape. */
+export const notFoundHandler: RequestHandler = (_req, res) => {
+  res.status(404).json({ error: "Not found." });
 };
 
 /**
