@@ -42,8 +42,15 @@ cleanupOutdatedCaches();
 
 // Retire the previous Auth-script cache when this worker activates. Auth
 // helpers are online dependencies and must not replay an obsolete loader.
+// Also retire navigation HTML cached under the previous worker: it references
+// hashed chunks that this worker's precache cleanup removes and Hosting no
+// longer serves, so an offline or slow-network fallback to it cannot boot.
+// Until a fresh page is cached, the fallback uses this worker's precached shell.
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.delete("eki-firebase-sdk"));
+  event.waitUntil(Promise.all([
+    caches.delete("eki-firebase-sdk"),
+    caches.delete("eki-navigations"),
+  ]));
 });
 
 // ─── Navigation requests ────────────────────────────────────────────────────
