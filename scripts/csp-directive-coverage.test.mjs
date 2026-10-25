@@ -48,8 +48,9 @@ for (const [label, policy] of [
     const directives = Object.fromEntries(written.split(';').map(value => value.trim()).filter(Boolean)
       .map(value => { const [name, ...sources] = value.split(/\s+/); return [name, sources]; }));
     assert.ok(directives['script-src']?.some(value => value.startsWith("'sha256-")), 'script-src must carry inline hashes');
-    assert.ok(directives['connect-src']?.includes('https://api.example.test'));
-    assert.ok(directives['frame-src']?.includes('https://accounts.google.com'));
+    // Exact source-token equality, not a URL substring check.
+    assert.ok(directives['connect-src']?.some(source => source === 'https://api.example.test'));
+    assert.ok(directives['frame-src']?.some(source => source === 'https://accounts.google.com'));
   });
 }
 
