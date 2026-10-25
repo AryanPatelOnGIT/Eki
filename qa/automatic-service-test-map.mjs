@@ -7,7 +7,10 @@ export const automaticServiceTestMap = [{
   tests: [
     ['automatically admits one stationary service from authenticated telemetry without a start request', 'A stationary endpoint fix creates one assigned protected session and repeated ingress does not duplicate it.'],
     ['keeps a stationary midpoint session pending and recovers the same session after RTDB loss', 'A midpoint fix creates a pending direction with no invented passage and later restores the original session after live-node loss.'],
-  ].map(([name, semantics]) => ({path:'backend/src/qaTelemetryChain.integration.test.ts', name:`${chain} > ${name}`, level:'L2', semantics})),
+  ].map(([name, semantics]) => ({path:'backend/src/qaTelemetryChain.integration.test.ts', name:`${chain} > ${name}`, level:'L2', semantics})).concat([
+    'handles synchronous capacity rejection without escaping telemetry background scheduling',
+    'contains a synchronous capacity rejection while rescheduling the retained latest fix',
+  ].map(name => ({path:'backend/src/services/automaticServiceAdmission.test.ts', name, level:'L1', semantics:'The admission scheduler contains synchronous executor-capacity rejection, reports it and applies retry backoff, including the retained-latest reschedule boundary; Firebase is mocked.'}))),
 }, {
   caseId: 'AUTH13',
   scope: 'Diagnostic-only unit sub-oracle: fleet mutex contention directs operators to guarded exact-owner recovery after proving the previous executor stopped. No mutex release or live Auth mutation is performed.',

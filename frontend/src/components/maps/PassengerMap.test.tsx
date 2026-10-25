@@ -44,6 +44,15 @@ beforeEach(() => {
 });
 
 describe("published passenger stop progress", () => {
+  it.each([true,false])("restores route overview after a manual drag with bus=%s", async hasBus => {
+    state.snapshot = hasBus ? {bus:fixtureBus("forward")} : {};
+    render(<PassengerMap route={routeInRideDirection(route,"forward")} targetStop={route.stops[1]} preview />);
+    const before=state.fitBounds.mock.calls.length;
+    fireEvent.pointerDown(screen.getByLabelText("Map"));
+    await userEvent.setup().click(screen.getByRole("button",{name:"Show route overview"}));
+    expect(state.fitBounds.mock.calls.length).toBeGreaterThan(before);
+    expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.01,south:23,east:72.01,west:72},expect.any(Object));
+  });
   it("fits above the measured bottom sheet rather than a fixed inset", () => {
     const frame=document.createElement("div"), viewport=document.createElement("div"),sheet=document.createElement("div");
     frame.setAttribute("data-passenger-map","");sheet.setAttribute("data-map-sheet","");frame.append(viewport,sheet);

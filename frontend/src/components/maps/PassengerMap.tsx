@@ -136,7 +136,8 @@ function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
   }, [map]);
   const fittedStage = useRef<string | null>(null);
   useEffect(() => {
-    if (!map || !isCentered) return;
+    if (!map) return;
+    if (!isCentered) { fittedStage.current = null; return; }
     if (previewPoints) {
       // Fit once for the route, and once when its first GPS fix arrives.
       // Subsequent fixes must not repeatedly zoom or override a manual drag.

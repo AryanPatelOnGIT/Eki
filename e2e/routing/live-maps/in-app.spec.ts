@@ -26,6 +26,17 @@ test.describe("mobile real Maps",()=>{
     await expect(passenger.getByRole("button",{name:/Show stop/}).first()).toBeAttached();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
     await passenger.screenshot({path:info.outputPath("passenger-phone-real-maps.png")});
+    const overview=passenger.getByRole("button",{name:"Show route overview"});
+    await overview.click();
+    const camera=()=>page.evaluate(()=>(window as any).__ekiInAppMaps.snapshot().maps.find((m:any)=>m.view==="Eki passenger map"));
+    await expect.poll(async()=>(await camera()).zoom).toBeLessThan(16);
+    const original=(await camera()).center;
+    const box=(await passenger.boundingBox())!;
+    await page.mouse.move(box.x+box.width*0.6,box.y+box.height*0.4);
+    await page.mouse.down();await page.mouse.move(box.x+box.width*0.3,box.y+box.height*0.45,{steps:10});await page.mouse.up();
+    await expect.poll(async()=>Math.abs((await camera()).center.lng-original.lng)).toBeGreaterThan(0.0001);
+    await overview.click();
+    await expect.poll(async()=>Math.abs((await camera()).center.lng-original.lng)).toBeLessThan(0.00001);
     expect(errors).toEqual([]);expect(blocked).toEqual([]);
   });
 });

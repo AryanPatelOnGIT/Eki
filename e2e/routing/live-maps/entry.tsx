@@ -41,7 +41,7 @@ function MapsReady({ children }: { children: ReactNode }) {
       sdkLoaded: true, observedMarkerCount: markers.length, observedPolylineCount: lines.length,
       maps: [...loadedMaps].filter(([map]) => document.contains(map.getDiv())).map(([map, state]) => ({
         view: map.getDiv().closest("section")?.getAttribute("aria-label"), tilesLoaded: state.tilesLoaded, tileLoads: state.tileLoads,
-        renderingType: map.getRenderingType(), zoom: map.getZoom(),
+        renderingType: map.getRenderingType(), zoom: map.getZoom(), center: map.getCenter()?.toJSON(),
       })),
       lines: lines.filter(line => line.getMap()).map(line => ({ view: (line.getMap() as google.maps.Map).getDiv().closest("section")?.getAttribute("aria-label"), color: line.get("strokeColor"), path: line.getPath().getArray().map(point => point.toJSON()) })),
       markers: markers.filter(item => item.map).map(item => {

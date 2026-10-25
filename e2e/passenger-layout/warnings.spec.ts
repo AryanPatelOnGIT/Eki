@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("reconnecting status leaves the tracking title and destination control unobscured", async ({ page }, info) => {
   await page.goto("/?scenario=reconnecting");
+  await expect(page.getByText("Reconnecting to live bus data...",{exact:true})).toBeVisible();
   await page.getByRole("button", { name: "Track QA route", exact: true }).click();
   const title = page.getByRole("button", { name: "Back to home", exact: true }).locator("..").getByText(/→|Direction pending/).first();
   for (const control of [title, page.getByRole("combobox", { name: "Destination station" })]) {

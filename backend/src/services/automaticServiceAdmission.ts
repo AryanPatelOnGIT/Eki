@@ -81,23 +81,31 @@ export function scheduleAutomaticServiceAdmission(assignment:DeviceAssignment,sa
   if (pending.has(key)) { latest.set(key,{assignment,sample}); return; }
   if ((retryAt.get(key)??0)>performance.now()) return;
   if (retryAt.size>=1000) retryAt.delete(retryAt.keys().next().value!);
-  const work=executor.run(assignment.busId,async()=>{
-    try { await admit(assignment); retryAt.delete(key); }
-    catch(error) {
-      if (!invalidated.has(key)) retryAt.set(key,performance.now()+30000);
-      if (error instanceof SessionCreationConflict) {
-        // A fresh accepted fix is the bounded retry trigger for an interrupted
-        // projection. Configuration backoff must not discard that repair fix.
-        retryAt.delete(key);
+  let admitted:Promise<void>;
+  try {
+    admitted=executor.run(assignment.busId,async()=>{
+      try { await admit(assignment); retryAt.delete(key); }
+      catch(error) {
+        if (!invalidated.has(key)) retryAt.set(key,performance.now()+30000);
+        if (error instanceof SessionCreationConflict) {
+          // A fresh accepted fix is the bounded retry trigger for an interrupted
+          // projection. Configuration backoff must not discard that repair fix.
+          retryAt.delete(key);
+        }
+        if (error instanceof AdmissionBlocked) await publishBlocked(assignment,error.state);
+        else if (error instanceof RideSessionStartError || error instanceof SessionCreationConflict) {
+          console.warn("[Devices] Automatic service setup pending:",error.message);
+          await publishBlocked(assignment,error instanceof RideSessionStartError && error.reason==="terminal_session" ? "paused" : "setup_pending");
+        }
+        else throw error;
       }
-      if (error instanceof AdmissionBlocked) await publishBlocked(assignment,error.state);
-      else if (error instanceof RideSessionStartError || error instanceof SessionCreationConflict) {
-        console.warn("[Devices] Automatic service setup pending:",error.message);
-        await publishBlocked(assignment,error instanceof RideSessionStartError && error.reason==="terminal_session" ? "paused" : "setup_pending");
-      }
-      else throw error;
-    }
-  }).catch(error=>{
+    });
+  } catch(error) {
+    retryAt.set(key,performance.now()+2000);
+    recordBackgroundFailure("devices.automaticService","Automatic service setup","[Devices] Automatic service admission rejected:",error);
+    return;
+  }
+  const work=admitted.catch(error=>{
     retryAt.set(key,performance.now()+2000);
     recordBackgroundFailure("devices.automaticService","Automatic service setup","[Devices] Automatic service setup failed:",error);
   }).finally(()=>{

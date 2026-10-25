@@ -43,7 +43,7 @@ export function useSettings() {
   } };
 }
 const markSnapshotReceived = () => {};
-export function useRTDBResume() { const current = useScenario(); return { isResuming: current === "reconnecting", resumeGeneration: 0, connectionGeneration: 0, markSnapshotReceived }; }
+export function useRTDBResume() { const current = useScenario(); return { isResuming: current === "reconnecting", resumeGeneration: 0, connectionGeneration: current === "reconnecting" ? 1 : 0, markSnapshotReceived }; }
 
 export function subscribeLiveBusesByRoute(routeId: string, listener: (value: Record<string, unknown>) => void) {
   return subscribeLiveBusChanges((change: unknown) => {
