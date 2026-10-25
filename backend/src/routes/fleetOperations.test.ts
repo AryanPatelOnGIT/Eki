@@ -523,6 +523,18 @@ describe("fleet operation resources", () => {
     expect(state.docs.get("_userAuthorization/auth_uid")).toMatchObject({ role: "driver", driverId: null, assignedBusId: null });
     expect(state.mirrors).toEqual({});
   });
+  it.each([["a missing bus", "bus_missing"], ["an invalid bus id", "bus/../x"]])(
+    "revokes stale administrator claims when a demoted driver has %s", async (_label, assignedBusId) => {
+      state.docs.set("users/auth_uid", { role: "driver" });
+      state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId });
+      state.userClaims.set("auth_uid", { role: "admin", admin: true, driverId: "previous_driver" });
+      state.mirrors.previous_driver = { bus_1: { route_1: true } };
+      expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([false]);
+      expect(state.userClaims.get("auth_uid")).toMatchObject({ role: "driver" });
+      expect(state.userClaims.get("auth_uid")?.admin).toBeUndefined();
+      expect(state.userClaims.get("auth_uid")?.driverId).toBeUndefined();
+      expect(state.mirrors.previous_driver).toBeUndefined();
+    });
   it("retains the CLI lock until delayed mirror cleanup settles after another removal fails", async () => {
     state.docs.set("users/auth_uid", { role: "passenger" });
     state.userClaims.set("auth_uid", { role: "driver", driverId: "previous_driver", assignedBusId: "bus_1" });
