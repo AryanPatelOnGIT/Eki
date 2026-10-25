@@ -53,8 +53,14 @@ router.get("/:busId", requireAuth, async (req, res) => {
 
   try {
     const data = await busReads.read(busId, async () => {
-      const snapshot = await rtdb.ref("activeBuses").orderByChild("busId").equalTo(busId).limitToFirst(1).once("value");
-      return publicLiveBus(Object.values(snapshot.val() || {})[0]) ?? null;
+      // A reassigned bus keeps a retired tombstone per previous route; one node
+      // per assignable route (at most 50) bounds the read.
+      const snapshot = await rtdb.ref("activeBuses").orderByChild("busId").equalTo(busId).limitToFirst(51).once("value");
+      for (const node of Object.values(snapshot.val() || {})) {
+        const live = publicLiveBus(node);
+        if (live) return live;
+      }
+      return null;
     });
     if (!data) { res.status(404).json({ error: "Bus not found or inactive" }); return; }
     res.json(data);
