@@ -12,6 +12,8 @@ vi.mock("../lib/firebaseAdmin", () => ({
     collection: (name: string) => ({
       doc: (id: string) => ({
         get: async () => {
+          // Firestore rejects reserved __*__ resource IDs with INVALID_ARGUMENT.
+          if (/^__.*__$/.test(id)) throw Object.assign(new Error(`Resource id "${id}" is invalid because it is reserved.`), { code: 3 });
           const value = harness.collections.get(name)?.get(id);
           harness.reads.push(`${name}/${id}`);
           await harness.beforeReturn?.(name, id);
@@ -224,6 +226,14 @@ describe("HTTPS device credentials", () => {
       validSecret,
       1_001,
     )).resolves.toEqual({ busId: "bus_1", routeId: "route_1" });
+  });
+
+  it("rejects reserved Firestore device IDs as invalid credentials without a registry read", async () => {
+    const secret = await configure();
+    for (const deviceId of ["__device__", "__proto__", "____"]) {
+      await expect(checkDeviceCredentials(deviceId, secret, 1_000)).resolves.toEqual({ status: "invalid" });
+    }
+    expect(harness.reads).toEqual([]);
   });
 
   it("accepts only a bounded Device authorization secret", () => {

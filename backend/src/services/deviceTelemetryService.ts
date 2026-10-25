@@ -39,6 +39,10 @@ const SCRYPT_MAX_CONCURRENT = 4;
 const scryptLimiter = createConcurrencyLimiter(SCRYPT_MAX_CONCURRENT);
 const ingestionExecution = new BoundedKeyedExecutor<string>({ maxConcurrent: 8, maxPending: 32, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Firestore rejects __*__ document IDs as reserved (INVALID_ARGUMENT). Such an
+// ID can never be provisioned, so treat it as an invalid credential instead of
+// letting the registry read fail as a retryable dependency outage.
+const RESERVED_DOCUMENT_ID = /^__.*__$/;
 const CREDENTIAL_CACHE_MS = 60_000;
 const NEGATIVE_CACHE_MS = 5_000;
 const MAX_CREDENTIAL_CACHE_ENTRIES = 1_000;
@@ -340,6 +344,7 @@ export async function checkDeviceCredentials(
   secret: string,
   now: number,
 ): Promise<DeviceCredentialResult> {
+  if (RESERVED_DOCUMENT_ID.test(deviceId)) return { status: "invalid" };
   ensureDeviceCredentialInvalidationListener();
   const suppliedDigest = digestSecret(secret);
   const cacheKey = credentialCacheKey(deviceId, suppliedDigest);
