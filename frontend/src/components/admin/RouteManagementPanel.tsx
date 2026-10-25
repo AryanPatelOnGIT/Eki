@@ -712,9 +712,10 @@ export default function RouteManagementPanel() {
         : 0,
     });
 
-  const handleSaved = () => {
-    setEditor(null);
-    setSuccessMsg(editor?.mode === "edit" ? "Route updated!" : "Route deployed!");
+  const handleSaved = (savedEditor: EditorState) => {
+    // A save that outlives its cancelled editor must not close a newer draft.
+    setEditor(current => current === savedEditor ? null : current);
+    setSuccessMsg(savedEditor.mode === "edit" ? "Route updated!" : "Route deployed!");
     if (successTimerRef.current) clearTimeout(successTimerRef.current);
     successTimerRef.current = setTimeout(() => setSuccessMsg(""), 4000);
   };
@@ -748,7 +749,7 @@ export default function RouteManagementPanel() {
   };
 
   if (editor) {
-    return <RouteEditor initial={editor} onSaved={handleSaved} onCancel={() => setEditor(null)} />;
+    return <RouteEditor initial={editor} onSaved={() => handleSaved(editor)} onCancel={() => setEditor(null)} />;
   }
 
   const selectedRouteName = deleteRouteId ? (routes.find(r => r.id === deleteRouteId)?.name ?? deleteRouteId) : "";

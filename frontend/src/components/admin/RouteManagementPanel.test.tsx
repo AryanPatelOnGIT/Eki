@@ -110,6 +110,18 @@ describe("route editing and operation recovery", () => {
     expect(mocks.save.mock.calls.map(call => call[1])).toEqual(["qa-save-operation", "qa-save-operation"]);
     expect(mocks.save.mock.calls[1][2]).toMatchObject({ expectedVersion: 2 });
   });
+  it("keeps a newly opened draft open when a cancelled earlier save completes later", async () => {
+    let finishSave!: (value: unknown) => void;
+    mocks.save.mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+    const user = await edit();
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    await user.click(screen.getByRole("button", { name: "Cancel route editing" }));
+    await user.click(screen.getByRole("button", { name: "Add Route" }));
+    await user.type(screen.getByLabelText("Display Name"), "Unsaved new route");
+    await act(async () => { finishSave({ saved: true }); });
+    expect((screen.getByLabelText("Display Name") as HTMLInputElement).value).toBe("Unsaved new route");
+    expect(screen.getByRole("button", { name: "Deploy" })).toBeTruthy();
+  });
   it("cancel never deletes a route", async () => {
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); render(<RouteManagementPanel />); const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Delete route QA route" }));
