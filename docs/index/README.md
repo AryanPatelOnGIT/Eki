@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-20 18:50 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 ## New to the project
 
@@ -64,7 +64,9 @@ the supplied historical control/API/race inventories with current overrides.
 
 Start with [the testing index](../testing/README.md). It catalogs every dated
 report, distinguishes stationary/synthetic/physical evidence, and points to
-the remaining acceptance gates. [Test strategy](../testing/TEST_STRATEGY.md)
+the remaining acceptance gates. The
+[25 October adversarial audit](../testing/ADVERSARIAL_AUDIT_2026-10-25.md)
+lists the open defects awaiting product decisions. [Test strategy](../testing/TEST_STRATEGY.md)
 owns current commands; historical test counts apply only to their recorded run.
 
 ## Package and repository entry points
