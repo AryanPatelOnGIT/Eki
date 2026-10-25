@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPanel from "./SettingsPanel";
+import { hasUnsavedChanges } from "@/lib/unsavedChanges";
 const mocks = vi.hoisted(() => ({ save: vi.fn(), error: null as string | null, settings: {
   serviceStartTime: "8:00 am", noBusesMessage: "No buses running", noBusesSubMessage: "Service starts at {time}", announcementText: "", announcementActive: false,
 } }));
@@ -81,5 +82,14 @@ describe("admin settings editing", () => {
     expect(screen.queryByLabelText("Service Start Time")).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it("reports changed settings as unsaved only until they are reverted", async () => {
+    render(<SettingsPanel />); const user = userEvent.setup();
+    expect(hasUnsavedChanges()).toBe(false);
+    const field = screen.getByLabelText("Service Start Time");
+    await user.type(field, "x");
+    expect(hasUnsavedChanges()).toBe(true);
+    await user.type(field, "{Backspace}");
+    expect(hasUnsavedChanges()).toBe(false);
   });
 });

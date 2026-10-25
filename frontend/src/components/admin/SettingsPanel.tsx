@@ -6,6 +6,7 @@ import { Save, Loader2, Eye, EyeOff, Megaphone, Clock, MessageSquare, Info } fro
 import AlertModal from "@/components/ui/AlertModal";
 import { errorMessage } from "@/lib/errors";
 import { validateSettingsInput } from "@/lib/adminValidation";
+import { useUnsavedChanges } from "@/lib/unsavedChanges";
 
 function Field({
   label,
@@ -53,6 +54,7 @@ export default function SettingsPanel() {
     ([key, value]) => value !== settings[key as keyof GlobalSettings],
   )) as Partial<GlobalSettings>;
   const isDirty = Object.keys(changedFields).length > 0;
+  useUnsavedChanges(isDirty);
 
   useEffect(() => {
     return () => {

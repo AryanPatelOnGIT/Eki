@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import RouteManagementPanel from "./RouteManagementPanel";
 import { ApiError } from "@/lib/apiClient";
+import { hasUnsavedChanges } from "@/lib/unsavedChanges";
 const mocks = vi.hoisted(() => ({ save: vi.fn(), newId: vi.fn(), route: {
   id: "qa-route", name: "QA route", color: "#3B82F6", waypoints: [], configVersion: 2,
   stops: [{ id: "alpha", name: "Alpha", shortName: "A", lat: 23, lng: 72 }, { id: "beta", name: "Beta", shortName: "B", lat: 23.01, lng: 72.01 }],
@@ -138,4 +139,12 @@ describe("route editing and operation recovery", () => {
     expect(screen.getAllByRole("dialog")).toEqual([message.closest("[role=dialog]")]);
     expect(screen.queryByText("Delete Route?")).toBeNull();
   });
+  it("reports an edited route draft as unsaved until it is cancelled", async () => {
+    const user = await edit();
+    expect(hasUnsavedChanges()).toBe(false);
+    await user.type(screen.getByLabelText("Display Name"), " renamed");
+    expect(hasUnsavedChanges()).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Cancel route editing" }));
+    expect(hasUnsavedChanges()).toBe(false);
+  }, 15_000);
 });

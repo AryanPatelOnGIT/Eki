@@ -20,6 +20,7 @@ import { errorMessage } from "@/lib/errors";
 import { ApiError, apiRequest, acknowledgedField, isApiRecord } from "@/lib/apiClient";
 import { placeSearchErrorMessage } from "@/lib/placeSearchErrors";
 import { newRouteSaveId, saveRoute } from "@/lib/routeSaveClient";
+import { useUnsavedChanges } from "@/lib/unsavedChanges";
 import {
   prepareRouteSavePayload,
   reorderRouteStops,
@@ -345,6 +346,8 @@ function RouteEditor({
   const [routeIdEdited, setRouteIdEdited] = useState(Boolean(initial.routeId));
   const saveOperationRef = useRef<{ payload: string; saveId: string } | null>(null);
   const editorId = useId();
+  const draftKey = (draft: EditorState) => JSON.stringify([draft.routeId, draft.name, draft.color, draft.stops]);
+  useUnsavedChanges(draftKey(state) !== draftKey(initial));
 
   const setField = <K extends keyof EditorState>(k: K, v: EditorState[K]) =>
     setState(s => ({ ...s, [k]: v }));

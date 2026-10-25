@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { lazy, Suspense, type ComponentType } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { lazy, Suspense, useState, type ComponentType } from "react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { useUnsavedChanges } from "@/lib/unsavedChanges";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import AdminPage from "./page";
@@ -9,7 +10,10 @@ vi.mock("next/dynamic", () => ({ default: (loader: () => Promise<{ default: Comp
   return function TestDynamic(props: Record<string, unknown>) { return <Suspense fallback="Loading panel"><Loaded {...props} /></Suspense>; };
 } }));
 vi.mock("@/components/admin/DashboardPanel", () => ({ default: () => <p>Operations content</p> }));
-vi.mock("@/components/admin/RouteManagementPanel", () => ({ default: () => <p>Routes content</p> }));
+vi.mock("@/components/admin/RouteManagementPanel", () => ({ default: function Routes() {
+  const [dirty, setDirty] = useState(false); useUnsavedChanges(dirty);
+  return <><p>Routes content</p><button type="button" onClick={() => setDirty(true)}>Start draft</button></>;
+} }));
 vi.mock("@/components/admin/FleetManagementPanel", () => ({ default: () => <p>Fleet content</p> }));
 vi.mock("@/components/admin/RideHistoryPanel", () => ({ default: () => <p>History content</p> }));
 vi.mock("@/components/admin/FeedbackPanel", () => ({ default: () => <p>Feedback content</p> }));
@@ -43,5 +47,23 @@ describe("all administration sections", () => {
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Live Ops" }));
     await user.keyboard("{End}"); expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Settings" }));
     await user.keyboard("{Home}"); expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Live Ops" }));
+  });
+  it("asks before another section discards an unsaved draft", async () => {
+    render(<AdminPage />); const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Routes" }));
+    await user.click(await screen.findByRole("button", { name: "Start draft" }));
+    const unload = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    const dialog = screen.getByRole("dialog");
+    expect(screen.getByText("Routes content")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Routes" }).getAttribute("aria-selected")).toBe("true");
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Discard changes" }));
+    expect(await screen.findByText("History content")).toBeTruthy();
+    const later = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(later);
+    expect(later.defaultPrevented).toBe(false);
   });
 });
