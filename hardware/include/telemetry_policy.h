@@ -12,6 +12,14 @@ inline bool speedIsPlausible(double speedKmh) {
   return std::isfinite(speedKmh) && speedKmh >= 0.0 && speedKmh <= 200.0;
 }
 
+// TinyGPS++ converts any checksummed DDMM digits without a range check. Keep
+// the firmware sample inside the same envelope the telemetry API validates.
+inline bool coordinatesAreValid(double lat, double lng) {
+  return std::isfinite(lat) && std::isfinite(lng) &&
+         lat >= -90.0 && lat <= 90.0 &&
+         lng >= -180.0 && lng <= 180.0;
+}
+
 constexpr double DISTANCE_THRESHOLD_M = 5.0;
 constexpr double HEADING_THRESHOLD_DEG = 15.0;
 constexpr double SPEED_THRESHOLD_KMH = 5.0;

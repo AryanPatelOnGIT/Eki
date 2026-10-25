@@ -1808,6 +1808,7 @@ TelemetryFix buildFixFromRmc() {
 
   fix.lat = gps.location.lat();
   fix.lng = gps.location.lng();
+  if (!eki::telemetry::coordinatesAreValid(fix.lat, fix.lng)) return fix;
   const double rawSpeed = gps.speed.isValid() ? gps.speed.kmph() : 0.0;
   if (!eki::telemetry::speedIsPlausible(rawSpeed)) return fix;
   fix.speed = rawSpeed;

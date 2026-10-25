@@ -37,6 +37,20 @@ void test_gnss_fix_requires_fresh_coherent_fields() {
   TEST_ASSERT_FALSE(gnssFixFieldsAreFresh(true, 0, true, 0, false, 0, true, stale));
 }
 
+void test_out_of_range_coordinates_are_not_a_fix() {
+  // TinyGPS++ accepts any checksummed DDMM digits, so 9500.0000,N becomes 95.
+  // The backend rejects such samples with 400, which costs a 30 s retry pause.
+  TEST_ASSERT_TRUE(coordinatesAreValid(23.0, 72.0));
+  TEST_ASSERT_TRUE(coordinatesAreValid(-90.0, -180.0));
+  TEST_ASSERT_TRUE(coordinatesAreValid(90.0, 180.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(95.0, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(-90.5, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, 185.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, -180.5));
+  TEST_ASSERT_FALSE(coordinatesAreValid(NAN, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, INFINITY));
+}
+
 void test_implausible_speed_is_rejected_instead_of_clamped() {
   TEST_ASSERT_TRUE(speedIsPlausible(0.0));
   TEST_ASSERT_TRUE(speedIsPlausible(200.0));
@@ -671,6 +685,7 @@ int main(int, char **) {
   RUN_TEST(test_first_diagnostic_delay_is_rollover_safe_and_latched);
   RUN_TEST(test_haversine_and_heading_wrap);
   RUN_TEST(test_gnss_fix_requires_fresh_coherent_fields);
+  RUN_TEST(test_out_of_range_coordinates_are_not_a_fix);
   RUN_TEST(test_implausible_speed_is_rejected_instead_of_clamped);
   RUN_TEST(test_motion_hysteresis_filters_single_noisy_readings);
   RUN_TEST(test_motion_hysteresis_requires_consecutive_qualifying_readings);
