@@ -439,7 +439,7 @@ describe("hostile browser storage and legacy profiles", () => {
   it.each(["student", "", 42, "Admin"])("treats an unrecognised legacy profile role %j as passenger", async role => {
     mocks.profile.mockResolvedValue({ exists: () => true, data: () => ({ role }) });
     const hook = await mount();
-    const account = { uid: "legacy-role", getIdToken: async () => "synthetic", getIdTokenResult: async () => ({ claims: {} }) };
+    const account = { uid: "legacy-role", getIdToken: async () => "synthetic", getIdTokenResult: async () => ({ claims: { role: "" } }) };
     mocks.auth.currentUser = account;
     await act(async () => { await mocks.callback!(account); });
     expect(hook.result.current.roleError).toBeNull();
