@@ -549,6 +549,17 @@ describe("fleet operation resources", () => {
     expect(await publication).toEqual([false]);
     expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
   });
+  it("rejects malformed vehicle route assignments instead of silently clearing or dropping routes", async () => {
+    state.docs.set("routes/route_1", { name: "Route 1" });
+    const bus = { id: "bus_1", name: "Before", assignedRoutes: ["route_1"] };
+    state.docs.set("buses/bus_1", bus);
+    for (const assignedRoutes of ["route_1", { route_1: true }, null, ["route_1", "bad id"], ["route_1", 7]]) {
+      const response = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "After", assignedRoutes }) });
+      expect(response.status).toBe(400);
+      expect(state.docs.get("buses/bus_1")).toEqual(bus);
+    }
+  });
   it("drains accepted fleet work while rejecting late mutation admission", async () => {
     let release!: () => void; state.gate = new Promise<void>(done => { release = done; });
     const accepted = contractFetch(`${base}/api/fleet/reconcile`, { method: "POST" });

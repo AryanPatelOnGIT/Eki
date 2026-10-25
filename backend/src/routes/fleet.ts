@@ -276,13 +276,12 @@ router.post("/reconcile", fleetMutation(async (req: Request, res: Response) => {
 router.put("/buses/:id", fleetMutation(async (req: Request, res: Response) => {
   const id = req.params.id;
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-  const rawRoutes: unknown[] = Array.isArray(req.body?.assignedRoutes)
-    ? req.body.assignedRoutes
-    : [];
-  const assignedRoutes = [
-    ...new Set(rawRoutes.filter((value): value is string => validId(value))),
-  ];
-  if (!validId(id) || !name || name.length > 100 || assignedRoutes.length > 50) {
+  // An omitted list is an explicit empty assignment; a malformed one must never
+  // be coerced into removing or silently dropping existing route assignments.
+  const rawRoutes: unknown = req.body?.assignedRoutes === undefined ? [] : req.body.assignedRoutes;
+  const routesValid = Array.isArray(rawRoutes) && rawRoutes.every(validId);
+  const assignedRoutes = routesValid ? [...new Set(rawRoutes as string[])] : [];
+  if (!validId(id) || !name || name.length > 100 || !routesValid || assignedRoutes.length > 50) {
     res.status(400).json({ error: "Invalid vehicle data." });
     return;
   }
