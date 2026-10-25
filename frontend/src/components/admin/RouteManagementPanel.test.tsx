@@ -116,4 +116,14 @@ describe("route editing and operation recovery", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalled(); vi.unstubAllGlobals();
   });
+  it("closes the delete confirmation when deletion fails so only the error dialog remains", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "Route is in service" }), { status: 409 })));
+    render(<RouteManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete route QA route" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete Route" }));
+    const message = await screen.findByText("Failed to delete: Route is in service");
+    expect(screen.getAllByRole("dialog")).toEqual([message.closest("[role=dialog]")]);
+    expect(screen.queryByText("Delete Route?")).toBeNull();
+  });
 });

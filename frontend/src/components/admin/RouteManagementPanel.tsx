@@ -739,6 +739,8 @@ export default function RouteManagementPanel() {
       });
       setDeleteRouteId(null);
     } catch (error: unknown) {
+      // Close the confirmation so its backdrop does not cover the error dialog.
+      setDeleteRouteId(null);
       setPanelAlertMsg("Failed to delete: " + errorMessage(error));
     } finally {
       setIsDeleting(false);
