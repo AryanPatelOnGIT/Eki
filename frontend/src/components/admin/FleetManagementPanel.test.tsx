@@ -87,11 +87,31 @@ describe("fleet and personnel controls", () => {
   it("retains new vehicle input after a server rejection", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"vehicle already exists"}', { status: 409 })));
     render(<FleetManagementPanel />); const user = userEvent.setup();
-    await user.type(screen.getByLabelText("New vehicle Bus ID"), "qa-bus");
+    await user.type(screen.getByLabelText("New vehicle Bus ID"), "qa-bus-new");
     await user.type(screen.getByLabelText("New vehicle display name"), "QA duplicate");
     await user.click(screen.getByRole("checkbox", { name: "QA route" }));
     await user.click(screen.getByRole("button", { name: "Add new vehicle" }));
     expect(await screen.findByText(/vehicle already exists/)).toBeTruthy();
     expect((screen.getByLabelText("New vehicle display name") as HTMLInputElement).value).toBe("QA duplicate");
   });
+  it("refuses to register a vehicle ID that already exists instead of overwriting it", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.type(screen.getByLabelText("New vehicle Bus ID"), " qa-bus ");
+    await user.type(screen.getByLabelText("New vehicle display name"), "Replacement");
+    await user.click(screen.getByRole("button", { name: "Add new vehicle" }));
+    expect(screen.getByText(/Vehicle ID "qa-bus" already exists/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("New vehicle display name") as HTMLInputElement).value).toBe("Replacement");
+  }, 15_000);
+  it("refuses to register an operator ID that already exists instead of overwriting it", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.type(screen.getByLabelText("New operator ID"), "qa-driver");
+    await user.type(screen.getByLabelText("New operator display name"), "Someone else");
+    await user.type(screen.getByLabelText("Firebase Auth UID for new operator"), "other-uid");
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    expect(screen.getByRole("alert").textContent).toContain('Operator ID "qa-driver" already exists');
+    expect(fetchMock).not.toHaveBeenCalled();
+  }, 15_000);
 });

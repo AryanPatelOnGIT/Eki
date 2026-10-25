@@ -161,6 +161,16 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       setErrorMsg(validationError);
       return;
     }
+    // PUT is an upsert: registering a taken ID would silently overwrite it.
+    const existingVehicleError = busesLoading
+      ? "Saved vehicles are still loading. Try again in a moment."
+      : buses.some((bus) => bus.id === newBusId.trim())
+        ? `Vehicle ID "${newBusId.trim()}" already exists. Edit the saved vehicle instead.`
+        : null;
+    if (existingVehicleError) {
+      setErrorMsg(existingVehicleError);
+      return;
+    }
     try {
       await runSave(async () => {
         await fleetRequest(`/buses/${encodeURIComponent(newBusId.trim())}`, "PUT", {
@@ -217,6 +227,17 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
     const validationError = validateOperatorInput(newDriverId, newDriverName, newDriverAuthUid);
     if (validationError) {
       setOperatorError(validationError);
+      operatorErrorRef.current?.focus();
+      return;
+    }
+    // PUT is an upsert: reusing an operator ID would replace (and demote) its account.
+    const existingOperatorError = driversLoading
+      ? "Saved operators are still loading. Try again in a moment."
+      : drivers.some((driver) => driver.id === newDriverId.trim())
+        ? `Operator ID "${newDriverId.trim()}" already exists. Edit the saved operator instead.`
+        : null;
+    if (existingOperatorError) {
+      setOperatorError(existingOperatorError);
       operatorErrorRef.current?.focus();
       return;
     }
