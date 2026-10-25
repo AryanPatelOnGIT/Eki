@@ -299,8 +299,10 @@ function assignmentFromDevice(
     device?.enabled === false ||
     typeof busId !== "string" ||
     !SAFE_ID.test(busId) ||
+    RESERVED_DOCUMENT_ID.test(busId) ||
     typeof routeId !== "string" ||
-    !SAFE_ID.test(routeId)
+    !SAFE_ID.test(routeId) ||
+    RESERVED_DOCUMENT_ID.test(routeId)
   ) {
     return null;
   }

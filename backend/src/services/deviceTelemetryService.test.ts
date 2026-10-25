@@ -236,6 +236,12 @@ describe("HTTPS device credentials", () => {
     expect(harness.reads).toEqual([]);
   });
 
+  it.each([["busId", "__bus__"], ["routeId", "__route__"]])("treats a registry %s of %s as unassigned instead of failing the read", async (field, value) => {
+    const secret = await configure();
+    harness.collections.get("devices")!.get("device_1")![field] = value;
+    await expect(checkDeviceCredentials("device_1", secret, 1_000)).resolves.toEqual({ status: "unassigned" });
+  });
+
   it("accepts only a bounded Device authorization secret", () => {
     expect(parseDeviceAuthorization(undefined)).toBeNull();
     expect(parseDeviceAuthorization("Bearer something")).toBeNull();
