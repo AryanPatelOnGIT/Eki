@@ -238,9 +238,11 @@ function useAuthState(): AuthContextValue {
 
               if (!isCurrentAuth()) return;
 
-              let role: UserRole = userSnap.exists()
-                ? (userSnap.data()?.role as UserRole) ?? "passenger"
-                : "passenger";
+              // Unknown legacy profile values fall back to least privilege so
+              // they never publish a role no workspace or listener accepts.
+              const profileRole: unknown = userSnap.exists() ? userSnap.data()?.role : undefined;
+              let role: UserRole =
+                profileRole === "driver" || profileRole === "admin" ? profileRole : "passenger";
 
               // A missing token claim is repaired through the authenticated
               // backend even when the Firestore profile already exists. The
