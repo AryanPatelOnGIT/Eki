@@ -114,6 +114,12 @@ function projectToSegment(point: LatLng, start: LatLng, end: LatLng) {
 }
 
 const distanceCache = new WeakMap<readonly LatLng[], number[]>();
+/** Segments joined directly or only through zero-length (repeated-vertex) segments. */
+function segmentsAreContinuous(cumulative: readonly number[], left: number, right: number): boolean {
+  const lower = Math.min(left, right), upper = Math.max(left, right);
+  return upper - lower <= 1 || cumulative[upper] === cumulative[lower + 1];
+}
+
 function cumulativeDistances(path: readonly LatLng[]): number[] {
   const cached = distanceCache.get(path);
   if (cached) return cached;
@@ -211,7 +217,7 @@ export function matchRoutePosition(
   // farther along a self-intersecting route.
   let competingScore = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {
-    if (Math.abs(candidate.segmentIndex - best.segmentIndex) > 1) {
+    if (!segmentsAreContinuous(cumulative, candidate.segmentIndex, best.segmentIndex)) {
       competingScore = Math.min(competingScore, candidate.score);
     }
   }

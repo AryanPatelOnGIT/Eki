@@ -150,6 +150,22 @@ describe("route matching", () => {
     expect(match?.isAmbiguous).toBe(false);
   });
 
+  it("does not treat a repeated polyline vertex as competing geometry", () => {
+    // Provider polylines and saved routes can repeat a vertex at 1e-5
+    // quantization; the zero-length segment joins one continuous leg.
+    const path = [
+      { lat: 23, lng: 72 },
+      { lat: 23, lng: 72.001 },
+      { lat: 23, lng: 72.001 },
+      { lat: 23, lng: 72.002 },
+    ];
+    for (const heading of [90, undefined]) {
+      const match = matchRoutePosition({ lat: 23.00001, lng: 72.00101 }, path, heading);
+      expect(match?.isAmbiguous).toBe(false);
+      expect(evaluateRouteAdherence("ON_ROUTE", 0, match, true).routeState).toBe("ON_ROUTE");
+    }
+  });
+
   it("does not treat an ordinary sharp turn as competing geometry", () => {
     const match = matchRoutePosition(
       { lat: 23, lng: 72.001 },
