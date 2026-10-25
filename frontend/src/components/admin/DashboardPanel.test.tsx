@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DashboardPanel from "./DashboardPanel";
 import type { ActiveBusEntry } from "@/lib/activeBusEntries";
@@ -21,13 +21,46 @@ vi.mock("@/lib/firebaseAuth", () => ({ auth: {currentUser: {getIdToken: async ()
 vi.mock("@/components/ui/CustomSelect", () => ({default: ({ariaLabel, value, options, onChange, disabled}: {ariaLabel: string; value: string; options: {value: string; label: string}[]; onChange: (value: string) => void; disabled?: boolean}) => <select aria-label={ariaLabel} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}));
 beforeEach(() => { state.entries = []; state.routes = [{ ...route, stops: [] }]; state.geometries.clear(); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-async function prepare() {
-  const user = userEvent.setup(); render(<DashboardPanel />);
-  expect((screen.getByRole("button", {name: "Start service"}) as HTMLButtonElement).disabled).toBe(true);
-  await user.selectOptions(screen.getByRole("combobox", {name: "Operator"}), "qa-driver");
-  return user;
-}
 describe("admin service creation", () => {
+  it("offers recovery for a terminal automatic intent without reviving the old ride",()=>{
+    state.entries=[{...fixtureBus(),sessionId:undefined,status:"offline",automaticServiceState:"paused"} as ActiveBusEntry];
+    render(<DashboardPanel />);
+    expect(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"})).toBeTruthy();
+  });
+  it("explains a blocked automatic setup using the authoritative assignment state",()=>{
+    state.entries=[{...fixtureBus(),sessionId:undefined,status:"offline",automaticServiceState:"assignment_required"} as ActiveBusEntry];
+    render(<DashboardPanel />);
+    expect(screen.getByText("Assignment required")).toBeTruthy();
+  });
+  it.each([200,503])("retries an uncertain resume response %s with the same operation key",async status=>{
+    state.entries=[{...fixtureBus(),status:"offline",sessionId:undefined,automaticServicePaused:true} as ActiveBusEntry];
+    const send=vi.fn().mockResolvedValueOnce(new Response('{}',{status})).mockResolvedValueOnce(new Response('{"sessionId":"resumed-session"}'));
+    vi.stubGlobal("fetch",send);render(<DashboardPanel />);const user=userEvent.setup();
+    await user.click(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"}));
+    await screen.findByText(status===200?/did not confirm/:/HTTP 503/);
+    await user.click(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"}));
+    await screen.findByText(/Automatic tracking resumed/);
+    const first=new Headers(send.mock.calls[0][1].headers).get("Idempotency-Key");
+    expect(first).toBeTruthy();expect(new Headers(send.mock.calls[1][1].headers).get("Idempotency-Key")).toBe(first);
+  });
+  it("retains an offline session as paused without counting it as a live service", () => {
+    state.entries=[{...fixtureBus("forward"),deviceState:"offline"} as ActiveBusEntry];
+    render(<DashboardPanel />);
+    expect(screen.getByText("Service paused")).toBeTruthy();
+    expect(screen.getByText("0 devices online · 0 services")).toBeTruthy();
+  });
+  it("offers an explicit resume only for an intentionally paused receiver", async () => {
+    state.entries=[{...fixtureBus(),status:"offline",sessionId:undefined,automaticServicePaused:true} as ActiveBusEntry];
+    vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response('{"sessionId":"resumed-session","direction":null}')));
+    render(<DashboardPanel />);
+    await userEvent.setup().click(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"}));
+    expect(await screen.findByText(/Automatic tracking resumed/)).toBeTruthy();
+  });
+  it("explains automatic service admission without a manual start control", () => {
+    render(<DashboardPanel />);
+    expect(screen.queryByRole("button", {name:"Start service"})).toBeNull();
+    expect(screen.getByText(/Services start automatically/)).toBeTruthy();
+  });
   it("marks retained telemetry delayed using the passenger threshold and recovers on a fresh receipt", async () => {
     const { SIGNAL_LOST_MS } = await import("@/lib/liveBusFreshness");
     const now = Date.now();
@@ -89,22 +122,5 @@ describe("admin service creation", () => {
     state.entries = [{ ...state.entries[0], timestamp: Date.now() }];
     view.rerender(<DashboardPanel />);
     expect(screen.getByText("1 device online · 0 services")).toBeTruthy();
-  });
-  it.each([200, 503])("reuses the operation key after an uncertain HTTP %i reply and accepts only a confirmed session", async status => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('{}', {status})).mockResolvedValueOnce(new Response('{"sessionId":"qa-session","direction":null}'));
-    vi.stubGlobal("fetch", fetchMock); const user = await prepare();
-    await user.click(screen.getByRole("button", {name: "Start service"}));
-    expect(await screen.findByText(status === 200 ? /did not confirm/ : /HTTP 503/)).toBeTruthy();
-    await user.click(screen.getByRole("button", {name: "Start service"}));
-    expect(await screen.findByText(/Service started \(qa-session\)/)).toBeTruthy();
-    const first = new Headers(fetchMock.mock.calls[0][1].headers).get("Idempotency-Key");
-    expect(first).toBeTruthy();
-    expect(new Headers(fetchMock.mock.calls[1][1].headers).get("Idempotency-Key")).toBe(first);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.test/api/v2/ride-sessions");
-  });
-  it("keeps the start button locked while the server response is pending", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    const user = await prepare(); await user.click(screen.getByRole("button", {name: "Start service"}));
-    await waitFor(() => expect((screen.getByRole("button", {name: "Start service"}) as HTMLButtonElement).disabled).toBe(true));
   });
 });

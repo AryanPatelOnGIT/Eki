@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMap } from "@vis.gl/react-google-maps";
 import type { LatLng } from "@/lib/polyline";
 import { auth } from "@/lib/firebaseAuth";
@@ -67,6 +67,10 @@ interface DirectionsRouteProps {
   progressDistanceM?: number;
   /** Keep the confirmed configured prefix when this bus follows a separate reroute. */
   completedStopIndex?: number;
+  /** A separate live geometry replaces this road's remaining itinerary. */
+  hideRemaining?: boolean;
+  /** Prevent retained configured progress crossing sessions or itinerary revisions. */
+  progressContext?: string;
   /** First required stop in a dynamic path that starts at the bus. */
   firstStopIndex?: number;
   direction: "forward" | "reverse";
@@ -78,7 +82,7 @@ interface DirectionsRouteProps {
  * does not call the browser Directions service: rendering a map must not add
  * routing cost, quota pressure, or delay to the live GNSS stream.
  */
-export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color, hasBuses = false, nextStopIndices, progressDistanceM, completedStopIndex, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
+export default function DirectionsRoute({ routeId, stops, polyline, polylineQuality, color, hasBuses = false, nextStopIndices, progressDistanceM, completedStopIndex, hideRemaining = false, progressContext, firstStopIndex = 0, direction, onGeometryReady }: DirectionsRouteProps) {
   const map = useMap();
   const stopsKey = JSON.stringify(stops);
   const stableStops = useMemo(() => JSON.parse(stopsKey) as LatLng[], [stopsKey]);
@@ -110,9 +114,10 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
     const index = publishedStopIndex(value, stableStops.length);
     return index === undefined ? [] : [index === 0 ? 1 : index];
   }) ?? [])].sort((a, b) => a - b));
-  const baseColor = nextStopIndices !== undefined ? "#22c55e" : (color ?? "#22c55e");
+  const baseColor = nextStopIndices !== undefined ? "#3b82f6" : (color ?? "#3b82f6");
   const singleProgress = (JSON.parse(activeIndices) as number[]).length === 1;
   const completedIndex = publishedStopIndex(completedStopIndex, stableStops.length);
+  const confirmedPrefix = useRef<{ path: LatLng[]; context: string; completed: LatLng[] } | null>(null);
 
   useEffect(() => {
     onGeometryReady?.(path);
@@ -137,7 +142,7 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
   }, [direction, routeId, storedPath]);
 
   useEffect(() => {
-    if (!map || path.length < 2) return;
+    if (!map || path.length < 2 || hideRemaining) return;
 
     const outline = new google.maps.Polyline({
       path,
@@ -159,30 +164,34 @@ export default function DirectionsRoute({ routeId, stops, polyline, polylineQual
       outline.setMap(null);
       line.setMap(null);
     };
-  }, [map, path, hasBuses, baseColor]);
+  }, [map, path, hasBuses, baseColor, hideRemaining]);
 
   useEffect(() => {
     if (!map || path.length < 2) return;
+    if (confirmedPrefix.current?.path !== path || confirmedPrefix.current?.context !== progressContext) {
+      confirmedPrefix.current = null;
+    }
     const overlays: google.maps.Polyline[] = [];
     const add = (section: LatLng[], strokeColor: string, zIndex: number) => {
       if (section.length >= 2) overlays.push(new google.maps.Polyline({ path: section, strokeColor,
         strokeWeight: hasBuses ? 5 : 3, strokeOpacity: 1, zIndex, map }));
     };
     if (completedIndex !== undefined && completedIndex > 0) {
-      add(routeProgressPaths(path, legs, completedIndex).completed, "#71717a", 22);
+      add(confirmedPrefix.current?.completed ?? routeProgressPaths(path, legs, completedIndex).completed, "#71717a", 22);
     }
     for (const index of JSON.parse(activeIndices) as number[]) {
       if (singleProgress) {
         const sections = routeProgressPaths(path, legs, index, progressDistanceM);
+        if (progressContext && !hideRemaining) confirmedPrefix.current = { path, context: progressContext, completed: sections.completed };
         add(sections.completed, "#71717a", 22);
-        add(sections.active, "#3b82f6", 23);
+        if (!hideRemaining) add(sections.active, "#3b82f6", 23);
       } else {
         // A fleet has no shared completed distance. Preserve each active leg.
-        add(legs.get(index) ?? [], "#3b82f6", 23);
+        if (!hideRemaining) add(legs.get(index) ?? [], "#3b82f6", 23);
       }
     }
     return () => overlays.forEach(line => line.setMap(null));
-  }, [map, path, hasBuses, legs, activeIndices, singleProgress, progressDistanceM, completedIndex]);
+  }, [map, path, hasBuses, legs, activeIndices, singleProgress, progressDistanceM, completedIndex, hideRemaining, progressContext]);
 
   return null;
 }

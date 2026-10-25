@@ -1,3 +1,4 @@
+import { scheduleAutomaticServiceAdmission, invalidateAutomaticServiceAdmission } from "./automaticServiceAdmission";
 import {
   createHash,
   randomBytes,
@@ -131,6 +132,7 @@ const credentialFills = createBoundedSingleFlight<DeviceCredentialResult>({
   maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
 });
 const durableRideRestores = new Map<string, Promise<void>>();
+const durableRideRestoreLatest = new Map<string, { assignment: DeviceAssignment; sample: TelemetryPayload; allowAdmission: boolean }>();
 let credentialInvalidationListenerStarted = false;
 const status: Pick<
   HttpsTelemetryStatus,
@@ -505,12 +507,19 @@ function scheduleDurableRideRestore(
   sample: TelemetryPayload,
   claimId: string | null,
   recoverTerminal: boolean,
+  allowAdmission: boolean,
 ): void {
   const nodeKey = `${assignment.busId}_${assignment.routeId}`;
+  const previous = durableRideRestoreLatest.get(nodeKey);
+  const sameAssignment = previous?.assignment.deviceId === assignment.deviceId && previous?.assignment.assignmentRevision === assignment.assignmentRevision;
+  durableRideRestoreLatest.set(nodeKey, { assignment, sample, allowAdmission: allowAdmission || (sameAssignment && previous?.allowAdmission === true) });
   if (durableRideRestores.has(nodeKey)) return;
 
   const restore = restoreDurableRide(assignment, sample, claimId, recoverTerminal)
-    .then(() => undefined)
+    .then(restored => {
+      const latest = durableRideRestoreLatest.get(nodeKey);
+      if (!restored && latest?.allowAdmission) scheduleAutomaticServiceAdmission(latest.assignment, latest.sample);
+    })
     .catch((error) => {
       // Surface through the failure tracker too (issue #38): sustained
       // failures escalate to an error-level alert and show up on /health.
@@ -524,6 +533,7 @@ function scheduleDurableRideRestore(
     .finally(() => {
       if (durableRideRestores.get(nodeKey) === restore) {
         durableRideRestores.delete(nodeKey);
+        durableRideRestoreLatest.delete(nodeKey);
       }
     });
   durableRideRestores.set(nodeKey, restore);
@@ -660,7 +670,7 @@ async function persistTelemetry(
   assignment: DeviceAssignment,
   sample: TelemetryPayload,
   backendReceivedAt: number,
-): Promise<{ committed: boolean; hasSession: boolean; claimId: string | null; recoverTerminal: boolean }> {
+): Promise<{ committed: boolean; hasSession: boolean; needsServiceSetup: boolean; allowAutomaticAdmission: boolean; claimId: string | null; recoverTerminal: boolean }> {
   const deadline = currentExecutionDeadline();
   deadline?.markWriteDispatched();
   const writeStartedAt = Date.now();
@@ -682,6 +692,8 @@ async function persistTelemetry(
   recordSample(rtdbTransactionAttemptSamples, transactionAttempts);
   return {
     committed: transaction.committed,
+    needsServiceSetup: value?.serviceSetupPending === true && value?.tripState !== "completed" && value?.automaticServicePaused !== true,
+    allowAutomaticAdmission: !value?.sessionId && value?.automaticServicePaused !== true,
     hasSession:
       value?.status === "active" && typeof value.sessionId === "string" && value.sessionId.length > 0 &&
       (value.tripState === "pre_departure" || value.tripState === "in_service"),
@@ -732,11 +744,12 @@ async function executeDeviceTelemetry(
   }
 
   const persisted = await deadline.dependency("telemetry commit", () => persistTelemetry({ ...assignment, deviceId }, sample, serverReceivedAt));
-  if (!persisted.hasSession) {
+  if (!persisted.hasSession || persisted.needsServiceSetup) {
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
     // is not delayed by an additional Firestore read.
-    scheduleDurableRideRestore(assignment, sample, persisted.claimId, persisted.recoverTerminal);
+    scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal,
+      persisted.needsServiceSetup || (persisted.committed && persisted.allowAutomaticAdmission));
   }
   if (persisted.committed) {
     status.accepted += 1;
@@ -779,6 +792,7 @@ export function recordTelemetryRejection(now = Date.now()): void {
 }
 
 export function invalidateDeviceCredentialCache(deviceId: string): void {
+  invalidateAutomaticServiceAdmission(deviceId);
   credentialFills.invalidate(deviceId);
   const prefix = `${deviceId}:`;
   for (const key of credentialCache.keys()) {

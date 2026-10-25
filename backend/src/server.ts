@@ -34,6 +34,7 @@ import {
 } from "./services/telemetryRouteService";
 import { OPERATION_EXECUTOR_ID, drainHttpOperations } from "./services/httpOperations";
 import { drainDurableRideRecovery } from "./services/durableRideRecovery";
+import { drainAutomaticServiceAdmission } from "./services/automaticServiceAdmission";
 import { backgroundFailures } from "./lib/backgroundFailureTracker";
 import { createHealthState, probeRtdbConnection } from "./lib/healthState";
 import { createHttpMetricsMiddleware, registerOperationalMetrics } from "./lib/metrics";
@@ -354,7 +355,7 @@ async function shutdown(signal: string) {
     () => ({ status: "fulfilled" as const }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
   );
-  const recoveryResult = await drainDurableRideRecovery().then(
+  const recoveryResult = await drainDurableRideRecovery().then(() => drainAutomaticServiceAdmission()).then(
     () => ({ status: "fulfilled" as const }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
   );

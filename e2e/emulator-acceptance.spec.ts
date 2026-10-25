@@ -427,6 +427,29 @@ test('actual route editor keeps identity immutable and cancels a local rename wi
   await expect(page.getByRole('textbox', { name: 'Rename stop Synthetic origin', exact: true })).toHaveValue('Synthetic origin');
 });
 
+test('credible off-route authenticated telemetry publishes a versioned detour and passenger ETA without skipping a stop', async ({ page, request }, testInfo) => {
+  await page.goto('/'); await login(page);
+  await page.getByRole('button', { name: 'Track Synthetic route', exact: true }).click();
+  const response = await request.post(`${control}/telemetry/detour`);
+  expect(response.ok()).toBe(true);
+  const result = await response.json(); expect(result.statuses).toEqual([202, 202, 202]);
+  expect(result.observations.map((item: { currentStopIndex: number }) => item.currentStopIndex)).toEqual([1, 1, 1]);
+  const stored = await evidence(request);
+  expect(stored.live).toMatchObject({ sessionId: 'qa_session', routeSource: 'dynamic-reroute', currentStopIndex: 1 });
+  expect(stored.live.rawLocation).toMatchObject({ lat: 23.0005, lng: 72.0009, seq: 4 });
+  expect(stored.live.routeVersion).toBeGreaterThan(1);
+  const geometry = stored.activeGeometry[String(stored.live.routeVersion)];
+  expect(geometry).toMatchObject({ firstStopIndex: 1, routeId: 'qa_route', sessionId: 'qa_session' });
+  expect(geometry.polyline.length).toBeGreaterThan(0);
+  await expect.poll(async () => Object.values((await evidence(request)).publicRoute.buses)
+    .some((bus: any) => bus.routeSource === 'dynamic-reroute' && bus.routeVersion === stored.live.routeVersion)).toBe(true);
+  const picker = page.getByRole('combobox', { name: 'Destination station', exact: true });
+  await picker.click();
+  await expect(page.getByRole('option', { name: 'Synthetic middle', exact: true })).toContainText(/min/);
+  await expect(page.getByRole('option', { name: 'Synthetic end', exact: true })).toContainText(/min/);
+  await page.screenshot({ path: testInfo.outputPath('authenticated-detour-etas.png'), fullPage: true });
+});
+
 test('2.5m stop arrival updates the real passenger timeline only after authenticated telemetry reaches the circle', async ({ page, request }, testInfo) => {
   await page.goto('/'); await login(page); await board(page);
   const timeline = page.getByRole('button', { name: 'Route Timeline', exact: true });
@@ -613,6 +636,27 @@ test('admin operator creation edit cancellation and deletion update real claims 
   expect(removed.lock.sessionId).toBe('qa_session');
 });
 
+test('admin live service controls admit a qualified receiver without a manual start request',async({page,request})=>{
+  test.setTimeout(45000);
+  const trigger=await request.post(`${control}/automatic-service`);
+  expect(trigger.ok()).toBe(true);expect((await trigger.json()).status).toBe(202);
+  const starts:string[]=[];
+  page.on('request',req=>{if(req.method()==='POST'&&req.url().endsWith('/api/v2/ride-sessions'))starts.push(req.url());});
+  await page.goto('/?panel=ops');await login(page,'qa_admin');
+  await expect(page.getByText('Synthetic automatic bus',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Start service',exact:true})).toHaveCount(0);
+  // Device presence can render before the asynchronous protected-session commit.
+  await expect.poll(async()=>(await evidence(request)).sessions.filter((session:{busId:string})=>session.busId==='qa_auto_bus').length,{timeout:15000}).toBe(1);
+  const owned=(await evidence(request)).sessions.filter((session:{busId:string})=>session.busId==='qa_auto_bus');
+  expect(owned).toHaveLength(1);expect(owned[0]).toMatchObject({driverId:'qa_auto_driver',direction:'forward'});
+  await page.goto('/');await login(page,'qa_passenger');
+  await page.getByRole('button',{name:'Track Synthetic route',exact:true}).click();
+  await page.getByRole('combobox',{name:'Live bus',exact:true}).click();
+  await page.getByRole('option',{name:/^Bus qa_auto_bus/}).click();
+  await expect(page.getByRole('img',{name:/qa_auto_bus/})).toBeVisible();
+  expect(starts).toEqual([]);
+});
+
 test('admin live service controls persist bounded delay and interrupt safely before a distinct restart', async ({ page, request }) => {
   await page.goto('/?panel=ops'); await login(page, 'qa_admin');
   await page.getByRole('button', { expanded: false }).filter({ hasText: 'Synthetic bus' }).click();
@@ -663,26 +707,28 @@ test('admin live service controls persist bounded delay and interrupt safely bef
   // sixty-second arm policy. Supply a new authenticated fix before restarting.
   const freshFix = await request.post(`${control}/telemetry/fresh-origin`);
   expect(freshFix.ok()).toBe(true); expect((await freshFix.json()).statuses).toEqual([202]);
-  await select(page, 'Operator', 'Synthetic operator (qa_driver)');
-  await expect(page.getByRole('combobox', { name: 'Assigned vehicle', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start service', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Operator', exact: true })).toHaveCount(0);
+  expect((await evidence(request)).live.automaticServicePaused).toBe(true);
   // The API has a ten-second request budget. Observe its acknowledgement before
   // checking the UI, rather than treating a valid pending request as a failure
   // after Playwright's default five-second assertion window.
   const startAcknowledgement = page.waitForResponse(response =>
     response.url() === 'http://127.0.0.1:3116/api/v2/ride-sessions'
       && response.request().method() === 'POST', { timeout: 15_000 });
-  await page.getByRole('button', { name: 'Start service', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume automatic tracking for qa_bus', exact: true }).click();
   const startResponse = await startAcknowledgement;
   const startResult = await startResponse.json();
   const startEvidence = startResponse.ok() ? null : await evidence(request);
   expect(startResponse.ok(), JSON.stringify({ acknowledgement: startResult, live: startEvidence?.live, lock: startEvidence?.lock })).toBe(true);
   expect(startResult.sessionId).toEqual(expect.any(String));
   expect(startResult.resumed).not.toBe(true);
-  await expect(page.getByText(/^Service started /)).toBeVisible();
+  await expect(page.getByText('Automatic tracking resumed for qa_bus.', { exact: true })).toBeVisible();
   const restarted = await evidence(request);
   const fresh = restarted.sessions.find((ride: { id: string }) => ride.id !== 'qa_session');
   expect(fresh.id).toBe(startResult.sessionId);
   expect(fresh).toMatchObject({ busId: 'qa_bus', driverId: 'qa_driver', routeId: 'qa_route', passengers: {} });
   expect(restarted.sessions).toHaveLength(2); expect(restarted.lock.sessionId).toBe(fresh.id);
+  expect(restarted.live.automaticServicePaused).toBe(false);
   expect(restarted.completions).toEqual([]);
 });

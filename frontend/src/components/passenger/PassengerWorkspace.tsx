@@ -419,23 +419,22 @@ export default function PassengerWorkspace() {
   };
 
   return (
-    <div className="relative overflow-hidden text-white" style={{ height: "100dvh" }}>
+    <div className="relative flex flex-col overflow-hidden text-white" style={{ height: "100dvh" }}>
+      {(isResuming || rideRecoveryNotice || routesError || liveDataError) && <div className="relative z-50 shrink-0 space-y-2 bg-zinc-950 px-4 pb-2 pt-safe">
       {isResuming && (
         <div
-          className="absolute left-4 right-4 z-[9999] flex items-center gap-2 rounded-xl border border-amber-400/20 bg-zinc-950 px-4 py-3 text-sm font-semibold text-amber-300 shadow-lg"
-          style={{ top: "calc(env(safe-area-inset-top) + 1rem)" }}
+          className="flex items-center gap-2 rounded-xl border border-amber-400/20 bg-zinc-950 px-4 py-3 text-sm font-semibold text-amber-300 shadow-lg"
           role="status"
           aria-live="polite"
         >
           <WifiOff className="size-4 shrink-0" aria-hidden="true" />
-          <span className="text-pretty">Reconnecting to live bus data...</span>
+          <span className="text-pretty">{connectionGeneration === 0 ? "Connecting to live bus data..." : "Reconnecting to live bus data..."}</span>
         </div>
       )}
-      {rideRecoveryNotice && <div className="absolute left-4 right-4 z-50 rounded-xl bg-zinc-950 px-4 py-3 text-sm text-amber-300" role="status" style={{ top: "calc(env(safe-area-inset-top) + 1rem)" }}>{rideRecoveryNotice}</div>}
+      {rideRecoveryNotice && <div className="rounded-xl bg-zinc-950 px-4 py-3 text-sm text-amber-300" role="status">{rideRecoveryNotice}</div>}
       {(routesError || liveDataError) && (
         <div
-          className="absolute left-4 right-4 z-50 flex items-start gap-3 rounded-xl border border-red-400/20 bg-zinc-950 px-4 py-3 text-sm text-red-300 shadow-lg"
-          style={{ top: isResuming ? "calc(env(safe-area-inset-top) + 5rem)" : "calc(env(safe-area-inset-top) + 1rem)" }}
+          className="flex items-start gap-3 rounded-xl border border-red-400/20 bg-zinc-950 px-4 py-3 text-sm text-red-300 shadow-lg"
           role="alert"
         >
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -452,7 +451,8 @@ export default function PassengerWorkspace() {
           </button>
         </div>
       )}
-      <div className="absolute inset-0 flex flex-col overflow-hidden">
+      </div>}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
 
         {/* ── HOME VIEW ── */}
         <div inert={visibleView !== "home"} aria-hidden={visibleView !== "home"} className={`absolute inset-0 z-20 flex flex-col pt-safe transition-[opacity,transform] duration-500 ${visibleView === "home" ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8 pointer-events-none"}`}>

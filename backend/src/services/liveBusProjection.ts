@@ -16,6 +16,7 @@ const PUBLIC_FIELDS = [
   "busId", "routeId", "driverId", "sessionId", "lat", "lng", "speed", "heading", "timestamp", "seq",
   "deviceSentAt", "backendReceivedAt", "receivedAt", "status", "deviceState", "signalState", "motionState",
   "tripState", "currentStopIndex", "delayMinutes", "direction", "directionState", "originStopId", "destinationStopId",
+  "automaticServicePaused", "automaticServiceState",
   "activeRouteId", "routeVersion", "routeSource", "routeState", "routeDirection", "routeGeometryVersion",
   "routeComputedAt", "routeTrafficState",
   "mapMatchSeq", "mapMatchSampledAt", "mapMatchUpdatedAt", "matchConfidence", "distanceToActiveRoute",

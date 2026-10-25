@@ -20,6 +20,21 @@ function input(overrides: Partial<Parameters<typeof reduceTripState>[0]> = {}) {
 }
 
 describe("reduceTripState", () => {
+  it.each([4.00001, 10, NaN, -1])("does not consume departure or an intermediate stop from explicitly poor HDOP %s", gpsHdop => {
+    const stops = [origin, about200mNorth, { ...origin, lat: origin.lat + 0.004 }];
+    expect(reduceTripState(input({ stops, lat: about200mNorth.lat, currentStopIndex: 1,
+      motionState: "moving", hasDepartedOrigin: true, gpsHdop })).currentStopIndex).toBe(1);
+    expect(reduceTripState(input({ stops, lat: about200mNorth.lat, currentTripState: "pre_departure",
+      motionState: "moving", gpsHdop })).tripState).toBe("pre_departure");
+  });
+  it("does not join an unreliable prior fix into a seemingly precise stop crossing", () => {
+    const stops = [origin, about200mNorth, { ...origin, lat: origin.lat + 0.004 }];
+    for (const quality of [{ gpsHdop: 10 }, { motionState: "uncertain" as const }]) {
+      expect(reduceTripState(input({ stops, lat: about200mNorth.lat + 0.0001, currentStopIndex: 1,
+        hasDepartedOrigin: true, motionState: "moving",
+        previousPosition: { lat: about200mNorth.lat - 0.0001, lng: origin.lng, ...quality } })).currentStopIndex).toBe(1);
+    }
+  });
   it.each(["pre_departure", "in_service"] as const)("retains the 10m origin departure minimum for short routes in %s", currentTripState => {
     const shortStops = [origin, { ...origin, lat: origin.lat + 8 / 6_371_000 * 180 / Math.PI }];
     const near = reduceTripState(input({ currentTripState, stops: shortStops, motionState: "moving",
