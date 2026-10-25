@@ -19,6 +19,10 @@ export function createStaleBusSweeper(source: Reference, staleMs: number, onErro
   };
   return {
     tick(): Promise<void> {
+      // No scheduled wait exceeds these bounds; a longer one means the wall
+      // clock stepped backwards and would otherwise stall presence cleanup.
+      if (nextAttemptAt - now() > 30_000) nextAttemptAt = 0;
+      if (nextSweepAt - now() > staleMs) nextSweepAt = 0;
       if (stopped || inFlight || now() < nextAttemptAt || (cutoff === null && now() < nextSweepAt)) return inFlight ?? Promise.resolve();
       const running = (async () => {
         assertWorkerLeadership();
