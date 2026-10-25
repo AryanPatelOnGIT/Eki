@@ -42,6 +42,7 @@ import { createBrowserAdmission, createBrowserIngressLimiter } from "./lib/brows
 import { verifiedUserKeyGenerator } from "./lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "./lib/rateLimitShard";
 import { requireAdmin } from "./middleware/requireAdmin";
+import { clientRequestErrorHandler } from "./lib/requestErrors";
 import { assertRetentionConfiguration } from "./services/retentionSweeper";
 import { startWorkerCoordinator } from "./services/workerCoordinator";
 import { getTripStateQueueStatus } from "./services/tripStateEngine";
@@ -279,31 +280,7 @@ app.get("/api/health", requireAdmin, (_req, res) => {
   });
 });
 
-app.use((
-  error: unknown,
-  _req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-) => {
-  const parserError = error as { type?: unknown; status?: unknown };
-  if (
-    parserError?.type === "entity.too.large" ||
-    parserError?.type === "entity.parse.failed"
-  ) {
-    if (res.headersSent) {
-      next(error);
-      return;
-    }
-    res.status(parserError.type === "entity.too.large" ? 413 : 400).json({
-      error:
-        parserError.type === "entity.too.large"
-          ? "Request body is too large."
-          : "Invalid JSON body.",
-    });
-    return;
-  }
-  next(error);
-});
+app.use(clientRequestErrorHandler);
 
 app.use((
   error: unknown,

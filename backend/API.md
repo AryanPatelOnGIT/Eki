@@ -1,13 +1,13 @@
 # Backend API reference
 
-Last updated: 2026-10-25 22:30 IST (UTC+05:30).
+Last updated: 2026-10-25 22:55 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
 validation, policy extensions, Firebase listener channels, and compatibility.
 Run `npm run verify:openapi` from the repository root.
 
-Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
+Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Malformed JSON returns 400, an oversized body 413, an unsupported body charset or `Content-Encoding` 415, and a corrupt compressed body or undecodable path parameter 400, each with a fixed generic message. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
 
 ## Quick start
 
