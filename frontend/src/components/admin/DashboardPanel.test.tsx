@@ -175,4 +175,19 @@ describe("admin service creation", () => {
     view.rerender(<DashboardPanel />);
     expect(screen.queryByText("Chat session qa-session")).toBeNull();
   });
+  it("does not reopen a closed admin chat when its receiver reconnects or a new ride replaces it", () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    const view = render(<DashboardPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    state.entries = [{ ...state.entries[0], deviceState: "offline" }];
+    view.rerender(<DashboardPanel />);
+    state.entries = [{ ...state.entries[0], deviceState: "online", timestamp: Date.now(), backendReceivedAt: Date.now() }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText(/Chat session/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.entries = [{ ...state.entries[0], sessionId: "qa-next-session" }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText(/Chat session/)).toBeNull();
+  });
 });

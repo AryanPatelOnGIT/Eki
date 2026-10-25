@@ -801,6 +801,11 @@ export default function DashboardPanel() {
   const liveChatEntry = chatEntry
     ? activeEntries.find(entry => entry.busId === chatEntry.busId && entry.routeId === chatEntry.routeId)
     : undefined;
+  // A chat whose receiver went offline, or whose ride was replaced, ends instead
+  // of reopening later over whatever the admin is doing.
+  const chatOpen = Boolean(liveChatEntry && isLiveChatDeviceOnline(liveChatEntry)
+    && (!chatEntry?.sessionId || liveChatEntry.sessionId === chatEntry.sessionId));
+  if (chatEntry && !chatOpen) setChatEntry(null);
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden lg:flex-row">
@@ -947,7 +952,7 @@ export default function DashboardPanel() {
           )}
         </div>
       </div>
-      {liveChatEntry && isLiveChatDeviceOnline(liveChatEntry) && user?.uid && (
+      {liveChatEntry && chatOpen && user?.uid && (
         <div className="fixed inset-0 z-[250] bg-black/70 pt-10 sm:p-10">
           <div className="mx-auto h-full max-w-2xl">
             <MessagingPanel
