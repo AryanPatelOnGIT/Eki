@@ -1,6 +1,6 @@
 # Privileged database authorization (issue #315)
 
-Last updated: 2026-10-25 22:30 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Privileged ID tokens carry `authorizationVersion`. Firestore and Realtime
 Database compare it with backend-only `_userAuthorization/{uid}` records.
@@ -45,6 +45,9 @@ finishes. A stopped CLI leaves its lock for the existing stopped-executor
 recovery procedure; never take it over while the process may still run.
 Unassigned drivers receive a current driver authorization without assignment
 claims; stale mirrors for their current and previous driver IDs are removed.
+The CLI does the same before reporting a failure when a driver record points
+at a missing bus, a bus without routes or a malformed bus ID, so earlier
+`role: "admin"`/`admin: true` claims never survive a failed driver sync.
 
 The publisher first writes a fresh blocked version to both databases, then
 revokes refresh sessions before exposing the new version in Auth claims, then activates matching

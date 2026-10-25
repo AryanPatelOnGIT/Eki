@@ -1,6 +1,6 @@
 # HTTP contract and compatibility checks
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
@@ -25,12 +25,16 @@ mount prefixes, and compares method/path pairs in both directions. It never
 boots the server, starts workers, or reads Firebase. New routes, stale spec
 entries, duplicate registrations, broken references, missing path parameters,
 and missing policy metadata fail the gate. Dynamic paths/mounts, mountless
-middleware chains, `router.route()` and `router.all()` fail until the inventory
-supports them explicitly. Automatic
+middleware chains, `router.route()`, `router.all()` and a router built by a
+factory call imported from `backend/src/routes` (`app.use("/x", buildRouter())`)
+fail until the inventory supports them explicitly; middleware factories from
+other modules are unaffected. Automatic
 Express HEAD handling and CORS OPTIONS responses are middleware behavior,
 not separately registered business operations. TRACE/CONNECT are rejected
 with 405; authenticated unknown API routes return 404, while missing or invalid
-browser credentials fail first with 401.
+browser credentials fail first with 401. Any other unmatched path or method,
+including a wrong method on `/health` or `/live`, returns 404
+`{"error":"Not found."}` rather than an HTML page that echoes the path.
 
 OpenAPI structural validation uses Swagger Parser; response and payload
 conformance uses Ajv's JSON Schema 2020 validator. The parser remains on 12.x
@@ -77,7 +81,14 @@ request still follows the revocation-aware policy. An injected `req.user` or a
 different token cannot establish that request-scoped verification.
 
 The server applies strict JSON parsers: 16 KiB generally, telemetry 512 bytes,
-diagnostics 1 KiB. CORS/preflight precedes the 1,000/normalized-IP/minute browser ingress guard.
+diagnostics 1 KiB. One handler in `backend/src/lib/requestErrors.ts` maps parser
+and router failures: malformed JSON 400 `Invalid JSON body.`, oversized body 413,
+unsupported charset or `Content-Encoding` 415, and a corrupt compressed body or
+undecodable path parameter 400 `Invalid request.`. Only body-parser's exposable
+4xx errors and the router's 400 `URIError` count as client errors; an upstream
+error that merely carries a status remains an opaque, logged 500. A telemetry
+request whose body the JSON parser skipped (missing or non-JSON `Content-Type`)
+reaches payload validation and returns 400, not 413. CORS/preflight precedes the 1,000/normalized-IP/minute browser ingress guard.
 Verified-UID quotas separately allow 200 reads/minute and 30 mutations/minute;
 GET/HEAD polling never consumes mutation tokens. Public GET/HEAD probes and
 exact device ingress paths are exempt from browser ingress; detailed admin

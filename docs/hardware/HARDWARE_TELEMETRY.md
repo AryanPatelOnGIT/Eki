@@ -1,6 +1,6 @@
 # Hardware telemetry, latency and failure design
 
-Last updated: 2026-10-25 18:30 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Setup boundary: use [the hardware setup guide](README.md) before reading this
 design. It is the source for required `backend/.env`, frontend environment
@@ -39,7 +39,7 @@ flowchart LR
     UTC -->|yes| CLOCK["Discipline system clock with settimeofday"]
     UTC -->|no| EVAL{"1 s evaluation due?"}
     CLOCK --> EVAL
-    EVAL --> QUALITY{"Fresh location + HDOP <= 4?"}
+    EVAL --> QUALITY{"Fresh in-range location + HDOP 0..4?"}
     QUALITY -->|no| LOST["Queue one uncertain sample"]
     QUALITY -->|yes| TIME{"Trusted GNSS/NTP clock?"}
     TIME -->|no| LOOP

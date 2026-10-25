@@ -1,6 +1,6 @@
 # Admin access browser regression checks
 
-Last updated: 2026-10-21 04:47 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Run `npx playwright test --config playwright.admin-access.config.ts` from the repository root. Install the matching Chromium with `npx playwright install chromium` if necessary.
 
@@ -12,7 +12,12 @@ The `?resume` scenario additionally runs the actual RTDB resume hook,
 active-bus hook and shared fleet store using synthetic SDK transport and
 controlled browser time/visibility. A healthy short tab switch retains fleet
 data and read/handshake counts; a 31-second suspension produces one delayed
-handshake and a fresh snapshot. The complete suite has 32 mobile/desktop cases.
+handshake and a fresh snapshot. The complete suite has 42 mobile/desktop cases,
+including the 10 in `resilience.spec.ts`: feedback status writes and slow reads
+held across sign-out and account switches never reach the next account, a
+dropped read recovers through Retry, and offline/online flapping settles on one
+fleet. The default `playwright.config.ts` ignores this folder because it targets
+the developer server.
 Actual network/PWA throttling and measured reconnect storms remain #245.
 
 The `?recovery` scenario rejects trusted verification with a synthetic network

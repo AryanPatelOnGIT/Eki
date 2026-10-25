@@ -1,6 +1,6 @@
 # High-level design (HLD)
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 ## Scope and goals
 
@@ -58,10 +58,10 @@ flowchart TB
 1. GNSS emits NMEA at 9,600 baud; the ESP32 parses it continuously.
 2. Firmware rejects stale/poor-HDOP fixes, applies motion hysteresis, and publishes only on material change or heartbeat.
 3. The device posts the current nine-field body and `Authorization: Device …` over CA-verified HTTPS, including capture/send times, a queue sequence and receiver HDOP. Previous eight/six-field schemas remain accepted during rollout.
-4. Express enforces request size, exact schema, timestamps, sequence, device/IP rate limits, scrypt credential verification, and protected registry assignment.
+4. Express enforces request size, exact schema, timestamps, sequence, device/IP rate limits, scrypt credential verification, and protected registry assignment. Credentials are verified before the request takes a bounded ingestion slot, so unauthenticated floods cannot crowd out verified devices.
 5. An RTDB transaction rejects older/duplicate timestamp-sequence pairs and writes `activeBuses/{busId}_{routeId}` with server receive/commit times.
 6. A per-node asynchronous matcher preserves `rawLocation`, scores candidates on the direction-specific route using distance, heading and continuity, and publishes a version-bound `matchedLocation` without delaying the device response.
-7. Two ordinary reliable moving deviations, or one measured deviation at least 120 m from the route, trigger one asynchronous live reroute through the remaining required stops. Missing matches are never treated as severe. Live routing uses `TRAFFIC_AWARE` with a 3.5-second budget; the active route switches atomically and stale cache-generation/request/version/session results are discarded.
+7. Two ordinary reliable moving deviations, or one measured deviation at least 120 m from the route, trigger one asynchronous live reroute through the remaining required stops. Missing matches are never treated as severe. Live routing uses `TRAFFIC_AWARE` with a 3.5-second budget; the active route switches atomically and stale cache-generation/request/version/session results are discarded. Geometry that is empty or does not start at the bus counts as a failed attempt under the per-ride backoff, and a `REROUTING` claim older than 60 seconds is treated as lost.
 8. If live lifecycle fields are missing, the backend asynchronously restores them from `active_rides` without delaying the response.
 9. Browser singleton listeners receive the RTDB change. Confident current-version matches drive markers; a new on-route sample briefly retains its previous match while matching is pending, then falls back to visibly uncertain accepted raw GNSS after a fixed bound. Off-route and changed-route contexts use raw coordinates immediately. The service worker never caches authenticated responses.
 
@@ -70,7 +70,7 @@ flowchart TB
 1. Firebase Auth custom claims identify a driver and assigned bus.
 2. The start API rechecks Firestore driver/bus/route assignment and requires fresh hardware coordinates.
 3. A Firestore transaction creates `ride_sessions/{sessionId}` and `_active_bus_locks/{busId}`. The deterministic lock makes cross-route starts mutually exclusive.
-4. An RTDB transaction claims the bus/route node for that session; failure conditionally releases the lock and records a failed session.
+4. An RTDB transaction claims the bus/route node for that session; on failure one Firestore transaction records the failed session and conditionally releases its lock.
 5. The leader worker compares each new fix with only the next expected stop. It records stop evidence and lifecycle deltas, not every coordinate, in Firestore.
 6. Final-stop completion transactionally writes `completed_trips`, completes `ride_sessions`, and conditionally deletes matching recovery/lock records. The RTDB completion write is also conditional on the session ID, preventing an old handler from corrupting a new ride.
 
@@ -78,8 +78,9 @@ flowchart TB
 
 - Device/network/GNSS loss: RTDB retains the active session and is marked offline/lost after the configured stale window; Firestore recovery remains.
 - Backend restart: a Firestore lease selects one worker; RTDB subscriptions reattach. Telemetry can restore missing live lifecycle from `active_rides`.
-- Browser background/offline: shared listeners resume on visibility/online changes; expired non-active positions are pruned. Authenticated data is never served from the service-worker cache.
-- Abandoned session: the leader rechecks RTDB and Firestore activity transactionally, marks genuinely stale sessions `interrupted`, and conditionally removes matching recovery/lock state.
+- Browser background/offline: shared listeners resume on visibility/online changes; expired non-active positions are pruned. Authenticated data is never served from the service-worker cache, and a newly activated worker discards the previous deployment's cached navigation HTML.
+- Abandoned session: the leader rechecks RTDB and Firestore activity transactionally, marks genuinely stale sessions `interrupted`, and conditionally removes matching recovery/lock state. Sessions with unaddressable bus/route IDs are skipped and reported rather than stalling the scan.
+- Wall-clock step backwards: the stale-presence sweeper discards waits longer than their bounds and keeps sweeping.
 
 ## Architecture decisions
 

@@ -1,6 +1,6 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
@@ -240,8 +240,10 @@ done safely while retaining the current Wi-Fi stack.
   a publisher task on core 0 so network stalls do not block UART consumption.
 - The 8 KiB UART RX buffer and hardware/TinyGPSPlus error counters make parser
   pressure observable without noisy periodic serial output.
-- A fix requires location age at most five seconds and HDOP at most 4. Motion
-  uses three-reading 2.5/1.5 km/h hysteresis.
+- A fix requires location age at most five seconds, coordinates within
+  -90..90/-180..180 and a finite HDOP from 0 to 4. An RMC fix older than two
+  seconds is latched invalid, so a silent receiver cannot replay it after a
+  `millis()` rollover. Motion uses three-reading 2.5/1.5 km/h hysteresis.
 - Moving fixes are captured on a one-second cadence; the stopped heartbeat is
   one second so endpoint and turnaround logic always has margin inside the
   backend's 60-second freshness gate. A 100-sample RTC ring survives resets, evicts oldest on overflow,

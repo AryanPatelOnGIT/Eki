@@ -1,13 +1,13 @@
 # Backend API reference
 
-Last updated: 2026-10-25 23:00 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../api/HTTP_CONTRACT.md) for schema
 validation, policy extensions, Firebase listener channels, and compatibility.
 Run `npm run verify:openapi` from the repository root.
 
-Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Malformed JSON returns 400, an oversized body 413, an unsupported body charset or `Content-Encoding` 415, and a corrupt compressed body or undecodable path parameter 400, each with a fixed generic message. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
+Base path is the deployed backend origin. JSON request bodies are strict and limited to 16 KiB except device telemetry (512 bytes) and diagnostics (1 KiB). `TRACE` and `CONNECT` return 405. Malformed JSON returns 400, an oversized body 413, an unsupported body charset or `Content-Encoding` 415, and a corrupt compressed body or undecodable path parameter 400, each with a fixed generic message. An unmatched path or method returns 404 `{ "error": "Not found." }` without echoing the path; other unexpected failures return an opaque 500. Responses are JSON; errors use `{ "error": "…" }` and do not expose stacks/secrets.
 
 ## Quick start
 
@@ -228,14 +228,16 @@ The body schema is nine fields today; during the staged rollout the parser also 
 Deploy the backend before flashing this firmware. Validate the schema your deployed firmware actually sends instead of requiring an exact field count, keeping the compatibility paths only as long as staged rollout needs them.
 
 Authentication and the server registry assignment check run before the
-per-device budget. HTTP 202 is returned only after the ordered live-node RTDB
+per-device budget and before the request takes a slot in the bounded ingestion
+executor, so unauthenticated requests waiting on the KDF cannot delay verified
+devices. HTTP 202 is returned only after the ordered live-node RTDB
 transaction commits; HTTP 200 means the authenticated sample was already
 present or older. Route matching and durable-lifecycle repair remain
 background work and cannot change that acknowledgement contract.
 
 - 202 `{accepted:true,duplicate:false}`: new RTDB fix.
 - 200 `{accepted:true,duplicate:true}`: older timestamp or duplicate timestamp/sequence safely ignored.
-- 400 invalid ID/payload; 401 bad/missing/disabled credential or registry; 413 raw body too large; 429 limiter with `Retry-After` and `retryAfterMs`; 503 Firebase/ingestion failure.
+- 400 invalid ID/payload, including a missing body or a non-JSON `Content-Type` that the JSON parser skips; 401 bad/missing/disabled credential or registry, or a Firestore-reserved `__…__` device ID; 403 authenticated device without a usable assignment (including a reserved `__…__` registry `busId`/`routeId`), retry after registry repair; 413 raw body too large; 429 limiter with `Retry-After` and `retryAfterMs`; 503 Firebase/ingestion failure.
 - Successful 200/202 responses have `Cache-Control: no-store` plus
   `X-Eki-Server-Received-At` and `X-Eki-Server-Responded-At` epoch-millisecond
   timing headers. Firmware combines them with its send/receive timestamps to
@@ -267,7 +269,7 @@ Body: `{ "busId":"bus_01", "routeId":"route_01", "enabled":true }`. `enabled` is
 
 Sets `enabled:false`/`disabledAt` on an existing registry entry, invalidates credential/rate cache. An unknown device ID returns 404 without creating a registry entry. Returns `{disabled:true}` or 400/404/500.
 
-Device creation/secret rotation is deliberately local: `npm run provision-device --workspace=backend -- --device-id … --bus-id … --route-id …`. Transfer the one-time plaintext only into the ignored `hardware/include/secrets.h` inside the controlled signing environment, build the device-specific protected artifact, and reflash the tracker. Never commit the plaintext or retain an unencrypted firmware image.
+Device creation/secret rotation is deliberately local: `npm run provision-device --workspace=backend -- --device-id … --bus-id … --route-id …`. A flag whose value is missing or starts with `--` is rejected rather than taken as an ID. Transfer the one-time plaintext only into the ignored `hardware/include/secrets.h` inside the controlled signing environment, build the device-specific protected artifact, and reflash the tracker. Never commit the plaintext or retain an unencrypted firmware image.
 
 ## Live bus endpoints
 
@@ -277,7 +279,7 @@ Returns `{ "buses": [...] }` from the current RTDB authority, with the same expl
 
 ### `GET /api/buses/:busId` — authenticated
 
-Searches live entries for the stored `busId` and returns the snapshot or 404. Invalid ID returns 400.
+Reads the bounded set of live entries with the stored `busId` and returns the first public one, so a retired tombstone left by a previous route assignment cannot hide the live bus; otherwise 404. Invalid ID returns 400.
 
 ## Shift endpoints
 

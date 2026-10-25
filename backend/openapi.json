@@ -100,6 +100,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -171,6 +181,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -284,6 +304,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -428,6 +458,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -543,6 +583,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -734,6 +784,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -859,6 +919,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -998,6 +1068,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -1125,6 +1205,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1276,6 +1366,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -1401,6 +1501,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1553,6 +1663,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -1670,6 +1790,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1839,6 +1969,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2017,6 +2157,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -2140,6 +2290,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2291,6 +2451,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -2432,6 +2602,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -2547,6 +2727,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2700,6 +2890,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2924,6 +3124,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -3077,6 +3287,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3270,6 +3490,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -3405,6 +3635,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3574,6 +3814,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Stored route or lifecycle data cannot satisfy the operation.",
             "content": {
@@ -3705,6 +3955,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -3819,6 +4079,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3943,6 +4213,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4114,6 +4394,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Stored route or lifecycle data cannot satisfy the operation.",
             "content": {
@@ -4249,6 +4539,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4400,6 +4700,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -4515,6 +4825,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4648,6 +4968,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4799,6 +5129,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -4922,6 +5262,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5065,6 +5415,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5246,6 +5606,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -5399,6 +5769,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -5534,6 +5914,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5779,6 +6169,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -5894,6 +6294,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6035,6 +6445,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -6151,6 +6571,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6302,6 +6732,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -6433,6 +6873,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -6548,6 +6998,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6680,6 +7140,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -6762,6 +7232,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6982,6 +7462,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Stored route or lifecycle data cannot satisfy the operation.",
             "content": {
@@ -7156,6 +7646,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -7289,6 +7789,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7572,6 +8082,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -7733,6 +8253,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -7868,6 +8398,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8021,6 +8561,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8225,6 +8775,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -8388,6 +8948,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -8472,6 +9042,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8693,6 +9273,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -8826,6 +9416,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9024,6 +9624,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -9157,6 +9767,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9316,6 +9936,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -9467,6 +10097,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -9589,6 +10229,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9737,6 +10387,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -9860,6 +10520,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10039,6 +10709,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limit exceeded; obey Retry-After when supplied.",
             "content": {
@@ -10155,6 +10835,16 @@
           },
           "413": {
             "description": "Raw JSON request exceeds the configured body limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported request body charset or Content-Encoding.",
             "content": {
               "application/json": {
                 "schema": {

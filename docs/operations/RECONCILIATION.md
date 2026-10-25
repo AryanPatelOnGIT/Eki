@@ -1,6 +1,6 @@
 # Bounded reconciliation and continuation
 
-Last updated: 2026-10-05 13:37 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Reconciliation visits the complete candidate set through document-ID pages of
 100. Each page owns its records and caches; results and retained query data do
@@ -30,6 +30,9 @@ make settled retries safe. Expired leaders cannot advance the checkpoint.
 
 Firestore and RTDB are separate stores. Session cleanup rechecks lifecycle
 activity, session ownership and locks; recent/unknown activity remains protected.
+A session whose bus or route ID cannot address a Firestore document or RTDB
+node (empty, or containing `/`, `.` or `#`) is skipped and listed in the
+summary's `skippedIds`, so it cannot fail the page and pin its cursor.
 An RTDB transaction may initially see an empty local cache. A no-op null result
 allows server retry; matching/session/activity checks then apply to the actual
 record. Inactive bus cleanup compares the entire captured value and bus identity
