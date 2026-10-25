@@ -336,8 +336,10 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
   const deviceId = singleRouteParam(req.params.deviceId);
   const busId = req.body?.busId;
   const routeId = req.body?.routeId;
-  const enabled = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled")
-    ? req.body.enabled : true;
+  // Omitting enabled keeps the registry state, so a reassignment can never
+  // silently re-enable a device an administrator disabled.
+  const requestedEnabled = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled")
+    ? req.body.enabled : undefined;
   if (
     deviceId === null ||
     !SAFE_ID.test(deviceId) ||
@@ -345,7 +347,7 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
     !SAFE_ID.test(busId) ||
     typeof routeId !== "string" ||
     !SAFE_ID.test(routeId) ||
-    typeof enabled !== "boolean"
+    (requestedEnabled !== undefined && typeof requestedEnabled !== "boolean")
   ) {
     res.status(400).json({ error: "Invalid device, bus, or route ID." });
     return;
@@ -381,6 +383,7 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
       }
 
       const previous = existingDevice.data();
+      const enabled = typeof requestedEnabled === "boolean" ? requestedEnabled : previous?.enabled !== false;
       const assignmentChanged =
         !existingDevice.exists ||
         previous?.busId !== busId ||

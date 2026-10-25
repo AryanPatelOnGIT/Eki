@@ -261,7 +261,7 @@ Returns the latest authenticated device report plus registry assignment and serv
 
 ### `PUT /api/devices/:deviceId` — admin
 
-Body: `{ "busId":"bus_01", "routeId":"route_01", "enabled":true }`. Bus/route must exist and be assigned; a bus/route can have only one device; active ride/lock prevents unsafe reassignment. Does not rotate `secretHash`. Returns `{saved:true}`, 400, 409 or 500.
+Body: `{ "busId":"bus_01", "routeId":"route_01", "enabled":true }`. `enabled` is optional; when omitted, an existing device keeps its current state (a disabled device stays disabled) and a new registry entry is enabled. Bus/route must exist and be assigned; a bus/route can have only one device; active ride/lock prevents unsafe reassignment. Does not rotate `secretHash`. Returns `{saved:true}`, 400, 409 or 500.
 
 ### `POST /api/devices/:deviceId/disable` — admin
 
