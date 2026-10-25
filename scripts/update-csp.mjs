@@ -31,6 +31,17 @@ const globalHeaders = firebase.hosting.headers.find((entry) => entry.source === 
 const csp = globalHeaders?.headers.find((header) => header.key === "Content-Security-Policy");
 if (!csp) throw new Error("Global Content-Security-Policy header not found.");
 
+// Rewrite a managed directive wherever it appears (including as the final,
+// unterminated directive). A missing directive is a build error: reporting
+// success without hashes or sources would ship a policy that blocks the app.
+function replaceDirective(name, sources) {
+  const pattern = new RegExp(`(^|;\\s*)${name} [^;]*`);
+  if (!pattern.test(csp.value)) {
+    throw new Error(`Global Content-Security-Policy has no ${name} directive to update.`);
+  }
+  csp.value = csp.value.replace(pattern, (_match, prefix) => `${prefix}${name} ${sources}`);
+}
+
 const backendOrigin = backendOriginFromUrl(process.env.NEXT_PUBLIC_BACKEND_URL);
 // RTDB's long-poll fallback loads /.lp through script elements, so connect-src
 // alone does not allow it. Production builds use the configured instance.
@@ -56,7 +67,7 @@ const sources = [
   ...(databaseHostname ? [`https://${databaseHostname}`] : []),
   ...rtdbLongPollSources,
 ].join(" ");
-csp.value = csp.value.replace(/script-src [^;]+;/, `script-src ${sources};`);
+replaceDirective("script-src", sources);
 const connectSources = [
   "'self'",
   // Workbox fetches Google's Auth helper on controlled pages. The worker's
@@ -72,7 +83,7 @@ const connectSources = [
   "wss://*.firebasedatabase.app",
   ...(backendOrigin ? [backendOrigin] : []),
 ].join(" ");
-csp.value = csp.value.replace(/connect-src [^;]+;/, `connect-src ${connectSources};`);
+replaceDirective("connect-src", connectSources);
 const imageSources = [
   "'self'",
   "data:",
@@ -82,14 +93,14 @@ const imageSources = [
   "https://*.googleusercontent.com",
   "https://*.ggpht.com",
 ].join(" ");
-csp.value = csp.value.replace(/img-src [^;]+;/, `img-src ${imageSources};`);
+replaceDirective("img-src", imageSources);
 const frameSources = [
   "'self'",
   "https://accounts.google.com",
   "https://*.firebaseapp.com",
   ...rtdbLongPollSources,
 ].join(" ");
-csp.value = csp.value.replace(/frame-src [^;]+;/, `frame-src ${frameSources};`);
+replaceDirective("frame-src", frameSources);
 await writeFile(firebasePath, `${JSON.stringify(firebase, null, 2)}\n`);
 console.log(`Updated CSP with ${hashes.size} inline-script hashes.`);
 
