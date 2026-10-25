@@ -1,21 +1,21 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "./page";
 
 const fixture = vi.hoisted(() => ({
   auth: { user: null as null | { role: string }, loading: true, loginReady: true,
-    loginFallbackAvailable: false, loginLoading: false, roleError: null,
-    loginError: null, loginWithGoogle: vi.fn(), loginWithGoogleRedirect: vi.fn(), refreshAccess: vi.fn() },
+    loginFallbackAvailable: false, loginLoading: false, roleError: null as string | null,
+    loginError: null, loginWithGoogle: vi.fn(), loginWithGoogleRedirect: vi.fn(), refreshAccess: vi.fn(), logout: vi.fn() },
   replace: vi.fn(),
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => fixture.auth }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: fixture.replace }) }));
 beforeEach(() => {
-  Object.assign(fixture.auth, { user: null, loading: true, loginReady: true, loginFallbackAvailable: false });
-  fixture.replace.mockClear();
+  Object.assign(fixture.auth, { user: null, loading: true, loginReady: true, loginFallbackAvailable: false, roleError: null });
+  fixture.replace.mockClear(); fixture.auth.logout.mockClear();
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("landing sign-in and redirect recovery", () => {
   it("qualifies tracking and arrival estimates by live service availability", () => {
@@ -51,4 +51,17 @@ describe("landing sign-in and redirect recovery", () => {
       expect(fixture.replace).toHaveBeenCalledWith(workspace);
     },
   );
+  it("routes to the default workspace when browser storage is blocked", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    fixture.auth.user = { role: "admin" }; fixture.auth.loading = false;
+    render(<HomePage />);
+    expect(fixture.replace).toHaveBeenCalledWith("/admin");
+  });
+  it("lets an account with a permanent access error sign out from the landing page", () => {
+    fixture.auth.loading = false; fixture.auth.roleError = "Your administrator access is not synchronized.";
+    render(<HomePage />);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(fixture.auth.logout).toHaveBeenCalledOnce();
+  });
 });

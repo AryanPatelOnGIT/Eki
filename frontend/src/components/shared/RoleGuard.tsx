@@ -31,7 +31,11 @@ export default function RoleGuard({ children, allowedRoles, loadingFallback }: R
 
   useEffect(() => {
     if (user && allowedRoles.includes(user.role)) {
-      window.localStorage.setItem("eki:last-workspace", pathname);
+      try {
+        window.localStorage.setItem("eki:last-workspace", pathname);
+      } catch {
+        // Workspace memory is optional when browser storage is unavailable.
+      }
     }
   }, [allowedRoles, pathname, user]);
 

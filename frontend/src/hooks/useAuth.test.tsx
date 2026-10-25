@@ -445,4 +445,14 @@ describe("hostile browser storage and legacy profiles", () => {
     expect(hook.result.current.roleError).toBeNull();
     expect(hook.result.current.user?.role).toBe("passenger");
   });
+  it("returns an account stuck on a permanent access error to a clean signed-out state", async () => {
+    const hook = await mount(); const account = { uid: "unsynchronized", getIdTokenResult: async () => ({ claims: { role: "admin" } }) };
+    mocks.auth.currentUser = account;
+    await act(async () => { await mocks.callback!(account); });
+    expect(hook.result.current.roleError).toContain("administrator");
+    mocks.signOut.mockImplementation(async () => { mocks.auth.currentUser = null; await mocks.callback!(null); });
+    await act(async () => { await hook.result.current.logout(); });
+    expect(hook.result.current.roleError).toBeNull(); expect(hook.result.current.loading).toBe(false);
+    expect(hook.result.current.user).toBeNull(); expect(hook.result.current.loginReady).toBe(true);
+  });
 });
