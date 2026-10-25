@@ -14,6 +14,7 @@ beforeAll(async () => {
   app.post("/body", (req, res) => { res.json({ body: req.body ?? null }); });
   app.use(clientRequestErrorHandler);
   app.use((_error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    void _next;
     unhandled += 1;
     res.status(500).json({ error: "Internal server error." });
   });
