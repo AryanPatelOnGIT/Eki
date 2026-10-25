@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DashboardPanel from "./DashboardPanel";
 import type { ActiveBusEntry } from "@/lib/activeBusEntries";
@@ -17,6 +17,7 @@ vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: [{id: "qa-bus", n
 vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: [{id: "qa-driver", name: "QA driver", assignedBusId: "qa-bus"}] }) }));
 vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ routes: state.routes }) }));
 vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices }: ComponentProps<typeof import("../maps/DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} /> }));
+vi.mock("@/components/shared/MessagingPanel", () => ({ default: ({ sessionId }: { sessionId: string }) => <p>Chat session {sessionId}</p> }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: {currentUser: {getIdToken: async () => "synthetic-token"}} }));
 vi.mock("@/components/ui/CustomSelect", () => ({default: ({ariaLabel, value, options, onChange, disabled}: {ariaLabel: string; value: string; options: {value: string; label: string}[]; onChange: (value: string) => void; disabled?: boolean}) => <select aria-label={ariaLabel} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}));
 beforeEach(() => { state.entries = []; state.routes = [{ ...route, stops: [] }]; state.geometries.clear(); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
@@ -159,5 +160,19 @@ describe("admin service creation", () => {
     await user.click(within(screen.getByRole("dialog", { name: "Clear Messages?" })).getByRole("button", { name: "Clear Messages" }));
     expect(await screen.findByText("Error: Messages are locked.")).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "Clear Messages?" })).toBeNull();
+  });
+  it("keeps an open admin chat tied to the live receiver rather than the bus state at the moment it was opened", () => {
+    vi.useFakeTimers(); const start = Date.now();
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    const view = render(<DashboardPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    vi.setSystemTime(start + 6 * 60_000);
+    state.entries = [{ ...state.entries[0], timestamp: Date.now(), backendReceivedAt: Date.now() }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.entries = [{ ...state.entries[0], deviceState: "offline" }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText("Chat session qa-session")).toBeNull();
   });
 });

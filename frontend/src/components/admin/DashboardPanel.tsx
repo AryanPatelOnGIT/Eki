@@ -797,6 +797,11 @@ export default function DashboardPanel() {
     }
   };
 
+  // Follow the open chat's receiver live; the clicked entry is only a snapshot.
+  const liveChatEntry = chatEntry
+    ? activeEntries.find(entry => entry.busId === chatEntry.busId && entry.routeId === chatEntry.routeId)
+    : undefined;
+
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden lg:flex-row">
       {/* â”€â”€ Map â”€â”€ */}
@@ -942,16 +947,16 @@ export default function DashboardPanel() {
           )}
         </div>
       </div>
-      {chatEntry && isLiveChatDeviceOnline(chatEntry) && user?.uid && (
+      {liveChatEntry && isLiveChatDeviceOnline(liveChatEntry) && user?.uid && (
         <div className="fixed inset-0 z-[250] bg-black/70 pt-10 sm:p-10">
           <div className="mx-auto h-full max-w-2xl">
             <MessagingPanel
-              sessionId={chatEntry.sessionId ?? ""}
+              sessionId={liveChatEntry.sessionId ?? ""}
               currentUserRole="admin"
               currentUserId={user.uid}
               isOverlay
               onClose={() => setChatEntry(null)}
-              unavailableMessage={chatEntry.sessionId ? undefined : "Waiting for automatic service setup for this assigned receiver."}
+              unavailableMessage={liveChatEntry.sessionId ? undefined : "Waiting for automatic service setup for this assigned receiver."}
             />
           </div>
         </div>
