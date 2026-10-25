@@ -48,7 +48,6 @@ const rows = [
       backend('tripStateReducer', 'reduceTripState', 'uses a 2.5m arrival circle in both directions without advancing outside it'),
       backend('tripStateReducer', 'reduceTripState', 'limits between-fix stop crossings to the same 2.5m circle'),
       backend('tripStateReducer', 'reduceTripState', 'clears terminal confirmation outside 2.5m and requires fresh evidence on reentry'),
-      backend('tripStateReducer', 'reduceTripState', 'does not consume departure or an intermediate stop from explicitly poor HDOP %s'),
       backend('tripStateReducer', 'reduceTripState', 'does not join an unreliable prior fix into a seemingly precise stop crossing'),
       backend('routingLifecycle.integration', 'routing lifecycle through actual ingestion and listeners', 'withholds intermediate passage for poor-quality fixes and their recovery segment until a reliable arrival')]],
   ['TRIP07', 'Pure bounded segment consumes nearby stops in travel order; durable exactly-once arrival histories remain separate.',
