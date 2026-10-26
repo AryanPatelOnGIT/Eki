@@ -53,6 +53,17 @@ describe("published passenger stop progress", () => {
     expect(state.fitBounds.mock.calls.length).toBeGreaterThan(before);
     expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.01,south:23,east:72.01,west:72},expect.any(Object));
   });
+  it("refits the open overview when the route path changes, but not for an identical rebuilt path", () => {
+    state.snapshot = {};
+    const view = render(<PassengerMap route={routeInRideDirection(route,"forward")} targetStop={route.stops[1]} preview />);
+    expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.01,south:23,east:72.01,west:72},expect.any(Object));
+    const fitted = state.fitBounds.mock.calls.length;
+    view.rerender(<PassengerMap route={routeInRideDirection({ ...route, stops: route.stops.map(stop => ({ ...stop })) },"forward")} targetStop={route.stops[1]} preview />);
+    expect(state.fitBounds).toHaveBeenCalledTimes(fitted);
+    const moved = { ...route, stops: [route.stops[0], { ...route.stops[1], lat: 23.02, lng: 72.03 }] };
+    view.rerender(<PassengerMap route={routeInRideDirection(moved,"forward")} targetStop={moved.stops[1]} preview />);
+    expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.02,south:23,east:72.03,west:72},expect.any(Object));
+  });
   it("fits above the measured bottom sheet rather than a fixed inset", () => {
     const frame=document.createElement("div"), viewport=document.createElement("div"),sheet=document.createElement("div");
     frame.setAttribute("data-passenger-map","");sheet.setAttribute("data-map-sheet","");frame.append(viewport,sheet);
