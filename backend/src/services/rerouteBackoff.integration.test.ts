@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodePolyline } from "../lib/polylineUtils";
+import { encodePolyline, type LatLng } from "../lib/polylineUtils";
 import type { TelemetryPayload } from "./telemetryPayload";
 
 const state = vi.hoisted(() => ({ values: new Map<string, Record<string, unknown>>(),
@@ -24,6 +24,9 @@ let service: typeof import("./telemetryRouteService");
 let now: number;
 let sequence: number;
 const stops = [{ id: "A", lat: 23, lng: 72 }, { id: "B", lat: 23.1, lng: 72.1 }];
+// Provider geometry starts where the bus is, like a real deviation reroute.
+const fromBus = async (origin: LatLng, destination: LatLng, intermediates: LatLng[] = []) => ({
+  encodedPolyline: encodePolyline([origin, ...intermediates, destination]), distanceMeters: 1000, duration: "100s" });
 const key = (bus = "bus") => `activeBuses/${bus}_route`;
 function initial(bus = "bus") {
   state.values.set(key(bus), { busId: bus, routeId: "route", sessionId: "s1", direction: "forward",
@@ -89,6 +92,40 @@ describe("reroute scheduling with persisted backoff", () => {
     await tick();
     expect(state.values.get(key())).toMatchObject({ routeState: "REROUTING", rerouteRequestId: "new-request", routeVersion: 1 });
   });
+  it("recovers a ride stranded in REROUTING by a process that died mid-request", async () => {
+    // Claim committed, then the replica restarted before any failure/success write.
+    state.values.set(key(), { ...state.values.get(key()), routeState: "REROUTING", offRouteSampleCount: 2,
+      rerouteRequestId: "lost-request", lastRerouteAttemptAt: now - 5000 });
+    await tick();
+    expect(state.compute).not.toHaveBeenCalled();
+    expect(state.values.get(key())).toMatchObject({ routeState: "REROUTING", rerouteRequestId: "lost-request" });
+    state.compute.mockImplementation(fromBus);
+    now += 120_000; await tick();
+    expect(state.compute).toHaveBeenCalledTimes(1);
+    expect(state.values.get(key())).toMatchObject({ routeState: "ON_NEW_ROUTE", rerouteRequestId: null });
+  });
+
+  it("does not publish an empty or single-point provider polyline as the new route", async () => {
+    state.compute.mockResolvedValueOnce({ encodedPolyline: "", distanceMeters: 0, duration: "0s" });
+    await tick();
+    expect(state.values.get(key())).toMatchObject({ routeState: "OFF_ROUTE", routeVersion: 1, routeSource: "configured",
+      rerouteRequestId: null, rerouteRetry: { failures: 1 } });
+    state.compute.mockResolvedValueOnce({ encodedPolyline: encodePolyline([{ lat: 24, lng: 73 }]), distanceMeters: 0, duration: "0s" });
+    now = (state.values.get(key())!.rerouteRetry as { nextAttemptAt: number }).nextAttemptAt; await tick();
+    expect(state.compute).toHaveBeenCalledTimes(2);
+    expect(state.values.get(key())).toMatchObject({ routeState: "OFF_ROUTE", routeVersion: 1, rerouteRetry: { failures: 2 } });
+  });
+
+  it("backs off when the provider route does not start at the bus instead of rerouting every fix", async () => {
+    // A bus on an unmapped campus road is snapped to a public road ~330 m away;
+    // publishing that geometry cleared backoff and re-dispatched on every fix.
+    state.compute.mockImplementation(async (_origin, destination) => ({
+      encodedPolyline: encodePolyline([{ lat: 24.003, lng: 73 }, destination]), distanceMeters: 1000, duration: "100s" }));
+    for (let elapsed = 0; elapsed < 60_000; elapsed += 1000) { await tick(); now += 1000; }
+    expect(state.compute).toHaveBeenCalledTimes(3);
+    expect(state.values.get(key())).toMatchObject({ routeState: "OFF_ROUTE", routeVersion: 1, routeSource: "configured" });
+  });
+
   it("reduces a minute of persistent failures from the legacy 12 attempts to 3", async () => {
     for (let elapsed = 0; elapsed < 60_000; elapsed += 1000) { await tick(); now += 1000; }
     expect(state.compute).toHaveBeenCalledTimes(3);
@@ -118,7 +155,7 @@ describe("reroute scheduling with persisted backoff", () => {
 
   it("clears retry state on successful geometry publication", async () => {
     await tick();
-    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 1000, duration: "100s" });
+    state.compute.mockImplementation(fromBus);
     now += 10_000; await tick();
     expect(state.values.get(key())).toMatchObject({ routeState: "ON_NEW_ROUTE", rerouteRetry: null, rerouteError: null });
   });
@@ -136,7 +173,7 @@ describe("reroute scheduling with persisted backoff", () => {
     expect(state.compute).toHaveBeenCalledTimes(5);
     expect(service.getRouteProcessingStatus().rerouting.provider).toMatchObject({ failures: 5, retryAfterMs: 60_000 });
     now += 60_000;
-    state.compute.mockResolvedValue({ encodedPolyline: encodePolyline(stops), distanceMeters: 1000, duration: "100s" });
+    state.compute.mockImplementation(fromBus);
     await tick("b19");
     expect(state.compute).toHaveBeenCalledTimes(6);
     expect(service.getRouteProcessingStatus().rerouting.provider.failures).toBe(0);

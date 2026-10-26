@@ -44,6 +44,7 @@ import { isLiveChatDeviceOnline } from "@/lib/activeBusEntries";
 import { stopEstimateContext, stopEstimateLabel, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 import {
   passengerBusAvailabilities,
+  reuseUnchangedAvailabilities,
   type PassengerBusAvailability,
 } from "@/lib/passengerBusAvailability";
 
@@ -294,10 +295,10 @@ export default function PassengerWorkspace() {
   // Presence expires without another RTDB event after power/network loss.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setAvailabilityNow(Date.now());
-      setAvailableBuses(passengerBusAvailabilities(
-        Object.fromEntries(rawLiveBusesRef.current), Date.now(),
-      ));
+      const now = Date.now();
+      setAvailabilityNow(now);
+      const next = passengerBusAvailabilities(Object.fromEntries(rawLiveBusesRef.current), now);
+      setAvailableBuses(previous => reuseUnchangedAvailabilities(previous, next));
     }, 2_000);
     return () => window.clearInterval(timer);
   }, []);

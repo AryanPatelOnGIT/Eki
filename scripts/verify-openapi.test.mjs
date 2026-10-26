@@ -60,3 +60,19 @@ test("broken references and missing operational policy fail", async () => {
   delete incomplete.paths["/health"].get["x-retry-policy"];
   await assert.rejects(verifyOpenApi(incomplete), /missing x-retry-policy/);
 });
+
+test("routers mounted from a route-module factory call fail closed instead of vanishing", () => {
+  // `app.use("/api/x", buildRouter())` registers real handlers. Skipping the
+  // call silently would let an undocumented route pass the contract check.
+  assert.throws(() => registeredOperations(root, (filename, encoding) => {
+    if (filename.endsWith("factoryMounted.ts")) {
+      return 'import { Router } from "express";\nexport function buildFactoryRouter() { const router = Router(); router.get("/hidden", handler); return router; }';
+    }
+    const text = readFileSync(filename, encoding);
+    return filename.endsWith("server.ts")
+      ? `import { buildFactoryRouter } from "./routes/factoryMounted";\n${text}\napp.use("/api/factory-mounted", buildFactoryRouter());`
+      : text;
+  }), /explicit inventory support/);
+  // Middleware factories from outside the route modules stay allowed.
+  assert.ok(registeredOperations().length > 0);
+});

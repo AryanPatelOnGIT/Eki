@@ -88,6 +88,14 @@ export function registeredOperations(repositoryRoot = root, read = readFileSync)
           }
         };
         for (const arg of args) {
+          if (ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
+            // A route-module factory call returns a router whose handlers the
+            // static inventory cannot see; never let them vanish silently.
+            const factory = info.imports.get(arg.expression.text);
+            if (factory?.local && factory.target.startsWith(resolve(repositoryRoot, "backend/src/routes"))) {
+              throw new Error(`${location}: router factory ${arg.expression.text}() needs explicit inventory support`);
+            }
+          }
           if (!ts.isIdentifier(arg)) continue; // inline middleware, not a router
           const imported = info.imports.get(arg.text);
           if (info.routers.has(arg.text)) {

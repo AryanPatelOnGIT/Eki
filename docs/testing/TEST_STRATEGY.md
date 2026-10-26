@@ -1,6 +1,6 @@
 # Test strategy and failure matrix
 
-Last updated: 2026-10-06 00:35 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 ## Quality gates
 
@@ -62,7 +62,10 @@ they are not a claim that a newer head or production deployment passed.
 - Body is at most 512 bytes: current nine-field, previous eight-field sequenced or legacy six-field schema; finite/ranged coordinate/speed/heading, enumerated motion, and fresh timestamp.
 - Duplicate/older RTDB timestamp is idempotent; new timestamp commits.
 - Invalid/disabled/unknown device and invalid bus/route binding fail.
-- Positive/negative credential caches and device/IP limits are bounded.
+- Positive/negative credential caches and device/IP limits are bounded; rejected entries have their own capacity and cannot evict verified credentials.
+- Credentials are verified before a request takes an ingestion slot, so guessed-ID floods stalled on scrypt cannot answer verified devices with 503.
+- Firestore-reserved `__…__` device IDs return 401 without a registry read; reserved registry bus/route IDs return 403 (unassigned).
+- A missing or non-JSON telemetry body returns 400, not 413.
 - Durable ride restore coalesces work and does not delay accepted HTTP response.
 - A first device-only fix creates presence state without fabricating `tripState`, stop progress, direction, or an active service.
 - Rolling latency summary handles empty/unsorted values and nearest-rank percentiles.
@@ -72,12 +75,15 @@ they are not a claim that a newer head or production deployment passed.
 - Pre-departure does not start away from origin.
 - Origin activation requires ordered geofence evidence.
 - Only the next stop advances; downstream visits cannot skip.
+- A closely spaced first stop crossed by the departure segment, or a first stop inside the minimum departure radius crossed while moving, is consumed; parked jitter is not departure.
 - Segment crossing detects a pass between two fixes.
 - GNSS uncertain does not advance lifecycle.
 - Final stop yields completed exactly once.
 - Timestamp normalization handles Firestore, dates, seconds and milliseconds.
 - Stale reconciliation preserves recent/mismatched/unknown-activity sessions and interrupts only rechecked stale sessions.
 - Completion and cleanup compare `sessionId`; old handlers cannot overwrite a newer RTDB session or delete its recovery/lock.
+- A start that loses the RTDB claim fails its session and releases its lock in one transaction, even after a transient release failure.
+- Abandoned-ride reconciliation skips unaddressable session IDs; the stale sweeper keeps running after the wall clock steps backwards.
 - Start uses deterministic `_active_bus_locks/{busId}` to serialize same-bus routes. This needs an emulator/API concurrency test in CI in addition to code/unit checks.
 - Shutdown drains queues and immediately runs pending completion retirement.
 
@@ -87,7 +93,8 @@ they are not a claim that a newer head or production deployment passed.
 - Route saves replay identical operation IDs, reject changed-payload reuse/stale versions, coalesce concurrent routing work, reuse valid geometry for metadata-only edits, and abort commit when an active ride appears during calculation. Browser regressions first reproduced a committed save failing after one transient 503/network status poll, then the protected status GET failing on `AUTH_BUSY` before the handler ran; they verify bounded retry and Retry-After, stable `saveId`, no extra PUT, abort and late-result fencing, deadline unknown outcome, and immediate terminal 401/403/stored 5xx propagation on the legacy GET.
 - Place search distinguishes validation, authentication, configuration, upstream/rate-limit, body-timeout and genuine empty-result outcomes.
 - Terminal history deletion deduplicates projections and rejects active status.
-- Retention is disabled for missing/false/misspelled values and enabled only by explicit `true`.
+- Retention is disabled for missing/false/misspelled values and enabled only by explicit `true`. Huge day values are capped; one failing category cannot skip the others or the RTDB sweep.
+- Route matching does not flag repeated or densely sampled vertices as ambiguous. Reroute geometry that is empty or does not start at the bus is released under backoff, and a stranded `REROUTING` claim recovers after 60 seconds.
 - Privacy collection-group queries/rules/indexes are checked; emulator verifies users cannot reach backend-only collections.
 
 ## Automated frontend cases
@@ -127,6 +134,13 @@ software regression checks from the remaining affected-browser acceptance.
   generation guards reject stale reads/writes, including same-account reverify.
 - Passenger: destination selection before service, directional stop order,
   boarding carryover, map target and in-app bus/station listbox behavior.
+- Hostile browser conditions: `e2e/production-audit/resilience.spec.ts` (production-audit
+  config, three viewports) covers backend 4xx/5xx and non-JSON bodies, dropped and
+  double-submitted route saves, stale slow place responses, offline toggles, resizes,
+  hostile place names, two tabs, reload and back/forward. `e2e/admin-access/resilience.spec.ts`
+  (admin-access config) races feedback reads/writes against sign-out and account
+  switches, a dropped read and offline/online flapping. See the
+  [25 October adversarial audit](ADVERSARIAL_AUDIT_2026-10-25.md).
 
 ## Simulation scenarios
 
@@ -163,12 +177,13 @@ Every endpoint must be tested with: missing/wrong auth scheme, expired/revoked t
 
 Key expected HTTP families:
 
-- `400`: malformed/invalid input.
+- `400`: malformed/invalid input, corrupt compressed body or undecodable path parameter.
 - `401`: missing/invalid person/device credentials.
 - `403`: authenticated but unauthorized assignment/role.
-- `404`: safe ID but absent resource.
+- `404`: safe ID but absent resource; also JSON `Not found.` for any unmatched path or method (`server.http.test.ts` boots the real `server.ts` stack with stubbed Firebase).
 - `409`: lifecycle/assignment/lock conflict.
 - `413`: parser body too large.
+- `415`: unsupported body charset or `Content-Encoding`.
 - `429`: rate limit.
 - `500`: unexpected server failure.
 - `503`: telemetry dependency unavailable/readiness degraded.

@@ -52,6 +52,17 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? "undefined";
 }
 
+async function authUserExists(authUid: string): Promise<boolean> {
+  try {
+    await auth.getUser(authUid);
+    return true;
+  } catch (error) {
+    const failure = error as { code?: unknown; errorInfo?: { code?: unknown } } | null;
+    if ((failure?.code ?? failure?.errorInfo?.code) === "auth/user-not-found") return false;
+    throw error;
+  }
+}
+
 async function demoteDriverAccount(authUid: string): Promise<void> {
   const user = await auth.getUser(authUid);
   const claims = { ...(user.customClaims ?? {}) };
@@ -265,19 +276,23 @@ router.post("/reconcile", fleetMutation(async (req: Request, res: Response) => {
 router.put("/buses/:id", fleetMutation(async (req: Request, res: Response) => {
   const id = req.params.id;
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-  const rawRoutes: unknown[] = Array.isArray(req.body?.assignedRoutes)
-    ? req.body.assignedRoutes
-    : [];
-  const assignedRoutes = [
-    ...new Set(rawRoutes.filter((value): value is string => validId(value))),
-  ];
-  if (!validId(id) || !name || name.length > 100 || assignedRoutes.length > 50) {
+  // An omitted list is an explicit empty assignment; a malformed one must never
+  // be coerced into removing or silently dropping existing route assignments.
+  const rawRoutes: unknown = req.body?.assignedRoutes === undefined ? [] : req.body.assignedRoutes;
+  const routesValid = Array.isArray(rawRoutes) && rawRoutes.every(validId);
+  const assignedRoutes = routesValid ? [...new Set(rawRoutes as string[])] : [];
+  if (!validId(id) || !name || name.length > 100 || !routesValid || assignedRoutes.length > 50) {
     res.status(400).json({ error: "Invalid vehicle data." });
     return;
   }
   try {
     const routeDocs = await settleTogether(assignedRoutes.map(routeId => db.collection("routes").doc(routeId).get()));
     if (routeDocs.some(route => !route.exists)) { res.status(400).json({ error: "One or more assigned routes do not exist." }); return; }
+    if (assignedRoutes.length === 0 && !(await db.collection("drivers").where("assignedBusId", "==", id).limit(1).get()).empty) {
+      // An assigned operator's authorization requires at least one route; saving
+      // first would fail publication and leave the old route mirror in place.
+      res.status(409).json({ error: "Unassign every operator before removing the vehicle's last route." }); return;
+    }
     for await (const rides of reconciliationPages(db.collection("active_rides").where("busId", "==", id))) {
       if (rides.some(ride => !assignedRoutes.includes(ride.data().routeId))) {
         res.status(409).json({ error: "An active ride route cannot be removed before its final stop." }); return;
@@ -427,11 +442,16 @@ router.put("/drivers/:id", fleetMutation(async (req: Request, res: Response) => 
     // operator record or user role. Authorization publication reads this again
     // after persistence, but validation there is too late to avoid partial state.
     if (assignedBusId !== null) await loadBusRouteIds(assignedBusId);
-    await auth.getUser(authUid);
+    if (!(await authUserExists(authUid))) {
+      res.status(400).json({ error: "No account exists for that Auth UID." });
+      return;
+    }
     if (validId(previousAuthUid) && previousAuthUid !== authUid) {
       // Revoke the old principal before reusing this driver ID. Otherwise the
       // old account retains claims that still match the RTDB assignment mirror.
-      await demoteDriverAccount(previousAuthUid);
+      // A deleted account has no claims to revoke, and writing its profile
+      // would recreate data that privacy deletion removed.
+      if (await authUserExists(previousAuthUid)) await demoteDriverAccount(previousAuthUid);
     }
     await db.collection("drivers").doc(id).set({ id, name, authUid, assignedBusId }, { merge: true });
     await db.collection("users").doc(authUid).set({ role: "driver" }, { merge: true });
@@ -472,7 +492,8 @@ router.delete("/drivers/:id", fleetMutation(async (req: Request, res: Response) 
     const authUid = driverDoc.data()?.authUid;
     // Keep the registry record until invalidation succeeds, so a failed
     // offboarding can be retried instead of losing its principal lookup.
-    if (validId(authUid)) {
+    // A deleted account has no claims left to revoke (see the reassignment path).
+    if (validId(authUid) && await authUserExists(authUid)) {
       await demoteDriverAccount(authUid);
     }
     await settleTogether([

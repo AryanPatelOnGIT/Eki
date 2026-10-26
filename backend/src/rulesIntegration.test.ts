@@ -119,7 +119,7 @@ rulesDescribe("Firebase security rules integration", () => {
 
   it("retained ride membership cannot authorize chat reads after the profile is deleted", async () => {
     const passenger = environment.authenticatedContext("retired_passenger", { role: "passenger" });
-    const admin = environment.authenticatedContext("retirement_admin", { role: "admin", authorizationVersion: "current" });
+    const admin = environment.authenticatedContext("retirement_admin", { role: "admin", admin: true, authorizationVersion: "current" });
     const session = "retained_session";
     await environment.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), "users", "retired_passenger"), { role: "passenger" });
@@ -458,7 +458,7 @@ rulesDescribe("Firebase security rules integration", () => {
 
   it("requires current admin authorization in both databases and never revives an old version", async () => {
     const uid = "security_admin";
-    const contextFor = (authorizationVersion?: string, extra = { role: "admin", admin: true }) => environment.authenticatedContext(uid, { ...extra, ...(authorizationVersion ? { authorizationVersion } : {}) });
+    const contextFor = (authorizationVersion?: string, extra: Record<string, unknown> = { role: "admin", admin: true }) => environment.authenticatedContext(uid, { ...extra, ...(authorizationVersion ? { authorizationVersion } : {}) });
     const old = contextFor("a1");
     const feedback = (context: ReturnType<typeof contextFor>) => doc(context.firestore(), "feedbacks", "security_feedback");
     const fleet = (context: ReturnType<typeof contextFor>) => ref(context.database(), "publicRouteBuses");
@@ -479,7 +479,11 @@ rulesDescribe("Firebase security rules integration", () => {
     await publish("admin", "a3");
     await assertFails(getDoc(feedback(old)));
     await assertFails(get(fleet(old)));
-    for (const invalid of [contextFor(), contextFor("unknown"), contextFor("a3", { role: "passenger", admin: true })]) {
+    // Admin authority is the role claim AND the admin flag, in both databases.
+    for (const invalid of [
+      contextFor(), contextFor("unknown"), contextFor("a3", { role: "passenger", admin: true }),
+      contextFor("a3", { role: "admin" }), contextFor("a3", { role: "admin", admin: false }),
+    ]) {
       await assertFails(getDoc(feedback(invalid)));
       await assertFails(get(fleet(invalid)));
     }

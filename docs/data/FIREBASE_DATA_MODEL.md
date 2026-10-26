@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-08 08:22 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Field ownership and compatibility build on [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -235,7 +235,7 @@ These have no matching allow rule and are therefore client-denied.
 
 ### `devices/{deviceId}`
 
-Fields: `deviceId`, `busId`, `routeId`, `enabled`, `secretHash` (`32-hex-salt:128-hex-scrypt-key`), `credentialRotatedAt`, `updatedAt`, optional `disabledAt`. Plain `secret` is explicitly deleted on provisioning. Exactly one device may own a bus/route assignment; active ride/lock guards prevent unsafe rotation/reassignment.
+Fields: `deviceId`, `busId`, `routeId`, `enabled`, `secretHash` (`32-hex-salt:128-hex-scrypt-key`), `credentialRotatedAt`, `updatedAt`, optional `disabledAt`. Plain `secret` is explicitly deleted on provisioning. Exactly one device may own a bus/route assignment; active ride/lock guards prevent unsafe rotation/reassignment. An admin reassignment that omits `enabled` keeps the stored value, and disabling updates only an existing entry (an unknown ID is 404, never a new credential-less entry). A Firestore-reserved `__…__` `busId`/`routeId` is treated as unassigned.
 
 ### `active_rides/{busId}_{routeId}`
 
@@ -243,7 +243,7 @@ Minimal recovery state: `sessionId`, `busId`, `routeId`, `driverId`, `direction`
 
 ### `_active_bus_locks/{busId}`
 
-Unique active-session constraint: `busId`, `routeId`, `driverId`, `sessionId`, `direction`, optional `automaticTurnaround`, `createdAt`, `updatedAt`. Created in the same Firestore transaction as the pending/automatically armed session; repaired on idempotent resume; conditionally released on conflict, completion or abandonment. Together with the short RTDB turnaround claim it closes same-bus and cross-replica races.
+Unique active-session constraint: `busId`, `routeId`, `driverId`, `sessionId`, `direction`, optional `automaticTurnaround`, `createdAt`, `updatedAt`. Created in the same Firestore transaction as the pending/automatically armed session; repaired on idempotent resume; conditionally released on conflict, completion or abandonment. On a start conflict, the release commits in the same transaction that marks the new session `failed`, so a terminal session never keeps the lock. Together with the short RTDB turnaround claim it closes same-bus and cross-replica races.
 
 ### `_worker_leases/{leaseName}`
 
@@ -267,7 +267,7 @@ Server-only legacy/admin fleet audit: method, path, admin UID, pending/completed
 
 ### `_route_save_operations/{saveId}`
 
-Server-only route-save coordination record. It binds a stable `saveId` to `routeId` and an exact payload hash, with `processing|succeeded|failed` status, a bounded cross-replica lease/owner, attempt count, timestamps, and a replayable result or structured failure. A different payload cannot reuse the ID. The final transaction writes the versioned route and successful operation together, allowing timeout-after-commit reconciliation without a duplicate Google request or stale overwrite.
+Server-only route-save coordination record. It binds a stable `saveId` to `routeId` and an exact payload hash, with `processing|succeeded|failed` status, a bounded cross-replica lease/owner, attempt count, timestamps, and a replayable result or structured failure. A different payload cannot reuse the ID. The final transaction writes the versioned route and successful operation together, allowing timeout-after-commit reconciliation without a duplicate Google request or stale overwrite. A failure is recorded only while the operation still holds its lease; an `outcomeUnknown` failure therefore proves nothing committed, and a retry with the same ID and payload reclaims the operation instead of replaying it. Definitive failures replay.
 
 ### `_route_geometry_previews/{operationId}` / `_fleet_reconciliation_jobs/{operationId}`
 
@@ -325,7 +325,7 @@ credential-cache entries. Browser rules deny all reads and writes.
 
 ## Timestamp and ID conventions
 
-- External IDs use `[A-Za-z0-9_-]{1,128}`. Human strings have explicit length bounds.
+- External IDs use `[A-Za-z0-9_-]{1,128}`. Human strings have explicit length bounds. Firestore rejects `__…__` document IDs even though they match this pattern; device ingest rejects such IDs before any registry read.
 - Hardware measurement: epoch milliseconds in `timestamp`.
 - RTDB receipt/lifecycle: server epoch milliseconds.
 - Firestore operational writes: `FieldValue.serverTimestamp()`/`Timestamp`.

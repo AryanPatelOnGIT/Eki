@@ -96,7 +96,10 @@ router.post(
     const secret = parseDeviceAuthorization(req.get("authorization"));
     let encodedLength = Number.POSITIVE_INFINITY;
     try {
-      encodedLength = Buffer.byteLength(JSON.stringify(req.body), "utf8");
+      // Express leaves req.body undefined when the JSON parser skips a request
+      // (missing or non-JSON Content-Type); that is a shape error, not a 413.
+      const encoded: string | undefined = JSON.stringify(req.body);
+      encodedLength = encoded === undefined ? 0 : Buffer.byteLength(encoded, "utf8");
     } catch {
       // parseTelemetryValue returns the generic shape error below.
     }
@@ -333,8 +336,10 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
   const deviceId = singleRouteParam(req.params.deviceId);
   const busId = req.body?.busId;
   const routeId = req.body?.routeId;
-  const enabled = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled")
-    ? req.body.enabled : true;
+  // Omitting enabled keeps the registry state, so a reassignment can never
+  // silently re-enable a device an administrator disabled.
+  const requestedEnabled = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled")
+    ? req.body.enabled : undefined;
   if (
     deviceId === null ||
     !SAFE_ID.test(deviceId) ||
@@ -342,7 +347,7 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
     !SAFE_ID.test(busId) ||
     typeof routeId !== "string" ||
     !SAFE_ID.test(routeId) ||
-    typeof enabled !== "boolean"
+    (requestedEnabled !== undefined && typeof requestedEnabled !== "boolean")
   ) {
     res.status(400).json({ error: "Invalid device, bus, or route ID." });
     return;
@@ -378,6 +383,7 @@ router.put("/:deviceId", requireAdmin, async (req: Request, res: Response) => {
       }
 
       const previous = existingDevice.data();
+      const enabled = typeof requestedEnabled === "boolean" ? requestedEnabled : previous?.enabled !== false;
       const assignmentChanged =
         !existingDevice.exists ||
         previous?.busId !== busId ||
@@ -476,10 +482,17 @@ const disableDevice = async (req: Request, res: Response) => {
     return;
   }
   try {
-    await db.collection("devices").doc(deviceId).set(
-      { enabled: false, disabledAt: FieldValue.serverTimestamp() },
-      { merge: true },
-    );
+    // update() fails on a missing registry entry instead of creating a
+    // credential-less phantom device and reporting a mistyped ID as disabled.
+    try {
+      await db.collection("devices").doc(deviceId).update(
+        { enabled: false, disabledAt: FieldValue.serverTimestamp() },
+      );
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code !== 5) throw error;
+      res.status(404).json({ error: "Device not found." });
+      return;
+    }
     await publishDeviceCredentialInvalidation(deviceId);
     res.json({ disabled: true });
   } catch (error) {

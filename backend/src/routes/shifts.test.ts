@@ -700,6 +700,15 @@ describe("shift start after automatic completion", () => {
     expect(harness.batchSets).toEqual([]);
   });
 
+  it("clears an automatic pause when a manual start reuses the recovered lock", async () => {
+    harness.liveNode = { busId: "bus_1", lat: 23.1, lng: 72.6, timestamp: Date.now(), motionState: "stopped", gpsHdop: 2, automaticServicePaused: true };
+    harness.lock = { busId: "bus_1", routeId: "route_1", driverId: "driver_1", sessionId: "session_existing" };
+    harness.session = { status: "pending", direction: "reverse", armedAt: 1234 };
+
+    expect((await startShift()).status).toBe(200);
+    expect(harness.docSets).toContainEqual({ id: "bus_1", data: expect.objectContaining({ automaticServicePaused: false }) });
+  });
+
   it("derives endpoints from the direction already held by a recovered lock", async () => {
     harness.liveNode = {
       busId: "bus_1",

@@ -1,0 +1,56 @@
+import type { ErrorRequestHandler, RequestHandler } from "express";
+import { recordActiveSpanException } from "../instrumentation";
+
+/**
+ * Client-caused request failures: body-parser marks its own 4xx errors as
+ * exposable (unsupported charset or content encoding, corrupt compression,
+ * aborted bodies), and the router tags undecodable path parameters as 400
+ * URIErrors. Upstream SDK errors may also carry a `status`, so only these
+ * markers make an error a client error; everything else stays an opaque 500.
+ */
+function clientErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const candidate = error as { type?: unknown; status?: unknown; expose?: unknown };
+  if (candidate.type === "entity.too.large") return 413;
+  if (candidate.type === "entity.parse.failed") return 400;
+  const status = candidate.status;
+  if (typeof status !== "number" || !Number.isInteger(status) || status < 400 || status > 499) {
+    return null;
+  }
+  return candidate.expose === true || (error instanceof URIError && status === 400) ? status : null;
+}
+
+const CLIENT_ERROR_MESSAGES: Record<number, string> = {
+  413: "Request body is too large.",
+  415: "Unsupported request body encoding.",
+};
+
+/** Unmatched paths and methods keep the documented `{ "error": "…" }` JSON shape. */
+export const notFoundHandler: RequestHandler = (_req, res) => {
+  res.status(404).json({ error: "Not found." });
+};
+
+/**
+ * Answers request-parsing failures with a fixed, generic JSON message so
+ * malformed client input never reaches the 500 handler (which logs it as a
+ * server fault) and never echoes parser internals back to the caller.
+ */
+export const clientRequestErrorHandler: ErrorRequestHandler = (error, _req, res, next) => {
+  const status = clientErrorStatus(error);
+  if (status === null || res.headersSent) {
+    next(error);
+    return;
+  }
+  const parseFailed = (error as { type?: unknown }).type === "entity.parse.failed";
+  res.status(status).json({
+    error: parseFailed ? "Invalid JSON body." : CLIENT_ERROR_MESSAGES[status] ?? "Invalid request.",
+  });
+};
+
+/** Last-resort handler: records the failure and never exposes its details. */
+export const unhandledRequestErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+  void _next;
+  recordActiveSpanException(error);
+  console.error("[Server] Unhandled request error:", error);
+  res.status(500).json({ error: "Internal server error." });
+};

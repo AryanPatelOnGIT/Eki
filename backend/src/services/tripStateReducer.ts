@@ -150,36 +150,45 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
   const departureRadius = stops.length > 1
     ? Math.min(ORIGIN_DEPARTURE_M, Math.max(MIN_ORIGIN_DEPARTURE_M, haversineMeters(firstStop, stops[1]) / 2))
     : ORIGIN_DEPARTURE_M;
+  // A first stop inside the minimum departure radius can be passed before the
+  // radius is cleared. Moving through it is departure evidence, or the later
+  // departure segment would no longer touch it and strand the ride at stop 1.
+  const crossedFirstStop = motionState === "moving" && stops.length > 1 &&
+    wasStopReached(stops[1], position, input.previousPosition);
   const hasDepartedOrigin =
     input.hasDepartedOrigin ||
     (currentTripState === "in_service" &&
-      haversineMeters(position, firstStop) >= departureRadius);
+      (haversineMeters(position, firstStop) >= departureRadius || crossedFirstStop));
 
+  let leavingOrigin = false;
   if (currentTripState === "pre_departure") {
     const departed = motionState === "moving" &&
-      haversineMeters(position, firstStop) >= departureRadius;
-    return {
-      tripState: departed ? "in_service" : "pre_departure",
-      currentStopIndex: departed && stops.length > 1 ? Math.max(1, currentStopIndex) : currentStopIndex,
-      hasDepartedOrigin: hasDepartedOrigin || departed,
-    };
+      (haversineMeters(position, firstStop) >= departureRadius || crossedFirstStop);
+    if (!departed || stops.length < 2) {
+      return {
+        tripState: departed ? "in_service" : "pre_departure",
+        currentStopIndex,
+        hasDepartedOrigin: hasDepartedOrigin || departed,
+      };
+    }
+    leavingOrigin = true;
   }
 
-  if (currentTripState === "in_service") {
+  if (currentTripState === "in_service" || leavingOrigin) {
     const lastIndex = stops.length - 1;
-    const safeCurrentIndex = Math.min(
+    let safeCurrentIndex = Math.min(
       Math.max(Math.trunc(currentStopIndex), 0),
       lastIndex,
     );
 
     // Stop zero represents the origin. It is left only after there is strong
     // departure evidence, never merely because the client supplied an index.
-    if (safeCurrentIndex === 0 && hasDepartedOrigin && lastIndex > 0) {
-      return {
-        tripState: "in_service",
-        currentStopIndex: 1,
-        hasDepartedOrigin,
-      };
+    if (safeCurrentIndex === 0 && hasDepartedOrigin && lastIndex > 0) leavingOrigin = true;
+    if (leavingOrigin) {
+      // The departure segment may already have crossed a closely spaced first
+      // stop. Consume intermediate crossings now, or the ride can never pass
+      // stop 1; terminal arrival still needs a later, separately confirmed fix.
+      safeCurrentIndex = Math.max(1, safeCurrentIndex);
     }
 
     // Only the next expected stop may advance the trip. The bounded segment
@@ -187,7 +196,8 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
     // permits a downstream stop to skip one or more configured stops.
     let nextIndex = safeCurrentIndex;
     let lastCrossing = -Infinity;
-    while (nextIndex > 0 && wasStopReached(stops[nextIndex], position, input.previousPosition)) {
+    while (nextIndex > 0 && !(leavingOrigin && nextIndex === lastIndex) &&
+      wasStopReached(stops[nextIndex], position, input.previousPosition)) {
       // Multiple closely spaced stops may be crossed in one accepted segment.
       // Consume them only in travel order, never by nearest-stop lookup.
       const previous = input.previousPosition;
@@ -218,7 +228,7 @@ export function reduceTripState(input: TripStateInput): TripStateResult {
       }
       nextIndex += 1;
     }
-    return { tripState: "in_service", currentStopIndex: nextIndex, hasDepartedOrigin };
+    return { tripState: "in_service", currentStopIndex: nextIndex, hasDepartedOrigin: hasDepartedOrigin || leavingOrigin };
   }
 
   if (currentTripState === "maintenance") {

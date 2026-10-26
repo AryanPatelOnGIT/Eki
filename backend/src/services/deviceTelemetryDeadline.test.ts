@@ -26,11 +26,17 @@ vi.mock("../lib/firebaseAdmin", () => ({
     return { committed: value !== undefined, snapshot: { val: () => store.nodes.get(path) ?? null } };
   } }) },
 }));
-vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: async () => false }));
+vi.mock("./durableRideRecovery", () => ({ restoreDurableRide: vi.fn(async () => false) }));
+vi.mock("./automaticServiceAdmission", () => ({
+  scheduleAutomaticServiceAdmission: vi.fn(), invalidateAutomaticServiceAdmission: vi.fn(),
+  isAutomaticServiceAdmissionDeferred: vi.fn(() => false),
+}));
 vi.mock("./telemetryRouteService", () => ({ scheduleTelemetryRouteProcessing: vi.fn() }));
 import { authenticateDeviceCredentials, getHttpsTelemetryStatus, hashDeviceSecret, ingestDeviceTelemetry, verifyDeviceSecretHash } from "./deviceTelemetryService";
 import { ExecutionDeadlineError, TelemetryExecutionFailure } from "../lib/executionDeadline";
 import { scheduleTelemetryRouteProcessing } from "./telemetryRouteService";
+import { restoreDurableRide } from "./durableRideRecovery";
+import { isAutomaticServiceAdmissionDeferred, scheduleAutomaticServiceAdmission } from "./automaticServiceAdmission";
 
 function gate() { let release!: () => void; const promise = new Promise<void>(done => { release = done; }); return { promise, release }; }
 async function flush() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
@@ -53,6 +59,17 @@ function sample(offset = 0) { const now = Date.now() + offset; return {
   lat: 23, lng: 72, speed: 0, heading: 0, motionState: "stopped" as const, gpsHdop: 1,
   timestamp: now, deviceSentAt: now, seq: offset + 1,
 }; }
+
+describe("automatic setup restore reads", () => {
+  it.each([[true, 0], [false, 1]])("with admission deferred=%s restores the durable ride %i times", async (deferred, restores) => {
+    store.nodes.set(node, { ...store.nodes.get(node), status: "offline", sessionId: null, tripState: null });
+    vi.mocked(isAutomaticServiceAdmissionDeferred).mockReturnValue(deferred);
+    await ingestDeviceTelemetry(id, secret, sample());
+    await flush();
+    expect(restoreDurableRide).toHaveBeenCalledTimes(restores);
+    expect(scheduleAutomaticServiceAdmission).toHaveBeenCalledOnce();
+  });
+});
 
 describe("actual ingestion dependency deadlines", () => {
   it("does not dispatch a queued KDF after its credential admission expires", async () => {
@@ -113,6 +130,20 @@ describe("actual ingestion dependency deadlines", () => {
     store.after = undefined;
     await expect(ingestDeviceTelemetry(id, secret, sample(2))).resolves.toEqual({ ok: true, duplicate: false });
     expect(store.nodes.get(node).seq).toBe(3);
+  });
+
+  it("keeps cached devices ingesting while unauthenticated requests wait on the KDF", async () => {
+    store.holdCrypto = true;
+    const flood = Array.from({ length: 48 }, (_, index) =>
+      ingestDeviceTelemetry(`unknown_device_${index}`, `guessed-secret-${index}-with-padding`, sample()).catch(error => error));
+    await flush();
+    await expect(ingestDeviceTelemetry(id, secret, sample(1))).resolves.toEqual({ ok: true, duplicate: false });
+    expect(store.nodes.get(node).seq).toBe(2);
+    store.holdCrypto = false;
+    for (const callback of store.cryptoCallbacks) callback(null, Buffer.alloc(64));
+    await vi.advanceTimersByTimeAsync(10_000);
+    const outcomes = await Promise.all(flood);
+    expect(outcomes.every(outcome => outcome instanceof Error || (outcome as { ok?: boolean }).ok === false)).toBe(true);
   });
 
   it("aborts an expired SDK retry callback without publishing an old fix", async () => {

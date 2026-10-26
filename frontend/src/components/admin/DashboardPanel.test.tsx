@@ -1,31 +1,51 @@
 // @vitest-environment jsdom
 import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DashboardPanel from "./DashboardPanel";
 import type { ActiveBusEntry } from "@/lib/activeBusEntries";
 import type { RouteData } from "@/hooks/useRoutes";
 import { fixtureBus, route } from "../../../../e2e/fixtures/state";
-const state = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[], geometries: new Map(), routes: [] as RouteData[] }));
+const state = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[], geometries: new Map(), routes: [] as RouteData[], resuming: false, driversLoading: false }));
 vi.mock("@vis.gl/react-google-maps", () => ({ Map: ({children}: {children: ReactNode}) => <div>{children}</div>, AdvancedMarker: ({ children, position, anchorLeft, anchorTop }: { children: ReactNode; position: unknown; anchorLeft?: string; anchorTop?: string }) => <div data-marker={JSON.stringify(position)} data-anchor={JSON.stringify([anchorLeft, anchorTop])}>{children}</div>, useMap: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ role: "admin", user: {uid: "qa-admin"} }) }));
 vi.mock("@/hooks/useActiveBuses", () => ({ useActiveBuses: () => state.entries }));
 vi.mock("@/hooks/useDynamicRouteGeometries", () => ({ useDynamicRouteGeometries: () => state.geometries }));
-vi.mock("@/hooks/useRTDBResume", () => ({ useRTDBResume: () => ({ isResuming: false }) }));
+vi.mock("@/hooks/useRTDBResume", () => ({ useRTDBResume: () => ({ isResuming: state.resuming }) }));
 vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: [{id: "qa-bus", name: "QA bus", assignedRoutes: ["qa-route"]}] }) }));
-vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: [{id: "qa-driver", name: "QA driver", assignedBusId: "qa-bus"}] }) }));
+vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: state.driversLoading ? [] : [{id: "qa-driver", name: "QA driver", assignedBusId: "qa-bus"}], loading: state.driversLoading }) }));
 vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ routes: state.routes }) }));
 vi.mock("@/components/maps/DirectionsRoute", () => ({ default: ({ nextStopIndices }: ComponentProps<typeof import("../maps/DirectionsRoute").default>) => <div data-testid="road" data-next={JSON.stringify(nextStopIndices)} /> }));
+vi.mock("@/components/shared/MessagingPanel", () => ({ default: ({ sessionId }: { sessionId: string }) => <p>Chat session {sessionId}</p> }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: {currentUser: {getIdToken: async () => "synthetic-token"}} }));
 vi.mock("@/components/ui/CustomSelect", () => ({default: ({ariaLabel, value, options, onChange, disabled}: {ariaLabel: string; value: string; options: {value: string; label: string}[]; onChange: (value: string) => void; disabled?: boolean}) => <select aria-label={ariaLabel} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}));
-beforeEach(() => { state.entries = []; state.routes = [{ ...route, stops: [] }]; state.geometries.clear(); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
+beforeEach(() => { state.entries = []; state.resuming = false; state.driversLoading = false; state.routes = [{ ...route, stops: [] }]; state.geometries.clear(); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("admin service creation", () => {
   it("offers recovery for a terminal automatic intent without reviving the old ride",()=>{
     state.entries=[{...fixtureBus(),sessionId:undefined,status:"offline",automaticServiceState:"paused"} as ActiveBusEntry];
     render(<DashboardPanel />);
     expect(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"})).toBeTruthy();
+  });
+  it("offers one resume per paused route of the same bus", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.entries=[{...fixtureBus(),sessionId:undefined,status:"offline",automaticServiceState:"paused"} as ActiveBusEntry,
+      {...fixtureBus(),routeId:"qa-route-2",sessionId:undefined,status:"offline",automaticServiceState:"paused"} as ActiveBusEntry];
+    render(<DashboardPanel />);
+    expect(screen.getAllByRole("button",{name:"Resume automatic tracking for qa-bus"})).toHaveLength(2);
+    expect(errors.mock.calls.some(call => String(call[0]).includes("same key"))).toBe(false);
+    errors.mockRestore();
+  });
+  it("waits for the operator list instead of reporting a missing operator", async () => {
+    state.driversLoading = true;
+    state.entries=[{...fixtureBus(),status:"offline",sessionId:undefined,automaticServicePaused:true} as ActiveBusEntry];
+    const send = vi.fn(); vi.stubGlobal("fetch", send);
+    render(<DashboardPanel />);
+    await userEvent.setup().click(screen.getByRole("button",{name:"Resume automatic tracking for qa-bus"}));
+    expect(screen.getByText(/Operators are still loading/)).toBeTruthy();
+    expect(screen.queryByText(/Assign exactly one operator/)).toBeNull();
+    expect(send).not.toHaveBeenCalled();
   });
   it("explains a blocked automatic setup using the authoritative assignment state",()=>{
     state.entries=[{...fixtureBus(),sessionId:undefined,status:"offline",automaticServiceState:"assignment_required"} as ActiveBusEntry];
@@ -122,5 +142,85 @@ describe("admin service creation", () => {
     state.entries = [{ ...state.entries[0], timestamp: Date.now() }];
     view.rerender(<DashboardPanel />);
     expect(screen.getByText("1 device online · 0 services")).toBeTruthy();
+  });
+  it("keeps one bus's delay change locked while another bus's delay change completes", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry, { ...fixtureBus("forward", "qa-session-2", "qa-bus-2"), routeId: route.id } as ActiveBusEntry];
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { pending.push(resolve); })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    for (const card of screen.getAllByRole("button", { expanded: false })) await user.click(card);
+    await user.click(screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }));
+    await user.click(screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus-2" }));
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1](new Response('{"saved":true,"delayMinutes":1}'));
+    await screen.findByText("Delay updated to 1 minutes for qa-bus-2.");
+    expect((screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }) as HTMLButtonElement).disabled).toBe(true);
+    pending[0](new Response('{"saved":true,"delayMinutes":1}'));
+    await screen.findByText("Delay updated to 1 minutes for qa-bus.");
+    expect((screen.getByRole("button", { name: "Increase delay by 1 minutes for qa-bus" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("shows why ending a ride early failed instead of leaving the reason behind the dialog", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Ride session changed."}', { status: 409 })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await user.click(screen.getByRole("button", { name: "End ride early" }));
+    await user.click(within(screen.getByRole("dialog", { name: "End ride early?" })).getByRole("button", { name: "End ride" }));
+    expect(await screen.findByText("Ride session changed.")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "End ride early?" })).toBeNull();
+  });
+  it("shows why clearing ride messages failed instead of leaving the reason behind the dialog", async () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Messages are locked."}', { status: 409 })));
+    const user = userEvent.setup(); render(<DashboardPanel />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await user.click(screen.getByRole("button", { name: "Open live details for qa-bus" }));
+    await user.click(screen.getByRole("button", { name: "Clear Messages" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Clear Messages?" })).getByRole("button", { name: "Clear Messages" }));
+    expect(await screen.findByText("Error: Messages are locked.")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Clear Messages?" })).toBeNull();
+  });
+  it("keeps an open admin chat tied to the live receiver rather than the bus state at the moment it was opened", () => {
+    vi.useFakeTimers(); const start = Date.now();
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    const view = render(<DashboardPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    vi.setSystemTime(start + 6 * 60_000);
+    state.entries = [{ ...state.entries[0], timestamp: Date.now(), backendReceivedAt: Date.now() }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.entries = [{ ...state.entries[0], deviceState: "offline" }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText("Chat session qa-session")).toBeNull();
+  });
+  it("keeps an open admin chat through a live data gap and closes it only once the ride is known gone", () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    const view = render(<DashboardPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    state.resuming = true; state.entries = [];
+    view.rerender(<DashboardPanel />);
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.resuming = false; state.entries = [{ ...fixtureBus("forward"), timestamp: Date.now(), backendReceivedAt: Date.now() } as ActiveBusEntry];
+    view.rerender(<DashboardPanel />);
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.entries = [];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText(/Chat session/)).toBeNull();
+  });
+  it("does not reopen a closed admin chat when its receiver reconnects or a new ride replaces it", () => {
+    state.entries = [{ ...fixtureBus("forward") } as ActiveBusEntry];
+    const view = render(<DashboardPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    state.entries = [{ ...state.entries[0], deviceState: "offline" }];
+    view.rerender(<DashboardPanel />);
+    state.entries = [{ ...state.entries[0], deviceState: "online", timestamp: Date.now(), backendReceivedAt: Date.now() }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText(/Chat session/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open live chat for qa-bus" }));
+    expect(screen.getByText("Chat session qa-session")).toBeTruthy();
+    state.entries = [{ ...state.entries[0], sessionId: "qa-next-session" }];
+    view.rerender(<DashboardPanel />);
+    expect(screen.queryByText(/Chat session/)).toBeNull();
   });
 });

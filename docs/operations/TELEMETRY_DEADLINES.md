@@ -1,6 +1,10 @@
 # Telemetry execution deadlines
 
-Valid telemetry enters a bounded process-local executor: 8 dispatched pipelines,
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+
+Device credentials and registry assignment are verified first, outside the
+executor, bounded by the credential fills and KDF limiter described below.
+Only a verified device's telemetry enters a bounded process-local executor: 8 dispatched pipelines,
 32 total waiting requests and 1 waiting request per device. Admission is immediate
 or rejected; undispatched queue age is at most 2 seconds. One device has at most
 one unsettled dispatched pipeline. Replicas multiply these ceilings.

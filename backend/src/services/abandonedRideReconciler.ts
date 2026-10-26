@@ -25,8 +25,13 @@ function configuredThresholdMs(value: string | undefined): number {
     : DEFAULT_ABANDONED_RIDE_THRESHOLD_MS;
 }
 
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+// An identifier that cannot address a Firestore document or RTDB node would
+// throw for the whole page and retain its cursor forever; skip it instead.
 function lifecycleKey(session: Record<string, unknown>): string | null {
-  return typeof session.busId === "string" && typeof session.routeId === "string"
+  return typeof session.busId === "string" && SAFE_ID.test(session.busId) &&
+    typeof session.routeId === "string" && SAFE_ID.test(session.routeId)
     ? `${session.busId}_${session.routeId}`
     : null;
 }

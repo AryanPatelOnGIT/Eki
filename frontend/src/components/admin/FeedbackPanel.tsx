@@ -201,7 +201,7 @@ function FeedbackCard({
             <span className="text-[10px] text-white/20 font-black uppercase tracking-widest mr-1">
               Mark as:
             </span>
-            {(["new", "reviewed", "resolved"] as FeedbackEntry["status"][]).map((s) => (
+            {(["reviewed", "resolved"] as FeedbackEntry["status"][]).map((s) => (
               <button
                 key={s}
                 onClick={() => void onStatusChange(entry.id, s)}
@@ -209,9 +209,7 @@ function FeedbackCard({
                 className={`min-h-11 px-3 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
                   s === "resolved"
                     ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30"
-                    : s === "reviewed"
-                    ? "bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30"
-                    : "bg-blue-500/20 text-blue-400 border-blue-500/30 hover:bg-blue-500/30"
+                    : "bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30"
                 }`}
               >
                 {s}

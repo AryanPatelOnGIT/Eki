@@ -12,6 +12,14 @@ inline bool speedIsPlausible(double speedKmh) {
   return std::isfinite(speedKmh) && speedKmh >= 0.0 && speedKmh <= 200.0;
 }
 
+// TinyGPS++ converts any checksummed DDMM digits without a range check. Keep
+// the firmware sample inside the same envelope the telemetry API validates.
+inline bool coordinatesAreValid(double lat, double lng) {
+  return std::isfinite(lat) && std::isfinite(lng) &&
+         lat >= -90.0 && lat <= 90.0 &&
+         lng >= -180.0 && lng <= 180.0;
+}
+
 constexpr double DISTANCE_THRESHOLD_M = 5.0;
 constexpr double HEADING_THRESHOLD_DEG = 15.0;
 constexpr double SPEED_THRESHOLD_KMH = 5.0;
@@ -24,6 +32,12 @@ constexpr double GNSS_ERROR_MIN_M = 15.0;
 constexpr double GNSS_ERROR_MAX_M = 50.0;
 constexpr double GNSS_STATIONARY_SPEED_KMH = 2.5;
 constexpr double GNSS_HDOP_MAX = 4.0;
+
+// TinyGPS++ parses HDOP as a signed decimal. A negative value is not receiver
+// quality evidence and the telemetry API rejects it, so treat it as no fix.
+inline bool gnssHdopIsAcceptable(double hdop) {
+  return std::isfinite(hdop) && hdop >= 0.0 && hdop <= GNSS_HDOP_MAX;
+}
 constexpr uint32_t GNSS_MAX_TRANSITION_GAP_MS = 60UL * 1000;
 constexpr uint32_t GNSS_REACQUIRE_AFTER_MS = 5UL * 60 * 1000;
 // Telemetry is evaluated from the GNSS owner task at this cadence. Keep the
@@ -100,6 +114,20 @@ inline bool gnssFixFieldsAreFresh(
          (!hdopValid || hdopAgeMs <= GNSS_FIX_MAX_AGE_MS) &&
          (!speedValid || speedAgeMs <= GNSS_FIX_MAX_AGE_MS) &&
          (!courseValid || courseAgeMs <= GNSS_FIX_MAX_AGE_MS);
+}
+
+// Evaluate at least once per window: once an observation ages out it stays
+// invalid, so a 32-bit millis() rollover cannot make it look fresh again.
+inline bool latchFreshness(
+  bool &valid,
+  uint32_t observedAtMs,
+  uint32_t nowMs,
+  uint32_t maximumAgeMs
+) {
+  if (valid && static_cast<uint32_t>(nowMs - observedAtMs) > maximumAgeMs) {
+    valid = false;
+  }
+  return valid;
 }
 
 inline double adaptiveGnssErrorMeters(

@@ -1,5 +1,7 @@
 # Matching and lifecycle scan work (issue #246 R19)
 
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+
 ## Scope and correctness
 
 This change is isolated from the broader, unmerged PR #272. That PR's cumulative
@@ -12,7 +14,9 @@ The matcher binary-searches cached cumulative distances for every segment whose
 physical interval intersects the existing maximum-progress window. It preserves
 the original projected-point progress rejection, scoring, headings, confidence,
 ambiguity and candidate order. Long segments crossing the window, parallel roads,
-loop legs and repeated vertices remain eligible. Missing/expired continuity or
+loop legs and repeated vertices remain eligible. Ambiguity requires a competitor
+that is clearly farther along the route than its straight-line distance, so
+repeated or densely sampled vertices of one road do not make a match ambiguous. Missing/expired continuity or
 an absent/non-finite bound performs the original full scan. The first use of a
 geometry still builds cumulative distances in O(N); warm bounded search costs
 O(log N + eligible segments). Route/session/version invalidation remains owned
@@ -25,7 +29,8 @@ previous terminal records were deleted. Numeric timestamps from zero through
 the cutoff are queried; timestamps exactly at the freshness horizon are not
 mutated. Missing/non-numeric timestamps retain the prior skip behavior. Completed
 cycles pause for `BUS_STALE_MS`; failed pages retain their cursor with bounded
-1–30 second backoff. Large backlogs take multiple ticks, deliberately trading
+1–30 second backoff. A scheduled wait longer than its bound is discarded, so a
+backwards wall-clock step cannot postpone cleanup until wall time catches up. Large backlogs take multiple ticks, deliberately trading
 cleanup latency for bounded work.
 
 Transactions recheck timestamp, sequence, server-received time, bus/route/driver,

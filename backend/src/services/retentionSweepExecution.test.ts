@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   filters: new Map<string, unknown[][]>(),
   recursiveDelete: vi.fn(async () => undefined),
   rtdbRoots: [] as string[],
+  failing: new Set<string>(),
 }));
 vi.mock("./firebaseRtdbRetention", () => ({ firebaseRtdbRetentionStore: () => ({
   async *entries(path: string) { mocks.rtdbRoots.push(path); yield* []; },
@@ -18,7 +19,10 @@ vi.mock("../lib/firebaseAdmin", () => ({ db: {
       where: (...args: unknown[]) => { filters.push(args); return query; },
       orderBy: () => query,
       limit: () => query,
-      get: async () => ({ empty: true, docs: [], size: 0 }),
+      get: async () => {
+        if (mocks.failing.has(name)) throw new Error("query unavailable");
+        return { empty: true, docs: [], size: 0 };
+      },
     };
     return query;
   },
@@ -56,5 +60,30 @@ describe("retention query boundaries", () => {
     const now = Date.UTC(2026, 9, 2, 10);
     await runRetentionSweep(now);
     expect(mocks.filters.get("ride_sessions")?.[1]).toEqual(["endTime", "<", now - 180 * 86400000]);
+  });
+});
+
+describe("retention window configuration bounds", () => {
+  it.each(["FEEDBACK_RETENTION_DAYS", "COMPLETED_TRIP_RETENTION_DAYS", "OPERATION_LOG_RETENTION_DAYS", "RIDE_SESSION_RETENTION_DAYS"])(
+    "treats an effectively-forever %s as long retention instead of aborting every sweep", async name => {
+      mocks.rtdbRoots.length = 0;
+      vi.stubEnv(name, "99999999999");
+      const now = Date.UTC(2026, 9, 2, 10);
+      await expect(runRetentionSweep(now)).resolves.toBeUndefined();
+      // Every other category and the RTDB sweep still ran.
+      expect(mocks.rtdbRoots).toContain("activeRouteGeometry");
+      expect(mocks.filters.get("feedbacks")).toHaveLength(1);
+      expect(mocks.filters.get("_fleet_lock_recoveries")).toHaveLength(1);
+    });
+});
+
+describe("retention category isolation", () => {
+  it("still runs every other category and the RTDB sweep when one Firestore category fails", async () => {
+    mocks.rtdbRoots.length = 0; mocks.filters.clear();
+    mocks.failing.add("feedbacks");
+    try {
+      await expect(runRetentionSweep(Date.UTC(2026, 9, 2, 10))).rejects.toThrow();
+    } finally { mocks.failing.clear(); }
+    expect(mocks.rtdbRoots).toContain("activeRouteGeometry");
   });
 });

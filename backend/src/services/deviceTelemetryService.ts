@@ -1,4 +1,4 @@
-import { scheduleAutomaticServiceAdmission, invalidateAutomaticServiceAdmission } from "./automaticServiceAdmission";
+import { scheduleAutomaticServiceAdmission, invalidateAutomaticServiceAdmission, isAutomaticServiceAdmissionDeferred } from "./automaticServiceAdmission";
 import {
   createHash,
   randomBytes,
@@ -39,6 +39,10 @@ const SCRYPT_MAX_CONCURRENT = 4;
 const scryptLimiter = createConcurrencyLimiter(SCRYPT_MAX_CONCURRENT);
 const ingestionExecution = new BoundedKeyedExecutor<string>({ maxConcurrent: 8, maxPending: 32, maxPendingPerKey: 1, maxQueueAgeMs: 2_000 });
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Firestore rejects __*__ document IDs as reserved (INVALID_ARGUMENT). Such an
+// ID can never be provisioned, so treat it as an invalid credential instead of
+// letting the registry read fail as a retryable dependency outage.
+const RESERVED_DOCUMENT_ID = /^__.*__$/;
 const CREDENTIAL_CACHE_MS = 60_000;
 const NEGATIVE_CACHE_MS = 5_000;
 const MAX_CREDENTIAL_CACHE_ENTRIES = 1_000;
@@ -128,6 +132,7 @@ export type TelemetryIngestResult =
     };
 
 const credentialCache = new Map<string, CredentialCacheEntry>();
+const rejectedCredentialCache = new Map<string, CredentialCacheEntry>();
 const credentialFills = createBoundedSingleFlight<DeviceCredentialResult>({
   maxFills: 16, maxWaitersPerFill: 64, responseMs: 5_000,
 });
@@ -255,14 +260,19 @@ function cacheCredential(
   cacheKey: string,
   value: CredentialCacheEntry,
 ): void {
+  // Verified and rejected entries are bounded separately so a flood of guessed
+  // device IDs or secrets cannot evict verified fleet credentials and force
+  // every legitimate device back through the shared KDF limiter.
+  const target = value.assignment ? credentialCache : rejectedCredentialCache;
+  (target === credentialCache ? rejectedCredentialCache : credentialCache).delete(cacheKey);
   if (
-    !credentialCache.has(cacheKey) &&
-    credentialCache.size >= MAX_CREDENTIAL_CACHE_ENTRIES
+    !target.has(cacheKey) &&
+    target.size >= MAX_CREDENTIAL_CACHE_ENTRIES
   ) {
-    const oldest = credentialCache.keys().next().value;
-    if (oldest) credentialCache.delete(oldest);
+    const oldest = target.keys().next().value;
+    if (oldest) target.delete(oldest);
   }
-  credentialCache.set(cacheKey, value);
+  target.set(cacheKey, value);
 }
 
 function ensureDeviceCredentialInvalidationListener(): void {
@@ -277,6 +287,7 @@ function ensureDeviceCredentialInvalidationListener(): void {
   const handleError = (error: Error) => {
     credentialInvalidationListenerStarted = false;
     credentialCache.clear();
+    rejectedCredentialCache.clear();
     credentialFills.invalidate();
     versions.off("child_added", invalidate);
     versions.off("child_changed", invalidate);
@@ -295,8 +306,10 @@ function assignmentFromDevice(
     device?.enabled === false ||
     typeof busId !== "string" ||
     !SAFE_ID.test(busId) ||
+    RESERVED_DOCUMENT_ID.test(busId) ||
     typeof routeId !== "string" ||
-    !SAFE_ID.test(routeId)
+    !SAFE_ID.test(routeId) ||
+    RESERVED_DOCUMENT_ID.test(routeId)
   ) {
     return null;
   }
@@ -340,10 +353,11 @@ export async function checkDeviceCredentials(
   secret: string,
   now: number,
 ): Promise<DeviceCredentialResult> {
+  if (RESERVED_DOCUMENT_ID.test(deviceId)) return { status: "invalid" };
   ensureDeviceCredentialInvalidationListener();
   const suppliedDigest = digestSecret(secret);
   const cacheKey = credentialCacheKey(deviceId, suppliedDigest);
-  const cached = credentialCache.get(cacheKey);
+  const cached = credentialCache.get(cacheKey) ?? rejectedCredentialCache.get(cacheKey);
   if (cached && cached.expiresAt > now && cached.expiresMonotonicAt > performance.now()) {
     credentialCacheHits += 1;
     if (
@@ -710,9 +724,25 @@ export function parseDeviceAuthorization(
   return secret.length >= 20 && secret.length <= 512 ? secret : null;
 }
 
-async function executeDeviceTelemetry(
+async function authenticateTelemetryDevice(
   deviceId: string,
   secret: string,
+  now: number,
+  deadline: ExecutionDeadline,
+): Promise<DeviceCredentialResult> {
+  const credential: DeviceCredentialResult = SAFE_ID.test(deviceId)
+    ? await deadline.dependency("credentials", () => checkDeviceCredentials(deviceId, secret, now))
+    : { status: "invalid" };
+  if (credential.status !== "assigned") {
+    status.rejected += 1;
+    status.lastRejectedAt = new Date(now).toISOString();
+  }
+  return credential;
+}
+
+async function executeDeviceTelemetry(
+  deviceId: string,
+  assignment: DeviceAssignment,
   sample: TelemetryPayload,
   now: number,
   deadline: ExecutionDeadline,
@@ -723,19 +753,6 @@ async function executeDeviceTelemetry(
   // authenticate/rate-limit and RTDB transaction work.
   const serverReceivedAt = now;
   const processingStartedAt = now;
-  if (!SAFE_ID.test(deviceId)) {
-    status.rejected += 1;
-    status.lastRejectedAt = new Date(now).toISOString();
-    return { ok: false, reason: "credentials" };
-  }
-
-  const credential = await deadline.dependency("credentials", () => checkDeviceCredentials(deviceId, secret, now));
-  if (credential.status !== "assigned") {
-    status.rejected += 1;
-    status.lastRejectedAt = new Date(now).toISOString();
-    return { ok: false, reason: credential.status === "unassigned" ? "unassigned" : "credentials" };
-  }
-  const assignment = credential.assignment;
   const retryAfterMs = await deadline.dependency("rate limit", () => deviceRateLimitRetryAfterMs(deviceId, now));
   if (retryAfterMs !== null) {
     status.rejected += 1;
@@ -744,12 +761,16 @@ async function executeDeviceTelemetry(
   }
 
   const persisted = await deadline.dependency("telemetry commit", () => persistTelemetry({ ...assignment, deviceId }, sample, serverReceivedAt));
-  if (!persisted.hasSession || persisted.needsServiceSetup) {
+  const allowAdmission = persisted.needsServiceSetup || (persisted.committed && persisted.allowAutomaticAdmission);
+  if (allowAdmission && isAutomaticServiceAdmissionDeferred({ ...assignment, deviceId })) {
+    // A restore already found no ride before this setup started; repeating its
+    // Firestore reads on every fix would only lead back to the same admission.
+    scheduleAutomaticServiceAdmission({ ...assignment, deviceId }, sample);
+  } else if (!persisted.hasSession || persisted.needsServiceSetup) {
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
     // is not delayed by an additional Firestore read.
-    scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal,
-      persisted.needsServiceSetup || (persisted.committed && persisted.allowAutomaticAdmission));
+    scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal, allowAdmission);
   }
   if (persisted.committed) {
     status.accepted += 1;
@@ -775,10 +796,21 @@ export async function ingestDeviceTelemetry(
 ): Promise<TelemetryIngestResult> {
   const deadline = new ExecutionDeadline();
   try {
-    const operation = ingestionExecution.run(deviceId, () => deadline.run(() => {
+    // Verify credentials before taking an ingestion slot. Pre-auth work is
+    // already bounded by the credential single-flight and KDF limiters; letting
+    // it occupy ingestion capacity would let unauthenticated requests stalled on
+    // scrypt reject every cached, legitimate device with 503.
+    const operation = deadline.run(async (): Promise<TelemetryIngestResult> => {
       deadline.assert();
-      return executeDeviceTelemetry(deviceId, secret, sample, now, deadline);
-    }));
+      const credential = await authenticateTelemetryDevice(deviceId, secret, now, deadline);
+      if (credential.status !== "assigned") {
+        return { ok: false, reason: credential.status === "unassigned" ? "unassigned" : "credentials" };
+      }
+      return ingestionExecution.run(deviceId, () => {
+        deadline.assert();
+        return executeDeviceTelemetry(deviceId, credential.assignment, sample, now, deadline);
+      });
+    });
     return await deadline.waitForResponse(operation);
   } catch (error) {
     if (error instanceof TelemetryExecutionFailure) throw error;
@@ -795,8 +827,10 @@ export function invalidateDeviceCredentialCache(deviceId: string): void {
   invalidateAutomaticServiceAdmission(deviceId);
   credentialFills.invalidate(deviceId);
   const prefix = `${deviceId}:`;
-  for (const key of credentialCache.keys()) {
-    if (key.startsWith(prefix)) credentialCache.delete(key);
+  for (const cache of [credentialCache, rejectedCredentialCache]) {
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix)) cache.delete(key);
+    }
   }
 }
 

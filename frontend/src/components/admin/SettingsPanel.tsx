@@ -6,6 +6,7 @@ import { Save, Loader2, Eye, EyeOff, Megaphone, Clock, MessageSquare, Info } fro
 import AlertModal from "@/components/ui/AlertModal";
 import { errorMessage } from "@/lib/errors";
 import { validateSettingsInput } from "@/lib/adminValidation";
+import { useUnsavedChanges } from "@/lib/unsavedChanges";
 
 function Field({
   label,
@@ -42,7 +43,7 @@ function SectionHeader({ icon: Icon, title, subtitle }: { icon: ComponentType<{ 
 }
 
 export default function SettingsPanel() {
-  const { settings, loading, saveSettings } = useSettings();
+  const { settings, loading, error: loadError, saveSettings } = useSettings();
   const [overrides, setOverrides] = useState<Partial<GlobalSettings>>({});
   const draft = { ...settings, ...overrides };
   const [saving, setSaving] = useState(false);
@@ -53,6 +54,7 @@ export default function SettingsPanel() {
     ([key, value]) => value !== settings[key as keyof GlobalSettings],
   )) as Partial<GlobalSettings>;
   const isDirty = Object.keys(changedFields).length > 0;
+  useUnsavedChanges(isDirty);
 
   useEffect(() => {
     return () => {
@@ -88,6 +90,16 @@ export default function SettingsPanel() {
       <div className="flex items-center justify-center h-64 gap-3 text-white/30">
         <Loader2 className="w-5 h-5 animate-spin" />
         <span className="text-sm font-medium">Loading settings…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    // Never present fallback defaults as the stored passenger copy.
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-2 px-6 text-center text-red-300" role="alert">
+        <span className="text-sm font-semibold">{loadError}</span>
+        <span className="text-xs text-red-300/70">Editing is unavailable until the current settings load. Check your connection or admin access.</span>
       </div>
     );
   }

@@ -1,6 +1,6 @@
 # Privileged database authorization (issue #315)
 
-Last updated: 2026-10-16 00:53 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Privileged ID tokens carry `authorizationVersion`. Firestore and Realtime
 Database compare it with backend-only `_userAuthorization/{uid}` records.
@@ -18,7 +18,9 @@ stale or incomplete privilege returns 403. Finish the claims backfill before
 directing admin traffic to this backend; unversioned legacy admin tokens fail
 closed at HTTP admission as well as at the database rules.
 
-Firestore additionally checks the current `users/{uid}.role`. Driver session
+Firestore and RTDB admin rules use the same claim contract: `role: "admin"`
+and `admin: true` together, so a token carrying only the role claim is denied
+in both databases. Firestore additionally checks the current `users/{uid}.role`. Driver session
 and message access requires the current driver registry's `authUid`, the
 assigned bus, and matching token/authorization assignment fields. Removing or
 reassigning a registry record therefore immediately closes its operator reads.
@@ -43,6 +45,9 @@ finishes. A stopped CLI leaves its lock for the existing stopped-executor
 recovery procedure; never take it over while the process may still run.
 Unassigned drivers receive a current driver authorization without assignment
 claims; stale mirrors for their current and previous driver IDs are removed.
+The CLI does the same before reporting a failure when a driver record points
+at a missing bus, a bus without routes or a malformed bus ID, so earlier
+`role: "admin"`/`admin: true` claims never survive a failed driver sync.
 
 The publisher first writes a fresh blocked version to both databases, then
 revokes refresh sessions before exposing the new version in Auth claims, then activates matching

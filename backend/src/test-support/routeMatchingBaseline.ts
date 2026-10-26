@@ -114,6 +114,12 @@ function projectToSegment(point: LatLng, start: LatLng, end: LatLng) {
 }
 
 const distanceCache = new WeakMap<readonly LatLng[], number[]>();
+/** Segments joined directly or only through zero-length (repeated-vertex) segments. */
+function segmentsAreContinuous(cumulative: readonly number[], left: number, right: number): boolean {
+  const lower = Math.min(left, right), upper = Math.max(left, right);
+  return upper - lower <= 1 || cumulative[upper] === cumulative[lower + 1];
+}
+
 function cumulativeDistances(path: readonly LatLng[]): number[] {
   const cached = distanceCache.get(path);
   if (cached) return cached;
@@ -148,6 +154,8 @@ export function matchRoutePosition(
   const candidates: Array<{
     segmentIndex: number;
     score: number;
+    point: LatLng;
+    alongRouteDistanceM: number;
   }> = [];
 
   for (let segmentIndex = 0; segmentIndex < path.length - 1; segmentIndex += 1) {
@@ -183,7 +191,7 @@ export function matchRoutePosition(
       backwardsM * 2 +
       segmentJump * 3;
 
-    candidates.push({ segmentIndex, score });
+    candidates.push({ segmentIndex, score, point: projection.point, alongRouteDistanceM });
 
     if (!best || score < best.score) {
       best = {
@@ -207,11 +215,15 @@ export function matchRoutePosition(
     Math.min(12, Math.max(0, positionUncertaintyM) * 0.25),
   );
   // Adjacent segments are one continuous route leg, including at a sharp
-  // turn. Exclude them before looking for a genuinely competing crossing
-  // farther along a self-intersecting route.
+  // turn, and so is a nearby projection reached by about its straight-line
+  // distance along the route (densely sampled vertices). Exclude them before
+  // looking for a genuinely competing crossing farther along a self-intersecting
+  // route, which is reached only by travelling a loop or out-and-back leg.
   let competingScore = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {
-    if (Math.abs(candidate.segmentIndex - best.segmentIndex) > 1) {
+    if (!segmentsAreContinuous(cumulative, candidate.segmentIndex, best.segmentIndex) &&
+        Math.abs(candidate.alongRouteDistanceM - best.alongRouteDistanceM) >
+          haversineMeters(candidate.point, best.point) + ambiguityWindow) {
       competingScore = Math.min(competingScore, candidate.score);
     }
   }

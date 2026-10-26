@@ -22,7 +22,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { deleteApp } from "firebase-admin/app";
 import { db, firebaseAdminApp, rtdb } from "./lib/firebaseAdmin";
-import { recordActiveSpanException, shutdownTelemetry } from "./instrumentation";
+import { shutdownTelemetry } from "./instrumentation";
 import {
   getHttpsTelemetryStatus,
   TELEMETRY_METRIC_SAMPLE_CAPACITY,
@@ -42,6 +42,7 @@ import { createBrowserAdmission, createBrowserIngressLimiter } from "./lib/brows
 import { verifiedUserKeyGenerator } from "./lib/rateLimitIdentity";
 import { readRateLimitShardFactor, shardedLimit } from "./lib/rateLimitShard";
 import { requireAdmin } from "./middleware/requireAdmin";
+import { clientRequestErrorHandler, notFoundHandler, unhandledRequestErrorHandler } from "./lib/requestErrors";
 import { assertRetentionConfiguration } from "./services/retentionSweeper";
 import { startWorkerCoordinator } from "./services/workerCoordinator";
 import { getTripStateQueueStatus } from "./services/tripStateEngine";
@@ -279,43 +280,9 @@ app.get("/api/health", requireAdmin, (_req, res) => {
   });
 });
 
-app.use((
-  error: unknown,
-  _req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-) => {
-  const parserError = error as { type?: unknown; status?: unknown };
-  if (
-    parserError?.type === "entity.too.large" ||
-    parserError?.type === "entity.parse.failed"
-  ) {
-    if (res.headersSent) {
-      next(error);
-      return;
-    }
-    res.status(parserError.type === "entity.too.large" ? 413 : 400).json({
-      error:
-        parserError.type === "entity.too.large"
-          ? "Request body is too large."
-          : "Invalid JSON body.",
-    });
-    return;
-  }
-  next(error);
-});
-
-app.use((
-  error: unknown,
-  _req: express.Request,
-  res: express.Response,
-  _next: express.NextFunction,
-) => {
-  void _next;
-  recordActiveSpanException(error);
-  console.error("[Server] Unhandled request error:", error);
-  res.status(500).json({ error: "Internal server error." });
-});
+app.use(notFoundHandler);
+app.use(clientRequestErrorHandler);
+app.use(unhandledRequestErrorHandler);
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 let stopWorkers: (() => Promise<void>) | null = null;
