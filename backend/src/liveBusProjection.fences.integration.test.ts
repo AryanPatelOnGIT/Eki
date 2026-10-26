@@ -140,6 +140,10 @@ integration("R14 actual SDK publisher fences, recovery and listener isolation", 
   }, 30_000);
 
   it("measures a controlled 20-fix actual publisher workload and excludes internal and unrelated route events", async () => {
+    // Catalog leases advance in 30s receipt buckets, an intended heartbeat write.
+    // Start early in a bucket so the measured fixes cannot cross into the next.
+    const untilNextBucket = 30_000 - Date.now() % 30_000;
+    if (untilNextBucket < 20_000) await new Promise(resolve => setTimeout(resolve, untilNextBucket + 50));
     await realtime.ref("activeBuses").set({ busA_routeA: live(), busB_routeB: live("busB", "routeB", "sessionB") });
     await start(); await idle();
     const measurement = { fixes: 20, rawEvents: 0, rawBytes: 0, selectedEvents: 0, selectedBytes: 0, catalogEvents: 0, catalogBytes: 0 };
