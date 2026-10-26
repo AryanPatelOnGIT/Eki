@@ -566,7 +566,7 @@ export default function PassengerWorkspace() {
                       }
                       setCurrentView("home");
                     }}
-                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 hover:opacity-90 shadow-sm cursor-pointer"
+                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 hover:opacity-90 shadow-sm cursor-pointer pointer-events-auto"
                     style={{ backgroundColor: "var(--surface-3)", border: "1px solid var(--border-subtle)" }}
                     aria-label={isMessagingOpen ? "Close live chat" : "Back to home"}
                     onPointerDown={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-4)")}
@@ -576,7 +576,7 @@ export default function PassengerWorkspace() {
                     <ArrowLeft className="w-5 h-5" style={{ color: "var(--text-secondary)" }} />
                   </button>
                   {activeBusOnRoute ? (
-                    <div className="relative z-10 flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3"
+                    <div className="relative z-10 flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3 shadow-lg pointer-events-auto"
                       style={{ background: "var(--surface-1)", border: "1px solid var(--border-default)" }}>
                       {(selectableBusesOnRoute.length > 1 || (!busSelectable && selectableBusesOnRoute.length > 0)) &&
                         !busesOnRoute.some(
@@ -670,7 +670,7 @@ export default function PassengerWorkspace() {
                       )}
                     </div>
                   ) : (
-                    <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
+                    <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5 rounded-2xl bg-[var(--surface-1)] p-3 shadow-lg pointer-events-auto">
                       <p className="text-[11px] font-semibold uppercase tracking-widest leading-none" style={{ color: "var(--accent)" }}>
                         Waiting for live bus data…
                       </p>
