@@ -11,6 +11,7 @@ import { useDrivers } from "@/hooks/useDrivers";
 import { useRoutes } from "@/hooks/useRoutes";
 import { useRTDBResume } from "@/hooks/useRTDBResume";
 import { useActiveBuses, type ActiveBusEntry } from "@/hooks/useActiveBuses";
+import { useBusLocations } from "@/hooks/useBusLocations";
 import { useAuth } from "@/hooks/useAuth";
 import {
   hasValidBusCoordinates,
@@ -41,6 +42,7 @@ import {
   isActiveService,
   isLiveChatDeviceOnline,
   rideServiceState,
+  withLastKnownLocations,
 } from "@/lib/activeBusEntries";
 import {
   directionLabelState,
@@ -68,8 +70,9 @@ function servicePresentation(entry: ActiveBusEntry) {
       : entry.automaticServiceState === "assignment_required" ? "Assignment required"
       : entry.automaticServiceState === "awaiting_return" ? "Awaiting return service" : null;
     if (label) return {label,color:"text-amber-300",bg:"bg-amber-500/10",dot:"bg-amber-300"};
+    if (devicePresence(entry) !== "online") return {label:"Offline",color:"text-white/40",bg:"bg-white/5",dot:"bg-white/30"};
   }
-  if (entry.sessionId && (entry.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(entry)))) {
+  if (entry.sessionId && entry.tripState !== "completed" && (entry.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(entry)))) {
     return {label:"Service paused",color:"text-amber-300",bg:"bg-amber-500/10",dot:"bg-amber-300"};
   }
   return TRIP_STATE[rideServiceState(entry)];
@@ -391,6 +394,8 @@ function FleetCard({
   const followingStop = nextStopIndex !== undefined ? directedRoute?.stops[nextStopIndex + 1] : undefined;
   const serviceState = rideServiceState(entry);
   const locationDelayed = entry.deviceState === "offline" || isLiveBusSignalLost(liveBusFreshnessTimestamp(entry));
+  // An offline bus keeps its last reported location; its last motion is not live.
+  const offline = devicePresence(entry) !== "online";
   const canEndRide = Boolean(
     entry.sessionId && entry.driverId && entry.routeId &&
     (serviceState === "direction_pending" ||
@@ -422,15 +427,15 @@ function FleetCard({
             className="min-w-0 flex-1 flex items-center gap-3 text-left rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/50"
           >
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${ts.bg}`}>
-              <span className={`w-2 h-2 rounded-full ${ts.dot} ${entry.motionState === "moving" ? "animate-pulse" : ""}`} />
+              <span className={`w-2 h-2 rounded-full ${ts.dot} ${entry.motionState === "moving" && !offline ? "animate-pulse" : ""}`} />
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-white text-sm truncate">{bus?.name ?? entry.busId}</p>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span className={`text-[9px] font-black uppercase tracking-wider ${ts.color}`}>{ts.label}</span>
-                {locationDelayed && <span className="text-[9px] font-semibold text-amber-400">Live location updates delayed</span>}
-                <span className={`text-[9px] font-semibold ${ms.color}`}>{ms.label}</span>
-                {entry.speed != null && <span className="text-[9px] text-white/30 tabular-nums">{Math.round(entry.speed)} km/h</span>}
+                {locationDelayed && <span className="text-[9px] font-semibold text-amber-400">{offline ? `Last seen ${timeSince(liveBusFreshnessTimestamp(entry))}` : "Live location updates delayed"}</span>}
+                {!offline && <span className={`text-[9px] font-semibold ${ms.color}`}>{ms.label}</span>}
+                {entry.speed != null && !offline && <span className="text-[9px] text-white/30 tabular-nums">{Math.round(entry.speed)} km/h</span>}
                 {(entry.delayMinutes ?? 0) > 0 && (
                   <span className="text-[9px] text-amber-400 font-black">+{entry.delayMinutes}m delay</span>
                 )}
@@ -565,6 +570,7 @@ function FleetCard({
             {hasValidBusCoordinates(entry.lat, entry.lng) && (
               <p className="text-[9px] text-white/20 tabular-nums">
                 {entry.lat!.toFixed(5)}, {entry.lng!.toFixed(5)}
+                {entry.lastKnownLocationAt !== undefined && ` · last known ${timeSince(entry.lastKnownLocationAt)}`}
               </p>
             )}
           </div>
@@ -586,13 +592,18 @@ export default function DashboardPanel() {
     resumeGeneration,
     markSnapshotReceived,
   } = useRTDBResume();
-  const activeEntries = useActiveBuses({
+  const liveFleet = useActiveBuses({
     connectionGeneration,
     resumeGeneration,
     markSnapshotReceived,
     onReadError: onLiveReadError,
     onReadRecovered: onLiveReadRecovered,
   });
+  const { busLocations, error: busLocationsError, retry: retryBusLocations } = useBusLocations();
+  const activeEntries = useMemo(
+    () => withLastKnownLocations(liveFleet, busLocations),
+    [liveFleet, busLocations],
+  );
   const { buses, error: busesError, retry: retryBuses } = useBuses();
   const activeEntriesMap = useMemo(
     () => new Map(activeEntries.map((entry) => [entry.busId, entry])),
@@ -856,19 +867,22 @@ export default function DashboardPanel() {
               Live vehicle updates are unavailable. Check your connection and reload to retry.
             </div>
           )}
-          {(busesError || routesError || driversError) && (
+          {(busesError || routesError || driversError || busLocationsError) && (
             <div
               className="pointer-events-auto flex w-full max-w-lg items-start gap-2 rounded-xl border border-red-400/20 bg-zinc-950/95 px-3 py-2 text-xs text-red-300 shadow-lg"
               role="alert"
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <span className="flex-1">Fleet metadata is unavailable. {busesError || routesError || driversError}</span>
+              <span className="flex-1">{busesError || routesError || driversError
+                ? `Fleet metadata is unavailable. ${busesError || routesError || driversError}`
+                : `Last known locations of offline buses are unavailable. ${busLocationsError}`}</span>
               <button
                 type="button"
                 onClick={() => {
                   if (busesError) retryBuses();
                   if (routesError) retryRoutes();
             if (driversError) retryDrivers();
+                  if (busLocationsError) retryBusLocations();
                 }}
                 className="rounded-md bg-white/10 px-2 py-1 font-semibold text-white"
               >
@@ -903,7 +917,7 @@ export default function DashboardPanel() {
           <h2 className="text-sm font-bold text-white">Automatic service</h2>
           <p className="mt-2 text-pretty text-xs text-white/60">Services start automatically when an assigned receiver sends a fresh, reliable GPS fix. Direction resolves at an endpoint or after a qualified departure.</p>
           <p className="mt-2 text-pretty text-xs text-white/45">An offline session is retained for recovery. Movement, stop arrivals and return services follow GNSS evidence.</p>
-          {activeEntries.filter(entry => entry.automaticServicePaused || entry.automaticServiceState === "paused").map(entry => <button key={`${entry.busId}_${entry.routeId}`} type="button"
+          {activeEntries.filter(entry => (entry.automaticServicePaused || entry.automaticServiceState === "paused") && devicePresence(entry) === "online").map(entry => <button key={`${entry.busId}_${entry.routeId}`} type="button"
             aria-label={`Resume automatic tracking for ${entry.busId}`} disabled={resumePending}
             onClick={() => void resumeAutomaticService(entry)}
             className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50">Resume tracking · {entry.busId}</button>)}

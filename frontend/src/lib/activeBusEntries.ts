@@ -1,5 +1,5 @@
 import { isActiveRideSnapshot } from "./liveBusSnapshot";
-import { isLiveBusTimestamp, liveBusFreshnessTimestamp } from "./liveBusFreshness";
+import { hasValidBusCoordinates, isLiveBusTimestamp, liveBusFreshnessTimestamp } from "./liveBusFreshness";
 
 /**
  * One shared shape for every fleet view. Superset of the fields the admin
@@ -49,6 +49,8 @@ export interface ActiveBusEntry {
   routeGeometryVersion?: number;
   routeComputedAt?: number;
   routeTrafficState?: "pending" | "current" | "fallback";
+  /** Sample time of a durable last fix standing in for a missing live position. */
+  lastKnownLocationAt?: number;
 }
 
 export interface RawLiveLocation {
@@ -384,4 +386,66 @@ export function filterActiveBusEntries(
   return Object.values(data).filter(
     (value): value is ActiveBusEntry => isActiveBusEntry(value, now),
   );
+}
+
+/**
+ * Admin fleet view: every live entry, plus any bus the server still holds a
+ * presence record for with a valid last location. Offline buses and ended
+ * rides therefore stay on the map at their last reported position; presence
+ * and service labels still come from devicePresence and rideServiceState.
+ */
+export function isFleetBusEntry(
+  value: unknown,
+  now = Date.now(),
+): value is ActiveBusEntry {
+  if (isActiveBusEntry(value, now)) return true;
+  if (typeof value !== "object" || value === null) return false;
+  const bus = value as Record<string, unknown>;
+  return typeof bus.busId === "string" && bus.busId.trim().length > 0 &&
+    hasValidOptionalFields(bus) && hasValidBusCoordinates(bus.lat as number, bus.lng as number);
+}
+
+/**
+ * Once the server removes a bus's live presence record (stale sweep or an
+ * abandoned-ride timeout), its last accepted GNSS fix in `bus_locations`
+ * keeps it on the admin map as an offline bus. A live record created before
+ * its first fix (a driver-started shift) borrows the same fix for its
+ * position; `lastKnownLocationAt` keeps that position's age apart from the
+ * record's own freshness.
+ */
+export function withLastKnownLocations(
+  live: ActiveBusEntry[],
+  busLocations: readonly { id: string; routeId?: unknown; lastKnownLocation?: unknown }[],
+): ActiveBusEntry[] {
+  const fixes = new Map<string, { routeId?: string; lat: number; lng: number; sampledAt: number }>();
+  for (const location of busLocations) {
+    const fix = location.lastKnownLocation as Record<string, unknown> | null | undefined;
+    if (
+      !fix || typeof fix.sampledAt !== "number" || !Number.isFinite(fix.sampledAt) ||
+      !hasValidBusCoordinates(fix.lat as number, fix.lng as number)
+    ) continue;
+    fixes.set(location.id, {
+      ...(typeof location.routeId === "string" ? { routeId: location.routeId } : {}),
+      lat: fix.lat as number,
+      lng: fix.lng as number,
+      sampledAt: fix.sampledAt,
+    });
+  }
+  let placed = false;
+  const positioned = live.map((entry) => {
+    const fix = fixes.get(entry.busId);
+    if (!fix || hasValidBusCoordinates(entry.lat, entry.lng)) return entry;
+    placed = true;
+    return { ...entry, lat: fix.lat, lng: fix.lng, lastKnownLocationAt: fix.sampledAt };
+  });
+  const liveBusIds = new Set(live.map((entry) => entry.busId));
+  const offline = [...fixes].flatMap(([busId, { sampledAt, ...fix }]): ActiveBusEntry[] =>
+    liveBusIds.has(busId) ? [] : [{
+      busId,
+      ...fix,
+      timestamp: sampledAt,
+      status: "offline",
+      deviceState: "offline",
+    }]);
+  return placed || offline.length > 0 ? [...positioned, ...offline] : live;
 }
