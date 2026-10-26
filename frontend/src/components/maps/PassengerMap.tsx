@@ -41,6 +41,8 @@ import type { LatLng } from "@/lib/polyline";
 import { stopEstimateContext, type PassengerStopEstimates } from "@/lib/passengerStopEstimates";
 
 export interface PassengerMapProps {
+  /** Height of the floating ride controls above the map's usable area. */
+  topInset?: number;
   targetStop: RouteStop;
   route: DirectedRouteData | null;
   resumeGeneration?: number;
@@ -109,7 +111,8 @@ const BusMarker = memo(function BusMarker({
 
 // ── Traffic layer rendered imperatively ──────────────────────────────────────
 // ── Pan/zoom controller ──────────────────────────────────────────────────────
-function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
+function MapCenterer({ target, isCentered, previewPoints, hasBus, topInset }: {
+  topInset: number;
   target: { lat: number; lng: number } | null;
   isCentered: boolean;
   previewPoints?: { lat: number; lng: number }[];
@@ -122,7 +125,7 @@ function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
     if (previewPoints) {
       // Fit once for the route, and once when its first GPS fix arrives.
       // Subsequent fixes must not repeatedly zoom or override a manual drag.
-      const stage = hasBus ? "bus" : "route";
+      const stage = `${hasBus ? "bus" : "route"}:${topInset}`;
       if (fittedStage.current === stage) return;
       const points = [...previewPoints, ...(hasBus && target ? [target] : [])]
         .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
@@ -131,7 +134,7 @@ function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
         north: Math.max(result.north, point.lat), south: Math.min(result.south, point.lat),
         east: Math.max(result.east, point.lng), west: Math.min(result.west, point.lng),
       }), { north: -Infinity, south: Infinity, east: -Infinity, west: Infinity });
-      map.fitBounds(bounds, { top: 220, bottom: 160, left: 48, right: 72 });
+      map.fitBounds(bounds, { top: topInset + 32, bottom: 160, left: 48, right: 72 });
       fittedStage.current = stage;
       return;
     }
@@ -139,11 +142,12 @@ function MapCenterer({ target, isCentered, previewPoints, hasBus }: {
       map.panTo(target);
       map.setZoom(16);
     }
-  }, [isCentered, target, map, previewPoints, hasBus]);
+  }, [isCentered, target, map, previewPoints, hasBus, topInset]);
   return null;
 }
 
 function PassengerMapInner({
+  topInset = 0,
   targetStop,
   route,
   resumeGeneration = 0,
@@ -152,6 +156,7 @@ function PassengerMapInner({
   selectedDestinationStopId,
   onStopEstimatesChange,
 }: {
+  topInset?: number;
   targetStop: RouteStop;
   route: DirectedRouteData;
   resumeGeneration?: number;
@@ -476,19 +481,19 @@ function PassengerMapInner({
   return (
     <>
       {liveReadFailed && (
-        <div className="absolute top-10 left-4 right-4 z-50 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
-          style={{ background: "var(--status-warning-bg)", color: "var(--status-warning)" }} role="alert">
+        <div className="absolute left-4 right-20 z-50 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
+          style={{ top: topInset + 16, background: "var(--status-warning-bg)", color: "var(--status-warning)" }} role="alert">
           Live bus updates are unavailable. Check your connection and reload to retry.
         </div>
       )}
       {preview && buses.size === 0 && (
-        <div className="absolute top-[190px] left-4 right-4 z-40 rounded-xl bg-zinc-950/90 p-3 text-sm" role="status">
+        <div className="absolute left-4 right-4 z-40 rounded-xl bg-zinc-950/90 p-3 text-sm" style={{ top: topInset + 72 }} role="status">
           Waiting for a valid GPS fix. The configured route remains available.
         </div>
       )}
       {/* Telemetry silence does not identify a receiver or network failure. */}
       {!liveReadFailed && signalLostBuses.length > 0 && (
-        <div className="absolute top-10 left-4 right-4 z-50 animate-slide-down" role="status" aria-live="polite">
+        <div className="absolute left-4 right-20 z-50 animate-slide-down" style={{ top: topInset + 16 }} role="status" aria-live="polite">
           <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
             style={{ 
               background: "var(--status-warning-bg)", 
@@ -506,7 +511,7 @@ function PassengerMapInner({
         </div>
       )}
       {!liveReadFailed && rerouteNotice && signalLostBuses.length === 0 && (
-        <div className="absolute top-10 left-4 right-4 z-50" role="status">
+        <div className="absolute left-4 right-20 z-50" style={{ top: topInset + 16 }} role="status">
           <div
             className="flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-[12px] font-semibold"
             style={{
@@ -521,7 +526,7 @@ function PassengerMapInner({
         </div>
       )}
       {!liveReadFailed && geolocationNotice && signalLostBuses.length === 0 && !rerouteNotice && (
-        <div className="absolute top-10 left-4 right-4 z-50" role="status">
+        <div className="absolute left-4 right-20 z-50" style={{ top: topInset + 16 }} role="status">
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold"
             style={{
@@ -545,6 +550,7 @@ function PassengerMapInner({
           {...MAP_OPTIONS}
         >
           <MapCenterer target={centerTarget} isCentered={isCentered}
+            topInset={topInset}
             previewPoints={preview && !focusBus ? (routePath.length ? routePath : routeStops) : undefined}
             hasBus={Boolean(firstBusMarker.position)} />
           <DirectionsRoute
@@ -651,7 +657,7 @@ function PassengerMapInner({
         }
       `}</style>
 
-      <div className="absolute top-[220px] right-4 z-40">
+      <div className="absolute right-4 z-40" style={{ top: topInset + 16 }}>
         <button
           onClick={() => { setFocusBus(true); setIsCentered(true); }}
           className="flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-300 border active:scale-95 shadow-lg"
@@ -689,6 +695,7 @@ export default function PassengerMap(props: PassengerMapProps) {
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <PassengerMapInner
+        topInset={props.topInset}
         key={`${props.route.id}:${props.route.rideDirection}:${props.preview ? "preview" : "ride"}:${props.selectedBusKey ?? "all"}`}
         targetStop={props.targetStop}
         route={props.route}

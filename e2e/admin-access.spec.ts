@@ -200,7 +200,7 @@ test("embedded feedback retries Firestore read denial and rejects a failed write
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Admin read rejected")).toBeVisible();
   await page.getByRole("button", { name: /retry/i }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
   await page.getByRole("button", { expanded: false }).click(); await page.getByRole("button", { name: "reviewed", exact: true }).click();
-  await expect(page.getByText("Admin write rejected")).toBeVisible(); await expect(page.getByRole("button", { name: "new", exact: true })).toBeDisabled();
+  await expect(page.getByText("Admin write rejected")).toBeVisible(); await expect(page.getByRole("button", { name: "reviewed", exact: true })).toBeEnabled();
 });
 test("account switches hide previous data and wait for fresh verification", async ({ page }) => {
   const tokens: string[] = []; await page.route("**/__qa/firestore/feedback", async route => {

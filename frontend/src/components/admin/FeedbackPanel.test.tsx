@@ -38,11 +38,12 @@ describe("admin feedback Firestore workflow", () => {
     let resolve!: () => void;
     store.updateFeedbackStatus.mockImplementation(() => new Promise<void>(done => { resolve = done; }));
     render(<FeedbackPanel />); const user = await expand();
+    expect(screen.queryByRole("button", { name: "new" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "reviewed" }));
     expect(store.updateFeedbackStatus).toHaveBeenCalledWith("admin", "qa-feedback", "reviewed");
-    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "resolved" }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => resolve());
-    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "resolved" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("restarts pending reads when the same account is verified again", async () => {
     let resolve!: (entries: typeof fixtures.entry[]) => void;
@@ -64,7 +65,7 @@ describe("admin feedback Firestore workflow", () => {
     expect(screen.queryByText("Old session failure")).toBeNull();
     expect((screen.getByRole("button", { name: "reviewed" }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => resolveNew());
-    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "reviewed" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("does not apply a late status success after verification closes before React cleanup", async () => {
     let resolve!: () => void;
@@ -73,7 +74,7 @@ describe("admin feedback Firestore workflow", () => {
     await user.click(screen.getByRole("button", { name: "reviewed" })); fixtures.generation++;
     await act(async () => resolve());
     if (screen.queryByRole("button", { expanded: false })) await expand();
-    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "reviewed" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("surfaces Firestore denial and reloads on retry", async () => {
     store.loadFeedback.mockRejectedValueOnce({ code: "permission-denied" });
@@ -85,7 +86,7 @@ describe("admin feedback Firestore workflow", () => {
     store.updateFeedbackStatus.mockRejectedValueOnce({ code: "permission-denied" });
     render(<FeedbackPanel />); const user = await expand(); await user.click(screen.getByRole("button", { name: "resolved" }));
     await screen.findByText(/Feedback access was denied/);
-    expect((screen.getByRole("button", { name: "new" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "reviewed" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("filters by type, status and search and restores results with Reset", async () => {
     render(<FeedbackPanel />); await screen.findByText("QA Passenger"); const user = userEvent.setup();

@@ -80,6 +80,16 @@ export default function PassengerWorkspace() {
   const { user } = useAuth();
   const { settings } = useSettings();
   const [currentView, setCurrentView] = useState<ViewState>("home");
+  const [trackingHeader, setTrackingHeader] = useState<HTMLDivElement | null>(null);
+  const [trackingHeaderHeight, setTrackingHeaderHeight] = useState(0);
+  useEffect(() => {
+    if (!trackingHeader) return;
+    const measure = () => setTrackingHeaderHeight(Math.ceil(trackingHeader.getBoundingClientRect().height));
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(trackingHeader);
+    return () => observer?.disconnect();
+  }, [trackingHeader]);
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
   const { catalog: routeCatalog, projectionReady, catalogReady, error: catalogError, retry: retryCatalog } = useLiveRouteCatalog(`${connectionGeneration}:${resumeGeneration}`);
   const [selectedRouteId, setSelectedRouteId] = useState("");
@@ -530,12 +540,12 @@ export default function PassengerWorkspace() {
         </div>
 
         {/* ── TRACKING VIEW ── */}
-        <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-20 flex flex-col pointer-events-none transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0"}`}>
+        <div inert={visibleView !== "tracking"} aria-hidden={visibleView !== "tracking"} className={`absolute inset-0 z-20 flex flex-col pointer-events-none transition-opacity duration-500 ${visibleView === "tracking" ? "opacity-100" : "opacity-0"}`}
+          style={{ background: "var(--surface-0)" }}>
           {!endedMessage && mapRoute && targetStop ? (
             <>
               {/* Top bar: back + route info */}
-              <div className="relative shrink-0 w-full z-40 pt-safe px-4 pb-6 pointer-events-auto"
-                style={{ background: "linear-gradient(to bottom, rgba(9,9,11,0.92) 0%, transparent 100%)" }}>
+              <div ref={setTrackingHeader} className="relative shrink-0 w-full max-w-xl mx-auto z-40 pt-safe px-4 pb-2 pointer-events-none">
                 <div className="flex items-center gap-4 max-w-lg mx-auto pt-4">
                   <button
                     type="button"
@@ -546,7 +556,7 @@ export default function PassengerWorkspace() {
                       }
                       setCurrentView("home");
                     }}
-                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 hover:opacity-90 shadow-sm cursor-pointer"
+                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 hover:opacity-90 shadow-sm cursor-pointer pointer-events-auto"
                     style={{ backgroundColor: "var(--surface-3)", border: "1px solid var(--border-subtle)" }}
                     aria-label={isMessagingOpen ? "Close live chat" : "Back to home"}
                     onPointerDown={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-4)")}
@@ -556,7 +566,7 @@ export default function PassengerWorkspace() {
                     <ArrowLeft className="w-5 h-5" style={{ color: "var(--text-secondary)" }} />
                   </button>
                   {activeBusOnRoute ? (
-                    <div className="relative z-10 flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3"
+                    <div className="relative z-10 flex-1 min-w-0 flex flex-col gap-2 rounded-2xl p-3 shadow-lg pointer-events-auto"
                       style={{ background: "var(--surface-1)", border: "1px solid var(--border-default)" }}>
                       {busesOnRoute.length > 1 &&
                         !busesOnRoute.some(
@@ -642,7 +652,7 @@ export default function PassengerWorkspace() {
                       )}
                     </div>
                   ) : (
-                    <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
+                    <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5 rounded-2xl bg-[var(--surface-1)] p-3 shadow-lg pointer-events-auto">
                       <p className="text-[11px] font-semibold uppercase tracking-widest leading-none" style={{ color: "var(--accent)" }}>
                         Waiting for live bus data…
                       </p>
@@ -678,10 +688,11 @@ export default function PassengerWorkspace() {
                 )}
               </div>
 
-              {/* Reserve the actual header height so map notices cannot sit behind ride controls. */}
-              <div className="relative z-0 min-h-0 flex-1 pointer-events-auto">
+              {/* Fill the view behind the floating header; inset only the map overlays. */}
+              <div className="absolute inset-0 z-0 pointer-events-auto">
                 {visibleView === "tracking" && (
                   <PassengerTrackingMap
+                    topInset={trackingHeaderHeight}
                     targetStop={targetStop}
                     selectedDestinationStopId={effectiveDestinationStopId}
                     onStopEstimatesChange={updateStopEstimates}
