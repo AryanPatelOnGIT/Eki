@@ -64,6 +64,18 @@ describe("published passenger stop progress", () => {
     view.rerender(<PassengerMap route={routeInRideDirection(moved,"forward")} targetStop={moved.stops[1]} preview />);
     expect(state.fitBounds).toHaveBeenLastCalledWith({north:23.02,south:23,east:72.03,west:72},expect.any(Object));
   });
+  it("keeps following the bus when a stop is inspected, unlike a manual drag", () => {
+    const bus = fixtureBus("forward");
+    state.snapshot = { bus };
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Show stop Beta" }));
+    fireEvent.touchStart(screen.getByRole("button", { name: "Show stop Beta" }));
+    act(() => state.listener?.({ bus: { ...bus, lat: 23.004, seq: 2, timestamp: Date.now() } }));
+    expect(state.panTo).toHaveBeenLastCalledWith({ lat: 23.004, lng: bus.lng });
+    fireEvent.pointerDown(screen.getByLabelText("Map").parentElement!);
+    act(() => state.listener?.({ bus: { ...bus, lat: 23.006, seq: 3, timestamp: Date.now() } }));
+    expect(state.panTo).not.toHaveBeenCalledWith({ lat: 23.006, lng: bus.lng });
+  });
   it("fits above the measured bottom sheet rather than a fixed inset", () => {
     const frame=document.createElement("div"), viewport=document.createElement("div"),sheet=document.createElement("div");
     frame.setAttribute("data-passenger-map","");sheet.setAttribute("data-map-sheet","");frame.append(viewport,sheet);

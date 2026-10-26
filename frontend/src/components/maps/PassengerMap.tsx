@@ -658,6 +658,8 @@ function PassengerMapInner({
             return <AdvancedMarker key={`stop-${stop.id || i}`} position={{lat:stop.lat,lng:stop.lng}} anchorLeft="-50%" anchorTop="-50%">
               <button type="button" aria-label={`Show stop ${stop.name}`} title={`${stop.name}${isPast ? " — passed" : ""}`}
                 onClick={() => setInspectedStopId(stop.id)} onFocus={() => setInspectedStopId(stop.id)}
+                // Inspecting a stop is not a manual pan; keep following the bus.
+                onPointerDown={event => event.stopPropagation()} onTouchStart={event => event.stopPropagation()}
                 className="relative flex size-11 items-center justify-center" style={{opacity:isPast ? 0.6 : 1}}>
                 <span aria-label={isPast ? `${stop.name} — passed` : undefined} className="flex size-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white shadow-sm"
                   style={{background:isPast ? "#71717a" : "var(--accent)",outline:isTarget ? "2px solid #18181b" : undefined}}>{stopLabel(i)}</span>
