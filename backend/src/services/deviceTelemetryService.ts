@@ -1,4 +1,4 @@
-import { scheduleAutomaticServiceAdmission, invalidateAutomaticServiceAdmission } from "./automaticServiceAdmission";
+import { scheduleAutomaticServiceAdmission, invalidateAutomaticServiceAdmission, isAutomaticServiceAdmissionDeferred } from "./automaticServiceAdmission";
 import {
   createHash,
   randomBytes,
@@ -761,12 +761,16 @@ async function executeDeviceTelemetry(
   }
 
   const persisted = await deadline.dependency("telemetry commit", () => persistTelemetry({ ...assignment, deviceId }, sample, serverReceivedAt));
-  if (!persisted.hasSession || persisted.needsServiceSetup) {
+  const allowAdmission = persisted.needsServiceSetup || (persisted.committed && persisted.allowAutomaticAdmission);
+  if (allowAdmission && isAutomaticServiceAdmissionDeferred({ ...assignment, deviceId })) {
+    // A restore already found no ride before this setup started; repeating its
+    // Firestore reads on every fix would only lead back to the same admission.
+    scheduleAutomaticServiceAdmission({ ...assignment, deviceId }, sample);
+  } else if (!persisted.hasSession || persisted.needsServiceSetup) {
     // RTDB already contains the accepted fix at this point. Recover the
     // durable lifecycle immediately in the background so the hardware response
     // is not delayed by an additional Firestore read.
-    scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal,
-      persisted.needsServiceSetup || (persisted.committed && persisted.allowAutomaticAdmission));
+    scheduleDurableRideRestore({ ...assignment, deviceId }, sample, persisted.claimId, persisted.recoverTerminal, allowAdmission);
   }
   if (persisted.committed) {
     status.accepted += 1;
