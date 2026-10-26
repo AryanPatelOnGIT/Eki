@@ -23,4 +23,17 @@ describe("legacy bus snapshot public fields", () => {
     expect(await (await fetch(`${url}?routeId=route1&limit=1`)).json()).toEqual({ buses: [publicFields], nextCursor: null });
     expect(await (await fetch(`${url}/bus1`)).json()).toEqual(publicFields);
   });
+  it("finds a bus's live node when a retired tombstone for its previous route sorts first", async () => {
+    const live = { busId: "bus1", routeId: "route_b", lat: 23, timestamp: 2, sessionId: "s2" };
+    state.value = {
+      bus1_route_a: { busId: "bus1", routeId: "route_a", deviceState: "offline", retiredAssignmentRevision: 2 },
+      bus1_route_b: live,
+    };
+    const app = express(); app.use("/buses", router);
+    server = app.listen(0, "127.0.0.1"); await new Promise<void>(done => server.once("listening", done));
+    const address = server.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${address.port}/buses/bus1`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(live);
+  });
 });

@@ -1,6 +1,6 @@
 # Eki backend
 
-Last updated: 2026-10-21 01:22 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 The TypeScript/Express backend is the authority for hardware ingestion, fleet/route/device commands and ordered ride lifecycle. It uses Firebase Admin with service-account JSON or Application Default Credentials, writes current data to RTDB and durable state to Firestore, and elects one background worker with a Firestore lease.
 
@@ -94,7 +94,7 @@ npm run provision-device --workspace=backend -- `
   --device-id device_01 --bus-id bus_01 --route-id route_01
 ```
 
-This transaction rejects duplicate assignment/active ride/active bus lock, generates a random secret, stores only its salted scrypt verifier, and prints the plaintext once.
+This transaction rejects duplicate assignment/active ride/active bus lock, generates a random secret, stores only its salted scrypt verifier, and prints the plaintext once. Each flag needs its own value; a value starting with `--` is rejected as missing rather than provisioned as an ID.
 
 See [API reference](API.md), [LLD](../design/LOW_LEVEL_DESIGN.md), [Firebase model](../data/FIREBASE_DATA_MODEL.md), and [test strategy](../testing/TEST_STRATEGY.md).
 

@@ -4,13 +4,14 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import FleetManagementPanel from "./FleetManagementPanel";
 import type { ActiveBusEntry } from "@/lib/activeBusEntries";
-const live = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[] }));
-vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: [{ id: "qa-bus", name: "QA Bus", assignedRoutes: ["qa-route"] }], loading: false }) }));
+const DEFAULT_BUSES = [{ id: "qa-bus", name: "QA Bus", assignedRoutes: ["qa-route"] as string[] | undefined, assignedRouteId: undefined as string | undefined }];
+const live = vi.hoisted(() => ({ entries: [] as ActiveBusEntry[], buses: [] as Array<{ id: string; name: string; assignedRoutes?: string[]; assignedRouteId?: string }> }));
+vi.mock("@/hooks/useBuses", () => ({ useBuses: () => ({ buses: live.buses, loading: false }) }));
 vi.mock("@/hooks/useDrivers", () => ({ useDrivers: () => ({ drivers: [{ id: "qa-driver", name: "QA Driver", authUid: "qa-driver-uid", busId: "qa-bus" }], loading: false }) }));
 vi.mock("@/hooks/useRoutes", () => ({ useRoutes: () => ({ routes: [{ id: "qa-route", name: "QA route" }], loading: false }) }));
 vi.mock("@/hooks/useActiveBuses", () => ({ useActiveBuses: () => live.entries }));
 vi.mock("@/lib/firebaseAuth", () => ({ auth: { currentUser: { getIdToken: async () => "test-token" } } }));
-beforeEach(() => { live.entries = []; vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev"); });
+beforeEach(() => { live.entries = []; live.buses = DEFAULT_BUSES.map(bus => ({ ...bus })); vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev"); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("fleet and personnel controls", () => {
   it("announces and focuses operator validation in the operator form", async () => {
@@ -87,11 +88,50 @@ describe("fleet and personnel controls", () => {
   it("retains new vehicle input after a server rejection", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"vehicle already exists"}', { status: 409 })));
     render(<FleetManagementPanel />); const user = userEvent.setup();
-    await user.type(screen.getByLabelText("New vehicle Bus ID"), "qa-bus");
+    await user.type(screen.getByLabelText("New vehicle Bus ID"), "qa-bus-new");
     await user.type(screen.getByLabelText("New vehicle display name"), "QA duplicate");
     await user.click(screen.getByRole("checkbox", { name: "QA route" }));
     await user.click(screen.getByRole("button", { name: "Add new vehicle" }));
     expect(await screen.findByText(/vehicle already exists/)).toBeTruthy();
     expect((screen.getByLabelText("New vehicle display name") as HTMLInputElement).value).toBe("QA duplicate");
   });
+  it("refuses to register a vehicle ID that already exists instead of overwriting it", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.type(screen.getByLabelText("New vehicle Bus ID"), " qa-bus ");
+    await user.type(screen.getByLabelText("New vehicle display name"), "Replacement");
+    await user.click(screen.getByRole("button", { name: "Add new vehicle" }));
+    expect(screen.getByText(/Vehicle ID "qa-bus" already exists/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("New vehicle display name") as HTMLInputElement).value).toBe("Replacement");
+  }, 15_000);
+  it("refuses to register an operator ID that already exists instead of overwriting it", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.type(screen.getByLabelText("New operator ID"), "qa-driver");
+    await user.type(screen.getByLabelText("New operator display name"), "Someone else");
+    await user.type(screen.getByLabelText("Firebase Auth UID for new operator"), "other-uid");
+    await user.click(screen.getByRole("button", { name: "Add new operator" }));
+    expect(screen.getByRole("alert").textContent).toContain('Operator ID "qa-driver" already exists');
+    expect(fetchMock).not.toHaveBeenCalled();
+  }, 15_000);
+  it("keeps a legacy single-route assignment when only the vehicle name is edited", async () => {
+    live.buses = [{ id: "qa-bus", name: "QA Bus", assignedRouteId: "qa-route" }];
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 })); vi.stubGlobal("fetch", fetchMock);
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit vehicle QA Bus" }));
+    expect((within(screen.getByText("Editing Vehicle").parentElement!).getByRole("checkbox", { name: "QA route" }) as HTMLInputElement).checked).toBe(true);
+    await user.type(screen.getByLabelText("Edit vehicle display name"), " renamed");
+    await user.click(screen.getByRole("button", { name: "Save vehicle changes" }));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ name: "QA Bus renamed", assignedRoutes: ["qa-route"] });
+  }, 15_000);
+  it.each([["vehicle QA Bus", "Vehicle"], ["operator QA Driver", "Operator"]])("shows why deleting %s failed instead of leaving the error behind the dialog", async (target, kind) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":"Still bound to an active ride."}', { status: 409 })));
+    render(<FleetManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: `Delete ${target}` }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete/ }));
+    expect(await screen.findByText(`Failed to delete ${kind}: Still bound to an active ride.`)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  }, 15_000);
 });

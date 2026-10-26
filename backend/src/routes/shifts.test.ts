@@ -321,6 +321,7 @@ describe("manual shift termination", () => {
     expect(harness.lock).toBeNull();
     expect(harness.liveNode).toMatchObject({
       status: "offline",
+      automaticServicePaused: true,
       deviceState: "online",
       busId: "bus_1",
       routeId: "route_1",
@@ -330,6 +331,16 @@ describe("manual shift termination", () => {
     expect(harness.liveNode).not.toHaveProperty("sessionId");
     expect(harness.liveNode).not.toHaveProperty("tripState");
     expect(harness.liveNode).not.toHaveProperty("activeRouteId");
+  });
+
+  it("does not pause a replacement session when an old stop is retried",async()=>{
+    harness.session!.status="interrupted";
+    harness.liveNode={...harness.liveNode,sessionId:"replacement"};
+    harness.lock={...harness.lock,sessionId:"replacement"};
+    harness.activeRide={...harness.activeRide,sessionId:"replacement"};
+    expect((await stopShift()).status).toBe(200);
+    expect(harness.docSets.some(write=>write.data.automaticServicePaused===true)).toBe(false);
+    expect(harness.liveNode.sessionId).toBe("replacement");
   });
 
   it("is idempotent and repairs a lingering matching live node", async () => {
@@ -484,6 +495,13 @@ describe("shift delay updates", () => {
 });
 
 describe("shift start after automatic completion", () => {
+  it("resumes an intentionally paused receiver without claiming an unobserved origin arrival", async () => {
+    harness.liveNode={busId:"bus_1",lat:23,lng:72.5,timestamp:Date.now(),motionState:"stopped",gpsHdop:2,automaticServicePaused:true};
+    const response=await startShift();
+    expect(response.status).toBe(201);
+    expect(harness.liveNode.tripState).toBe("pre_departure");
+    expect(Object.keys(harness.session?.stopsReached ?? {})).toEqual([]);
+  });
   it("lets an administrator arm a ride for an assigned operator", async () => {
     harness.user = { uid: "admin_uid", role: "admin", admin: true };
     harness.liveNode = {
@@ -680,6 +698,15 @@ describe("shift start after automatic completion", () => {
     expect(response.status).toBe(422);
     expect(harness.docSets).toEqual([]);
     expect(harness.batchSets).toEqual([]);
+  });
+
+  it("clears an automatic pause when a manual start reuses the recovered lock", async () => {
+    harness.liveNode = { busId: "bus_1", lat: 23.1, lng: 72.6, timestamp: Date.now(), motionState: "stopped", gpsHdop: 2, automaticServicePaused: true };
+    harness.lock = { busId: "bus_1", routeId: "route_1", driverId: "driver_1", sessionId: "session_existing" };
+    harness.session = { status: "pending", direction: "reverse", armedAt: 1234 };
+
+    expect((await startShift()).status).toBe(200);
+    expect(harness.docSets).toContainEqual({ id: "bus_1", data: expect.objectContaining({ automaticServicePaused: false }) });
   });
 
   it("derives endpoints from the direction already held by a recovered lock", async () => {

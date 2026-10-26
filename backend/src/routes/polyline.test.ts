@@ -406,6 +406,28 @@ describe.each([false, true])("transactional route saves v2=%s", mode => {
     });
     expect(harness.routes.get("route-1")?.configVersion).toBe(1);
   });
+
+  it("lets the same operation retry after an unknown-outcome persistence failure that never committed", async () => {
+    harness.routes.set("route-1", storedRoute({ geometrySignature: "stale" }));
+    let release!: () => void;
+    const upstream = mockRoutesApi(new Promise<void>((resolve) => { release = resolve; }));
+    const pending = save(routeBody());
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalled());
+    harness.failNextCommit = true;
+    release();
+    const failed = await pending;
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toMatchObject({ code: "ROUTE_PERSISTENCE_FAILED", outcomeUnknown: true });
+    expect(harness.operations.get("save-1")?.status).toBe("failed");
+    // The client keeps an unknown-outcome operation ID; the retry must not
+    // replay that failure forever when the save provably never committed.
+    const retry = await save(routeBody());
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toMatchObject({ status: "succeeded", configVersion: 2 });
+    expect(harness.routes.get("route-1")?.configVersion).toBe(2);
+    expect((await save(routeBody())).status).toBe(200);
+    expect(harness.routes.get("route-1")?.configVersion).toBe(2);
+  });
 });
 
 it("saves 100 ordered stops with independently computed return geometry", async () => {

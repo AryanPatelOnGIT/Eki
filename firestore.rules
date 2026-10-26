@@ -8,8 +8,9 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Same contract as RTDB rules and requireAdmin: role claim AND admin flag.
     function isAdmin() {
-      return hasCurrentRole('admin');
+      return hasCurrentRole('admin') && request.auth.token.admin == true;
     }
 
     // Missing migration state, stale versions and interrupted publications

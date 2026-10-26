@@ -69,3 +69,21 @@ export function passengerBusAvailabilities(
     return bus ? [bus] : [];
   });
 }
+
+/**
+ * Presence ticks re-derive availability every few seconds. Keep the previous
+ * array when every entry is field-for-field identical so an unchanged fleet
+ * does not re-render the passenger workspace and map.
+ */
+export function reuseUnchangedAvailabilities(
+  previous: PassengerBusAvailability[],
+  next: PassengerBusAvailability[],
+): PassengerBusAvailability[] {
+  if (previous.length !== next.length) return next;
+  return next.every((bus, index) => {
+    const prior = previous[index] as unknown as Record<string, unknown>;
+    const entries = Object.entries(bus);
+    return entries.length === Object.keys(prior).length &&
+      entries.every(([field, value]) => Object.is(prior[field], value));
+  }) ? previous : next;
+}

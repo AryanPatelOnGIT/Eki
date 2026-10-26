@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import RouteManagementPanel from "./RouteManagementPanel";
 import { ApiError } from "@/lib/apiClient";
+import { hasUnsavedChanges } from "@/lib/unsavedChanges";
 const mocks = vi.hoisted(() => ({ save: vi.fn(), newId: vi.fn(), route: {
   id: "qa-route", name: "QA route", color: "#3B82F6", waypoints: [], configVersion: 2,
   stops: [{ id: "alpha", name: "Alpha", shortName: "A", lat: 23, lng: 72 }, { id: "beta", name: "Beta", shortName: "B", lat: 23.01, lng: 72.01 }],
@@ -110,10 +111,40 @@ describe("route editing and operation recovery", () => {
     expect(mocks.save.mock.calls.map(call => call[1])).toEqual(["qa-save-operation", "qa-save-operation"]);
     expect(mocks.save.mock.calls[1][2]).toMatchObject({ expectedVersion: 2 });
   });
+  it("keeps a newly opened draft open when a cancelled earlier save completes later", async () => {
+    let finishSave!: (value: unknown) => void;
+    mocks.save.mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+    const user = await edit();
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    await user.click(screen.getByRole("button", { name: "Cancel route editing" }));
+    await user.click(screen.getByRole("button", { name: "Add Route" }));
+    await user.type(screen.getByLabelText("Display Name"), "Unsaved new route");
+    await act(async () => { finishSave({ saved: true }); });
+    expect((screen.getByLabelText("Display Name") as HTMLInputElement).value).toBe("Unsaved new route");
+    expect(screen.getByRole("button", { name: "Deploy" })).toBeTruthy();
+  });
   it("cancel never deletes a route", async () => {
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); render(<RouteManagementPanel />); const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Delete route QA route" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalled(); vi.unstubAllGlobals();
   });
+  it("closes the delete confirmation when deletion fails so only the error dialog remains", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://qa.ngrok-free.dev");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "Route is in service" }), { status: 409 })));
+    render(<RouteManagementPanel />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete route QA route" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete Route" }));
+    const message = await screen.findByText("Failed to delete: Route is in service");
+    expect(screen.getAllByRole("dialog")).toEqual([message.closest("[role=dialog]")]);
+    expect(screen.queryByText("Delete Route?")).toBeNull();
+  });
+  it("reports an edited route draft as unsaved until it is cancelled", async () => {
+    const user = await edit();
+    expect(hasUnsavedChanges()).toBe(false);
+    await user.type(screen.getByLabelText("Display Name"), " renamed");
+    expect(hasUnsavedChanges()).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Cancel route editing" }));
+    expect(hasUnsavedChanges()).toBe(false);
+  }, 15_000);
 });

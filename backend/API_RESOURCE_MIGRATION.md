@@ -1,6 +1,6 @@
 # HTTP resource migration for issue #192
 
-Last updated: 2026-10-05 15:56 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 This is the compatibility contract for the six method/path changes on `testing`.
 The existing handlers remain available. The v2 routes call those same handlers,
@@ -12,7 +12,7 @@ consistent. Device telemetry, diagnostics, and firmware URLs do not change.
 | `PUT /api/settings` | `PATCH /api/v2/settings/global` | Non-empty partial JSON object with only `serviceStartTime`, `noBusesMessage`, `noBusesSubMessage`, `announcementText`, `announcementActive` | `200 {"saved":true}` | `400` invalid/unknown fields; `500` save failure | Firebase admin; global 200/min and write 30/min limits |
 | `POST /api/plan` | `GET /api/v2/routes/:routeId/segments?from=<startStopId>&to=<endStopId>&via=<viaStopId>` | Safe route/stop IDs, `via` optional; no other query keys | `200` route metadata, ordered stops, direction, and encoded segment polyline, with the same JSON shape as the old endpoint | `400` bad IDs, stop order or query; `404` missing route/stop; `422` unusable route geometry; `500` internal failure | Firebase user; global 200/min and route planning 30/min limits |
 | `GET /api/routes-list` | `GET /api/v2/routes` | None | `200 {"routes":[...]}`; at most 250 route records, with metadata and stops but no geometry | `500` list failure | Firebase user; global 200/min limit |
-| `POST /api/devices/:deviceId/disable` | `PATCH /api/v2/devices/:deviceId` | Exactly `{"enabled":false}` on v2; no body on legacy | `200 {"disabled":true}` | `400` invalid ID or v2 body; `500` disable/invalidation failure | Firebase admin; global 200/min and write 30/min limits |
+| `POST /api/devices/:deviceId/disable` | `PATCH /api/v2/devices/:deviceId` | Exactly `{"enabled":false}` on v2; no body on legacy | `200 {"disabled":true}` | `400` invalid ID or v2 body; `404` unknown device (no registry entry is created); `500` disable/invalidation failure | Firebase admin; global 200/min and write 30/min limits |
 | `PATCH /api/feedback/:feedbackId/status` | `PATCH /api/v2/feedback/:feedbackId` | Exactly `{"status":"new"|"reviewed"|"resolved"}` | `200 {"updated":boolean,"status":string}` | `400` invalid ID/body; `404` missing feedback; `500` update failure | Firebase admin; global 200/min and write 30/min limits |
 | `POST /api/privacy/deletion-request` | `POST /api/v2/privacy-deletion-requests` | No body on v2; UID comes from the token; resubmission preserves retry history | `202 {"accepted":true}`; request record is keyed by UID | `400` unexpected v2 body; `409` operator/admin account; `503` uncertain/unavailable queue acknowledgement | Firebase passenger; global 200/min and write 30/min limits |
 

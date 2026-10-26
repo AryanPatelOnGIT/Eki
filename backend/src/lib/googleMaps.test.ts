@@ -79,6 +79,30 @@ describe("computeRouteGeometry", () => {
     });
   });
 
+  it("sends the bus heading only on the origin so a reroute does not start with a U-turn", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fetchResponse(validRouteResponse)));
+    const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string);
+
+    await computeRouteGeometry({ lat: 23, lng: 72 }, { lat: 23.1, lng: 72.1 }, [{ lat: 23.05, lng: 72.05 }], { originHeading: 459.6 });
+    expect(body(0).origin.location).toEqual({ latLng: { latitude: 23, longitude: 72 }, heading: 100 });
+    expect(body(0).intermediates[0].location).not.toHaveProperty("heading");
+    expect(body(0).destination.location).not.toHaveProperty("heading");
+
+    for (const originHeading of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await computeRouteGeometry({ lat: 23, lng: 72 }, { lat: 23.1, lng: 72.1 }, [], { originHeading });
+    }
+    for (const call of [1, 2, 3]) expect(body(call).origin.location).not.toHaveProperty("heading");
+  });
+
+  it("applies the origin heading only to the first chunk of a long itinerary", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fetchResponse(validRouteResponse)));
+    const stops = Array.from({ length: 30 }, (_, index) => ({ lat: 23 + index / 1000, lng: 72 }));
+    await computeRouteGeometry({ lat: 22.99, lng: 72 }, { lat: 23.1, lng: 72 }, stops, { originHeading: 10 }).catch(() => undefined);
+    const origins = vi.mocked(fetch).mock.calls.map(([, request]) => JSON.parse(request?.body as string).origin.location);
+    expect(origins.length).toBeGreaterThan(1);
+    expect(origins.filter(location => "heading" in location)).toEqual([{ latLng: { latitude: 22.99, longitude: 72 }, heading: 10 }]);
+  });
+
   it("rejects invalid coordinates before calling Google", async () => {
     const request = vi.fn();
     vi.stubGlobal("fetch", request);

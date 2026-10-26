@@ -161,6 +161,16 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       setErrorMsg(validationError);
       return;
     }
+    // PUT is an upsert: registering a taken ID would silently overwrite it.
+    const existingVehicleError = busesLoading
+      ? "Saved vehicles are still loading. Try again in a moment."
+      : buses.some((bus) => bus.id === newBusId.trim())
+        ? `Vehicle ID "${newBusId.trim()}" already exists. Edit the saved vehicle instead.`
+        : null;
+    if (existingVehicleError) {
+      setErrorMsg(existingVehicleError);
+      return;
+    }
     try {
       await runSave(async () => {
         await fleetRequest(`/buses/${encodeURIComponent(newBusId.trim())}`, "PUT", {
@@ -183,6 +193,8 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       await fleetRequest(`/buses/${encodeURIComponent(id)}`, "DELETE");
       setConfirmDeleteBusId(null);
     } catch (error: unknown) {
+      // Close the dialog so the error banner behind its backdrop is visible.
+      setConfirmDeleteBusId(null);
       setErrorMsg("Failed to delete Vehicle: " + errorMessage(error));
     } finally {
       setIsDeleting(false);
@@ -192,7 +204,10 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
   const startEditBus = (bus: BusData) => {
     setEditingBusId(bus.id);
     setEditBusName(bus.name);
-    setEditBusRoutes(bus.assignedRoutes ?? []);
+    // Saving always replaces the legacy single-route field, so carry it into the draft.
+    setEditBusRoutes(Array.isArray(bus.assignedRoutes)
+      ? bus.assignedRoutes
+      : bus.assignedRouteId ? [bus.assignedRouteId] : []);
     setEditingDriverId(null);
   };
 
@@ -220,6 +235,17 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       operatorErrorRef.current?.focus();
       return;
     }
+    // PUT is an upsert: reusing an operator ID would replace (and demote) its account.
+    const existingOperatorError = driversLoading
+      ? "Saved operators are still loading. Try again in a moment."
+      : drivers.some((driver) => driver.id === newDriverId.trim())
+        ? `Operator ID "${newDriverId.trim()}" already exists. Edit the saved operator instead.`
+        : null;
+    if (existingOperatorError) {
+      setOperatorError(existingOperatorError);
+      operatorErrorRef.current?.focus();
+      return;
+    }
     setOperatorError(null);
     const authUid = newDriverAuthUid.trim();
     try {
@@ -244,6 +270,7 @@ export default function FleetManagementPanel({ mode = "combined" }: Props) {
       await fleetRequest(`/drivers/${encodeURIComponent(id)}`, "DELETE");
       setConfirmDeleteDriverId(null);
     } catch (error: unknown) {
+      setConfirmDeleteDriverId(null);
       setErrorMsg("Failed to delete Operator: " + errorMessage(error));
     } finally {
       setIsDeleting(false);

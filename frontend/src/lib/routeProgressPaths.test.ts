@@ -13,13 +13,15 @@ describe("covered, active and future route sections", () => {
     const cumulative = preparePolylineDistanceIndex(road).cumulative;
     const sections = routeProgressPaths(road, routeLegPaths(road, orderedStops), 1, cumulative[1]);
     expect(sections.completed).toEqual(road.slice(0, 2));
+    expect(sections.matchedDistanceM).toBe(cumulative[1]);
     expect(sections.active).toEqual(road.slice(1, 3));
-    expect(sections.active.at(-1)).not.toEqual(road.at(-1)); // future geometry stays on the green base
+    expect(sections.active.at(-1)).not.toEqual(road.at(-1)); // future geometry stays on the blue base
   });
   it("uses published progress without a match and refuses a match beyond the next stop", () => {
     const legs = routeLegPaths(path, stops);
     expect(routeProgressPaths(path, legs, 2).completed).toEqual(path.slice(0, 3));
     expect(routeProgressPaths(path, legs, 1, 100_000).completed).toEqual([]);
+    expect(routeProgressPaths(path, legs, 1, 100_000)).not.toHaveProperty("matchedDistanceM");
     expect(routeProgressPaths(path, legs, 99)).toEqual({ completed: [], active: [] });
   });
 });

@@ -43,6 +43,15 @@ export function decideRouteSaveOperation(
   if (operation.status === "succeeded") {
     return { kind: "replay", result: operation.result };
   }
+  // A failure is recorded only while its own lease still holds, so an
+  // unknown-outcome failure proves the route commit never happened. The client
+  // keeps that operation ID to retry; replaying the failure would wedge it.
+  if (
+    operation.status === "failed" &&
+    (operation.error as { outcomeUnknown?: unknown } | undefined)?.outcomeUnknown === true
+  ) {
+    return { kind: "claim" };
+  }
   if (operation.status === "failed") {
     return {
       kind: "failed",

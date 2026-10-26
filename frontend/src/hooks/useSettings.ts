@@ -42,6 +42,7 @@ function readGlobalSettings(value: unknown): GlobalSettings {
 // ── Singleton state ───────────────────────────────────────────────────────────
 let _settings: GlobalSettings = DEFAULT_SETTINGS;
 let _loading = true;
+let _error: string | null = null;
 let _listenerCount = 0;
 let _unsubscribe: (() => void) | null = null;
 let _starting = false;
@@ -72,6 +73,7 @@ async function ensureListener() {
           ? readGlobalSettings(snap.data())
           : DEFAULT_SETTINGS;
         _loading = false;
+        _error = null;
         notifyAll();
       },
       (err: unknown) => {
@@ -82,6 +84,7 @@ async function ensureListener() {
           console.warn("[Settings] Firestore read failed:", error.message);
         }
         _loading = false;
+        _error = "Settings could not be loaded.";
         _unsubscribe = null;
         notifyAll();
         if (_listenerCount > 0 && code !== "permission-denied") {
@@ -107,6 +110,7 @@ export function clearSettingsCache(): void {
   _unsubscribe = null;
   _settings = DEFAULT_SETTINGS;
   _loading = true;
+  _error = null;
   notifyAll();
   void ensureListener();
 }
@@ -123,6 +127,8 @@ function releaseListener() {
 export function useSettings(): {
   settings: GlobalSettings;
   loading: boolean;
+  /** Set when the stored settings could not be read; `settings` are then only defaults. */
+  error: string | null;
   saveSettings: (partial: Partial<GlobalSettings>) => Promise<void>;
 } {
   const { user, loading: authLoading } = useAuth();
@@ -172,5 +178,5 @@ export function useSettings(): {
     if (result?.saved !== true) throw new Error("Settings acknowledgement is missing.");
   };
 
-  return { settings: scope === _scope ? _settings : DEFAULT_SETTINGS, loading: scope ? scope !== _scope || _loading : authLoading, saveSettings };
+  return { settings: scope === _scope ? _settings : DEFAULT_SETTINGS, loading: scope ? scope !== _scope || _loading : authLoading, error: scope && scope === _scope ? _error : null, saveSettings };
 }

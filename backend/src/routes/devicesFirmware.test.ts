@@ -41,6 +41,10 @@ vi.mock("../lib/firebaseAdmin", () => ({
         set: async (value: Record<string, unknown>) => {
           if (name === "devices") harness.disabled.set(id, value);
         },
+        update: async (value: Record<string, unknown>) => {
+          if (name === "devices" && id === "missing_device") throw Object.assign(new Error("No document to update"), { code: 5 });
+          if (name === "devices") harness.disabled.set(id, value);
+        },
       }),
     }),
     runTransaction: (callback: (tx: unknown) => Promise<unknown>) => {
@@ -161,6 +165,14 @@ describe("device disable aliases", () => {
 
     const legacy = await contractFetch(`${baseUrl}/api/devices/device_2/disable`, { method: "POST" });
     expect(legacy.status).toBe(200);
+    expect(harness.invalidated).toEqual(["device_1", "device_2"]);
+    for (const missing of [
+      contractFetch(`${baseUrl}/api/devices/missing_device/disable`, { method: "POST" }),
+      contractFetch(`${baseUrl}/api/v2/devices/missing_device`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }) }),
+    ]) {
+      expect((await missing).status).toBe(404);
+    }
+    expect(harness.disabled.has("missing_device")).toBe(false);
     expect(harness.invalidated).toEqual(["device_1", "device_2"]);
     const invalid = await contractFetch(`${baseUrl}/api/v2/devices/device_3`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },

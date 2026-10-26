@@ -11,7 +11,7 @@ export function isActiveRideSnapshot(
 ): boolean {
   return (
     bus.status === "active" &&
-    typeof bus.sessionId === "string" &&
+    typeof bus.sessionId === "string" && bus.sessionId.length > 0 &&
     (bus.tripState === "pre_departure" ||
       bus.tripState === "in_service")
   );

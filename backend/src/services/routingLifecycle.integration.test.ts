@@ -158,6 +158,18 @@ async function fixture(startEngine = true, stopCount = 3) {
 }
 
 describe("routing lifecycle through actual ingestion and listeners", () => {
+  it("withholds intermediate passage for poor-quality fixes and their recovery segment until a reliable arrival", async () => {
+    const f = await fixture();
+    await f.send(23, 0, "stopped"); await f.send(23.001, 15_000);
+    await f.send(f.stops[1].lat, 30_000, "moving", 10);
+    expect(f.live().currentStopIndex).toBe(1);
+    await f.send(f.stops[1].lat + 0.0001, 35_000);
+    expect(f.live().currentStopIndex).toBe(1);
+    await f.send(f.stops[1].lat, 40_000);
+    expect(f.live().currentStopIndex).toBe(2);
+    expect(Object.values(state.docs.get(`ride_sessions/${f.sessionId}`).stopsReached)
+      .filter((record: any) => record.stopId === f.stops[1].id)).toHaveLength(1);
+  });
   it("recovers an armed pending ride from credible departure fixes and records ordered passage", async () => {
     const f = await fixture();
     Object.assign(state.docs.get(`ride_sessions/${f.sessionId}`), { status: "pending", direction: null, directionState: "pending" });

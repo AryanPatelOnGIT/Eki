@@ -47,4 +47,11 @@ describe("workspace authorization UI", () => {
     expect(screen.queryByRole("button", { name: "Protected admin control" })).toBeNull();
     expect(screen.getByText("Unauthorized")).toBeTruthy();
   });
+  it("renders the authorized workspace when browser storage rejects writes", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    try {
+      state.user!.role = "admin"; render(<RoleGuard allowedRoles={["admin"]}><button>Protected admin control</button></RoleGuard>);
+      expect(screen.getByRole("button", { name: "Protected admin control" })).toBeTruthy();
+    } finally { setItem.mockRestore(); }
+  });
 });

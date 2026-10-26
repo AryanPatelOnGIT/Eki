@@ -8,6 +8,10 @@ import { useEffect, useState } from "react";
 
 const WORKSPACES = ["/admin", "/passenger"] as const;
 
+function readSavedWorkspace(): string | null {
+  try { return window.localStorage.getItem("eki:last-workspace"); } catch { return null; }
+}
+
 function canOpenWorkspace(role: string | null, path: string): boolean {
   if (role === "admin") return WORKSPACES.includes(path as (typeof WORKSPACES)[number]);
   return path === "/passenger";
@@ -24,6 +28,7 @@ export default function HomePage() {
     loginLoading,
     loginWithGoogle,
     loginWithGoogleRedirect,
+    logout,
     refreshAccess,
   } = useAuth();
   const router = useRouter();
@@ -37,7 +42,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!loading && user && !roleError) {
-      const savedPath = window.localStorage.getItem("eki:last-workspace");
+      const savedPath = readSavedWorkspace();
       const fallbackPath = user.role === "admin" ? "/admin" : "/passenger";
       router.replace(
         savedPath && canOpenWorkspace(user.role, savedPath)
@@ -52,7 +57,11 @@ export default function HomePage() {
       <main className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center bg-black text-white" role="alert">
         <h1 className="text-xl font-semibold">Access could not be verified</h1>
         <p>{roleError}</p>
-        <button type="button" className="btn-primary px-5 py-2.5" onClick={() => void refreshAccess()}>Try again</button>
+        <div className="flex items-center gap-4">
+          <button type="button" className="btn-primary px-5 py-2.5" onClick={() => void refreshAccess()}>Try again</button>
+          {/* A revoked, deleted or unsynchronized account must be able to switch accounts. */}
+          <button type="button" className="text-sm font-semibold underline underline-offset-4" onClick={() => void logout()}>Sign out</button>
+        </div>
       </main>
     );
   }

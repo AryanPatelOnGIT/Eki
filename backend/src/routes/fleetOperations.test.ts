@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
   mirrors: {} as Record<string, unknown>,
   authorizations: {} as Record<string, unknown>,
-  claims: {} as Record<string, unknown>, userClaims: new Map<string, Record<string, unknown>>(), liveNodes: {} as Record<string, any>, activeAuth: 0, maxAuth: 0, mirrorRoots: 0,
+  claims: {} as Record<string, unknown>, userClaims: new Map<string, Record<string, unknown>>(), missingUsers: new Set<string>(), liveNodes: {} as Record<string, any>, activeAuth: 0, maxAuth: 0, mirrorRoots: 0,
   admin: true, writes: 0, revocations: 0, sequence: 0,
   gate: null as Promise<void> | null,
   tail: Promise.resolve() as Promise<unknown>,
@@ -65,7 +65,7 @@ vi.mock("../lib/firebaseAdmin", () => {
   }
   return {
     auth: {
-      getUser: async (uid: string) => { state.activeAuth++; state.maxAuth = Math.max(state.maxAuth, state.activeAuth); try { if (state.gate) await state.gate; return { customClaims: state.userClaims.get(uid) ?? state.claims }; } finally { state.activeAuth--; } },
+      getUser: async (uid: string) => { if (state.missingUsers.has(uid)) throw Object.assign(new Error("no user"), { code: "auth/user-not-found" }); state.activeAuth++; state.maxAuth = Math.max(state.maxAuth, state.activeAuth); try { if (state.gate) await state.gate; return { customClaims: state.userClaims.get(uid) ?? state.claims }; } finally { state.activeAuth--; } },
       setCustomUserClaims: async (_uid: string, claims: Record<string, unknown>) => {
         if (state.rejectClaims) { state.claimsRejected = true; throw new Error("private upstream failure"); }
         state.userClaims.set(_uid, claims); state.writes++;
@@ -160,7 +160,7 @@ beforeEach(async () => {
   state.authorizations = {};
   state.mirrorRemovalGate = null; state.mirrorRemovalStarted = false; state.failMirrorRemoval = "";
   state.authorizationWriteGate = null; state.authorizationWriteStarted = false; state.failProfileRead = "";
-  state.docs.clear(); state.mirrors = {}; state.claims = {}; state.userClaims.clear(); state.liveNodes = {}; state.activeAuth = 0; state.maxAuth = 0; state.mirrorRoots = 0; state.admin = true;
+  state.docs.clear(); state.mirrors = {}; state.claims = {}; state.userClaims.clear(); state.missingUsers.clear(); state.liveNodes = {}; state.activeAuth = 0; state.maxAuth = 0; state.mirrorRoots = 0; state.admin = true;
   state.writes = 0; state.revocations = 0; state.gate = null; state.tail = Promise.resolve(); state.failFinalWrite = false;
   state.admissionGate = null; state.admissionStarted = false;
   state.rejectClaims = false; state.claimsRejected = false; state.revokeGate = null;
@@ -222,6 +222,34 @@ describe("fleet operation resources", () => {
     expect(state.authorizations.replacement_uid).toMatchObject({ role: "driver", driverId: "driver_1", assignedBusId: "bus_1" });
     expect(state.userClaims.get("auth_uid")).not.toHaveProperty("driverId");
     expect(state.docs.get("drivers/driver_1")?.authUid).toBe("replacement_uid");
+  });
+  it("rejects an Auth UID with no account before changing records or authorization", async () => {
+    const original = { name: "Original", authUid: "auth_uid", assignedBusId: "bus_1" };
+    state.docs.set("drivers/driver_1", original);
+    state.docs.set("users/auth_uid", { role: "driver" });
+    state.missingUsers.add("mistyped_uid");
+    const result = await contractFetch(`${base}/api/fleet/drivers/driver_1`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Changed", authUid: "mistyped_uid", assignedBusId: "bus_1" }),
+    });
+    expect(result.status).toBe(400);
+    expect(await result.json()).toEqual({ error: "No account exists for that Auth UID." });
+    expect(state.docs.get("drivers/driver_1")).toEqual(original);
+    expect(state.docs.get("users/auth_uid")).toEqual({ role: "driver" });
+    expect(state.docs.has("users/mistyped_uid")).toBe(false);
+    expect(state.writes).toBe(0); expect(state.revocations).toBe(0);
+  });
+  it("reassigns an operator whose previous account was deleted without recreating its profile", async () => {
+    state.missingUsers.add("auth_uid");
+    const result = await contractFetch(`${base}/api/fleet/drivers/driver_1`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Replacement", authUid: "replacement_uid", assignedBusId: "bus_1" }),
+    });
+    expect(result.status).toBe(200);
+    expect(state.docs.get("drivers/driver_1")?.authUid).toBe("replacement_uid");
+    expect(state.authorizations.replacement_uid).toMatchObject({ role: "driver", driverId: "driver_1", assignedBusId: "bus_1" });
+    expect(state.docs.has("users/auth_uid")).toBe(false);
+    expect(state.userClaims.has("auth_uid")).toBe(false);
   });
   it("rejects missing or route-less operator assignment before changing records or authorization", async () => {
     const original = { name: "Original", authUid: "auth_uid", assignedBusId: "bus_1", badge: "retained" };
@@ -495,6 +523,18 @@ describe("fleet operation resources", () => {
     expect(state.docs.get("_userAuthorization/auth_uid")).toMatchObject({ role: "driver", driverId: null, assignedBusId: null });
     expect(state.mirrors).toEqual({});
   });
+  it.each([["a missing bus", "bus_missing"], ["an invalid bus id", "bus/../x"]])(
+    "revokes stale administrator claims when a demoted driver has %s", async (_label, assignedBusId) => {
+      state.docs.set("users/auth_uid", { role: "driver" });
+      state.docs.set("drivers/driver_1", { authUid: "auth_uid", assignedBusId });
+      state.userClaims.set("auth_uid", { role: "admin", admin: true, driverId: "previous_driver" });
+      state.mirrors.previous_driver = { bus_1: { route_1: true } };
+      expect(await syncRoleClaimsChunk(["auth_uid"])).toEqual([false]);
+      expect(state.userClaims.get("auth_uid")).toMatchObject({ role: "driver" });
+      expect(state.userClaims.get("auth_uid")?.admin).toBeUndefined();
+      expect(state.userClaims.get("auth_uid")?.driverId).toBeUndefined();
+      expect(state.mirrors.previous_driver).toBeUndefined();
+    });
   it("retains the CLI lock until delayed mirror cleanup settles after another removal fails", async () => {
     state.docs.set("users/auth_uid", { role: "passenger" });
     state.userClaims.set("auth_uid", { role: "driver", driverId: "previous_driver", assignedBusId: "bus_1" });
@@ -508,6 +548,37 @@ describe("fleet operation resources", () => {
     } finally { release(); }
     expect(await publication).toEqual([false]);
     expect(state.docs.has("_fleet_reconciliation_locks/singleton")).toBe(false);
+  });
+  it("rejects malformed vehicle route assignments instead of silently clearing or dropping routes", async () => {
+    state.docs.set("routes/route_1", { name: "Route 1" });
+    const bus = { id: "bus_1", name: "Before", assignedRoutes: ["route_1"] };
+    state.docs.set("buses/bus_1", bus);
+    for (const assignedRoutes of ["route_1", { route_1: true }, null, ["route_1", "bad id"], ["route_1", 7]]) {
+      const response = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "After", assignedRoutes }) });
+      expect(response.status).toBe(400);
+      expect(state.docs.get("buses/bus_1")).toEqual(bus);
+    }
+  });
+  it("rejects clearing every route from a vehicle with an assigned operator before persisting", async () => {
+    state.docs.set("routes/route_1", { name: "Route 1" });
+    const bus = { id: "bus_1", name: "Before", assignedRoutes: ["route_1"] };
+    state.docs.set("buses/bus_1", bus);
+    state.mirrors.driver_1 = { bus_1: { route_1: true } };
+    const response = await contractFetch(`${base}/api/fleet/buses/bus_1`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "After", assignedRoutes: [] }) });
+    expect(response.status).toBe(409);
+    expect(state.docs.get("buses/bus_1")).toEqual(bus);
+    expect(state.mirrors.driver_1).toEqual({ bus_1: { route_1: true } });
+  });
+  it("deletes an operator whose Auth account was already deleted", async () => {
+    state.missingUsers.add("auth_uid");
+    state.mirrors.driver_1 = { bus_1: { route_1: true } };
+    const response = await contractFetch(`${base}/api/fleet/drivers/driver_1`, { method: "DELETE" });
+    expect(response.status).toBe(200);
+    expect(state.docs.has("drivers/driver_1")).toBe(false);
+    expect(state.docs.has("users/auth_uid")).toBe(false);
+    expect(state.mirrors.driver_1).toBeUndefined();
   });
   it("drains accepted fleet work while rejecting late mutation admission", async () => {
     let release!: () => void; state.gate = new Promise<void>(done => { release = done; });

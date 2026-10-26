@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-21 04:44 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 The [deterministic acceptance catalog](../../qa/README.md) imports the full
 A-Z requirements and current source census, preserves historical evidence
@@ -15,6 +15,10 @@ separate synthetic/emulator results from provider, deployment and hardware gates
 
 ## Start with the current gates
 
+- [25 October adversarial component audit](ADVERSARIAL_AUDIT_2026-10-25.md):
+  16 areas attacked with a failing test per defect and an independent review;
+  fixed defects with commits, the scenarios that held, the 415 error-handler
+  decision, final gate counts and the open defects that need a product decision.
 - [21 October Downloads review and open-issue disposition](OPEN_ACCEPTANCE_DISPOSITION_2026_10_21.md):
   archive/checksum verification, deduplicated telemetry, bounded access-recovery
   patch and the outstanding proof/decision for each of the 64 acceptance rows.
