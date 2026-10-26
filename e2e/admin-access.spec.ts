@@ -200,7 +200,7 @@ test("embedded feedback retries Firestore read denial and rejects a failed write
   await page.getByRole("button", { name: "Approve verification" }).click(); await expect(page.getByText("Admin read rejected")).toBeVisible();
   await page.getByRole("button", { name: /retry/i }).click(); await expect(page.getByText("Browser Passenger")).toBeVisible();
   await page.getByRole("button", { expanded: false }).click(); await page.getByRole("button", { name: "reviewed", exact: true }).click();
-  await expect(page.getByText("Admin write rejected")).toBeVisible(); await expect(page.getByRole("button", { name: "new", exact: true })).toBeDisabled();
+  await expect(page.getByText("Admin write rejected")).toBeVisible(); await expect(page.getByRole("button", { name: "reviewed", exact: true })).toBeEnabled();
 });
 test("account switches hide previous data and wait for fresh verification", async ({ page }) => {
   const tokens: string[] = []; await page.route("**/__qa/firestore/feedback", async route => {
@@ -242,7 +242,7 @@ test("route projection uses receipt freshness for both preview and catalog and e
   expect(reads).not.toContain("activeBuses");
   await expect(page.getByLabel("Preview count", { exact: true })).toHaveText("1");
   await expect(page.getByLabel("Catalog preview count")).toHaveText("1");
-  await page.clock.runFor(11_000); // Sample is now stale, but receipt remains fresh.
+  await page.clock.runFor(221_000); // Sample exceeds five minutes; its server receipt remains fresh.
   await expect(page.getByLabel("Preview count", { exact: true })).toHaveText("1");
   await page.clock.runFor(49_001);
   await expect(page.getByLabel("Preview count", { exact: true })).toHaveText("0");

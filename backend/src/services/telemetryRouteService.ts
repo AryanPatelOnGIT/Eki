@@ -40,6 +40,7 @@ import type { TelemetryPayload } from "./telemetryPayload";
 import {
   evaluateRouteAdherence,
   matchRoutePosition,
+  ROUTE_MATCH_DISTANCE_M,
   trajectoryHeading,
   type PreviousRouteMatch,
   type RouteAdherenceState,
@@ -50,6 +51,13 @@ const ROUTE_CACHE_MS = 5 * 60_000;
 const rerouteProviderCircuit = new RerouteProviderCircuit();
 const MATCHED_POSITION_CONFIDENCE = 0.45;
 const MAX_ENCODED_POLYLINE_LENGTH = 500_000;
+
+/** GNSS heading is noise while stationary; send it to the provider only when moving. */
+function movingHeading(sample: TelemetryPayload): number | undefined {
+  return sample.speed >= 3 && sample.motionState === "moving" && Number.isFinite(sample.heading)
+    ? sample.heading
+    : undefined;
+}
 
 interface RouteStop extends LatLng {
   id: string;
@@ -263,6 +271,19 @@ function validRouteState(value: unknown): RouteAdherenceState | undefined {
     value === "ON_NEW_ROUTE"
     ? value
     : undefined;
+}
+
+/**
+ * A live reroute finishes within the provider timeout. A claim older than this
+ * was lost (replica restart or failed release write), so it must not suppress
+ * every later reroute; a late result still fails its request-ID guard.
+ */
+const STRANDED_REROUTE_AFTER_MS = 60_000;
+function adherencePreviousState(live: Record<string, unknown>, now: number): RouteAdherenceState | undefined {
+  const state = validRouteState(live.routeState);
+  if (state !== "REROUTING") return state;
+  const startedAt = Number(live.lastRerouteAttemptAt);
+  return Number.isFinite(startedAt) && now - startedAt <= STRANDED_REROUTE_AFTER_MS ? state : "OFF_ROUTE";
 }
 
 export function previousMatch(
@@ -707,7 +728,10 @@ async function activateReroute(
   // A new session must never reuse a cached geometry version from an earlier ride.
   const nextVersion = Math.max(expectedVersion + 1, Date.now());
   const publicationCreatedAt = Date.now();
-  const path = decodePolyline(geometry.encodedPolyline);
+  const path = typeof geometry.encodedPolyline === "string" &&
+    geometry.encodedPolyline.length <= MAX_ENCODED_POLYLINE_LENGTH ? decodePolyline(geometry.encodedPolyline) : [];
+  // The matcher rejects such geometry on the next fix; never publish it.
+  if (path.length < 2) throw new Error("Provider returned unusable reroute geometry.");
   const match = matchRoutePosition(
     { lat: sample.lat, lng: sample.lng },
     path,
@@ -715,6 +739,12 @@ async function activateReroute(
     null,
     adaptiveGnssErrorMeters(sample.gpsHdop, sample.speed),
   );
+  // A deviation reroute starts at the bus. Geometry snapped far away would
+  // immediately confirm off-route again and, having cleared the backoff,
+  // re-dispatch a billable request on every fix.
+  if (!departure && (!match || match.distanceToRouteM > ROUTE_MATCH_DISTANCE_M)) {
+    throw new Error("Reroute geometry does not start at the bus.");
+  }
   // Store the full reroute geometry once in a version-keyed sibling node so
   // the live activeBuses child carries only pointer fields and is not
   // rewritten with the encoded polyline on every accepted fix.
@@ -855,8 +885,10 @@ async function refreshDepartureRoute(
         : remainingRerouteStops(route.stops, direction, Number(live.currentStopIndex) || 0);
       const origin = claimedPlan.phase === "ready" ? ordered[0] : { lat: Number(live.lat), lng: Number(live.lng) };
       if (!origin || !remaining.length || !validLatLng(origin)) throw new Error("No departure itinerary");
+      const originHeading = claimedPlan.phase === "ready" ? undefined : movingHeading(sample);
       const geometry = await computeRouteGeometry(origin, remaining.at(-1)!, remaining.slice(0, -1), {
         routingPreference: "TRAFFIC_AWARE_OPTIMAL", timeoutMs: LIVE_REROUTE_TIMEOUT_MS,
+        ...(originHeading === undefined ? {} : { originHeading }),
       }).then(result => { finishProvider(true); return result; }, error => { finishProvider(false); throw error; });
       const published = await activateReroute(nodeKey, requestId, expectedVersion, sessionId, direction,
         assignment.routeId, sample, geometry, route.cacheGeneration, claimedPlan,
@@ -968,6 +1000,7 @@ async function requestReroute(
       const destination = remainingStops[remainingStops.length - 1];
       const intermediates = remainingStops.slice(0, -1);
       if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) throw new Error("Route configuration changed before rerouting.");
+      const originHeading = movingHeading(sample);
       const geometry = await computeRouteGeometry(
         { lat: sample.lat, lng: sample.lng },
         destination,
@@ -975,6 +1008,7 @@ async function requestReroute(
         {
           routingPreference: "TRAFFIC_AWARE",
           timeoutMs: LIVE_REROUTE_TIMEOUT_MS,
+          ...(originHeading === undefined ? {} : { originHeading }),
         },
       ).then(result => { finishProvider(true); return result; }, error => { finishProvider(false); throw error; });
       if (!telemetryRouteSnapshotIsCurrent(assignment.routeId, route.cacheGeneration)) {
@@ -1111,7 +1145,7 @@ async function processTelemetryRoute(
       : undefined,
   );
   const adherence = evaluateRouteAdherence(
-    matchingContextChanged ? undefined : validRouteState(live?.routeState),
+    matchingContextChanged ? undefined : adherencePreviousState(live, Date.now()),
     matchingContextChanged || !Number.isInteger(live?.offRouteSampleCount)
       ? 0
       : Number(live?.offRouteSampleCount),

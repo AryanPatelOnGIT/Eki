@@ -26,6 +26,9 @@ export const LIVE_REROUTE_TIMEOUT_MS = 3_500;
 export interface RouteGeometryOptions {
   routingPreference?: "TRAFFIC_AWARE" | "TRAFFIC_AWARE_OPTIMAL";
   timeoutMs?: number;
+  /** Travel heading at the origin (degrees). Without it a live reroute can
+   * start on the opposite carriageway or with a U-turn, then go off-route. */
+  originHeading?: number;
 }
 
 /**
@@ -48,7 +51,9 @@ export async function computeRouteGeometry(
   if (intermediates.length > 25) {
     let trafficFallback = false;
     const geometry = await computeOrderedRouteGeometry([origin, ...intermediates, destination], async (chunk) => {
-      const result = await computeRouteGeometry(chunk[0], chunk[chunk.length - 1], chunk.slice(1, -1), options);
+      // Later chunks start at a stop, where the bus heading does not apply.
+      const chunkOptions = chunk[0] === origin ? options : { ...options, originHeading: undefined };
+      const result = await computeRouteGeometry(chunk[0], chunk[chunk.length - 1], chunk.slice(1, -1), chunkOptions);
       trafficFallback ||= result.trafficFallback === true;
       return { polyline: result.encodedPolyline, distanceMeters: result.distanceMeters, duration: result.duration };
     });
@@ -62,6 +67,9 @@ export async function computeRouteGeometry(
 
   const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
 
+  const originHeading = Number.isFinite(options.originHeading)
+    ? ((Math.round(Number(options.originHeading)) % 360) + 360) % 360
+    : undefined;
   const body = {
     origin: {
       location: {
@@ -69,6 +77,7 @@ export async function computeRouteGeometry(
           latitude: origin.lat,
           longitude: origin.lng,
         },
+        ...(originHeading === undefined ? {} : { heading: originHeading }),
       },
     },
     destination: {

@@ -17,9 +17,10 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import AlertModal from "@/components/ui/AlertModal";
 import { MAP_OPTIONS, MAPS_MAP_ID, DEFAULT_CENTER } from "@/config/maps";
 import { errorMessage } from "@/lib/errors";
-import { ApiError, apiRequest, acknowledgedField } from "@/lib/apiClient";
+import { ApiError, apiRequest, acknowledgedField, isApiRecord } from "@/lib/apiClient";
 import { placeSearchErrorMessage } from "@/lib/placeSearchErrors";
 import { newRouteSaveId, saveRoute } from "@/lib/routeSaveClient";
+import { useUnsavedChanges } from "@/lib/unsavedChanges";
 import {
   prepareRouteSavePayload,
   reorderRouteStops,
@@ -75,6 +76,7 @@ function PlacesSearchBox({ onPlaceSelect }: { onPlaceSelect: (p: { name: string;
           },
         );
         if (controller.signal.aborted) return;
+        if (!isApiRecord(payload)) throw new Error("Place search is temporarily unavailable.");
         const results = Array.isArray(payload.results) ? payload.results : [];
         setPredictions(results);
         setSearchNotice(results.length === 0 ? "No matching places found. Try a more specific search." : "");
@@ -344,6 +346,8 @@ function RouteEditor({
   const [routeIdEdited, setRouteIdEdited] = useState(Boolean(initial.routeId));
   const saveOperationRef = useRef<{ payload: string; saveId: string } | null>(null);
   const editorId = useId();
+  const draftKey = (draft: EditorState) => JSON.stringify([draft.routeId, draft.name, draft.color, draft.stops]);
+  useUnsavedChanges(draftKey(state) !== draftKey(initial));
 
   const setField = <K extends keyof EditorState>(k: K, v: EditorState[K]) =>
     setState(s => ({ ...s, [k]: v }));
@@ -711,9 +715,10 @@ export default function RouteManagementPanel() {
         : 0,
     });
 
-  const handleSaved = () => {
-    setEditor(null);
-    setSuccessMsg(editor?.mode === "edit" ? "Route updated!" : "Route deployed!");
+  const handleSaved = (savedEditor: EditorState) => {
+    // A save that outlives its cancelled editor must not close a newer draft.
+    setEditor(current => current === savedEditor ? null : current);
+    setSuccessMsg(savedEditor.mode === "edit" ? "Route updated!" : "Route deployed!");
     if (successTimerRef.current) clearTimeout(successTimerRef.current);
     successTimerRef.current = setTimeout(() => setSuccessMsg(""), 4000);
   };
@@ -738,6 +743,8 @@ export default function RouteManagementPanel() {
       });
       setDeleteRouteId(null);
     } catch (error: unknown) {
+      // Close the confirmation so its backdrop does not cover the error dialog.
+      setDeleteRouteId(null);
       setPanelAlertMsg("Failed to delete: " + errorMessage(error));
     } finally {
       setIsDeleting(false);
@@ -745,7 +752,7 @@ export default function RouteManagementPanel() {
   };
 
   if (editor) {
-    return <RouteEditor initial={editor} onSaved={handleSaved} onCancel={() => setEditor(null)} />;
+    return <RouteEditor initial={editor} onSaved={() => handleSaved(editor)} onCancel={() => setEditor(null)} />;
   }
 
   const selectedRouteName = deleteRouteId ? (routes.find(r => r.id === deleteRouteId)?.name ?? deleteRouteId) : "";

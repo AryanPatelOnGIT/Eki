@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import WorkspaceLink from "@/components/shared/WorkspaceLink";
+import ConfirmModal from "@/components/ui/ConfirmModal";
+import { hasUnsavedChanges } from "@/lib/unsavedChanges";
 import {
   MapPinned as MapIcon,
   BusFront as BusIcon,
@@ -40,8 +42,14 @@ const TABS: { id: AdminTab; label: string; Icon: React.FC<{ className?: string }
 export default function AdminPage() {
   const tabButtons = useRef(new Map<AdminTab, HTMLButtonElement>());
   const [activeTab, setActiveTab] = useState<AdminTab>("operations");
+  const [pendingTab, setPendingTab] = useState<AdminTab | null>(null);
 
   const selectTab = (tab: AdminTab) => {
+    // Leaving a section unmounts its editor, so confirm before dropping a draft.
+    if (tab !== activeTab && hasUnsavedChanges()) {
+      setPendingTab(tab);
+      return;
+    }
     setActiveTab(tab);
   };
 
@@ -117,6 +125,20 @@ export default function AdminPage() {
       >
         {renderPanel(activeTab)}
       </div>
+
+      <ConfirmModal
+        isOpen={pendingTab !== null}
+        title="Discard unsaved changes?"
+        description="Leaving this section discards the changes you have not saved."
+        confirmText="Discard changes"
+        cancelText="Keep editing"
+        variant="warning"
+        onConfirm={() => {
+          if (pendingTab) setActiveTab(pendingTab);
+          setPendingTab(null);
+        }}
+        onCancel={() => setPendingTab(null)}
+      />
     </main>
   );
 }

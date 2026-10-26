@@ -31,13 +31,18 @@ async function syncUser(uid: string): Promise<boolean> {
     const driverAssignment = role === "driver"
       ? await db.collection("drivers").where("authUid", "==", uid).limit(2).get()
       : null;
-    if (role === "driver" && driverAssignment?.size !== 1) {
+    // An unusable driver record must still drop stale elevated claims (for
+    // example a demoted administrator) and route mirrors before failing.
+    const failDriverClosed = async (message: string, driverId?: string): Promise<never> => {
       await publishUserAuthorization(uid, { ...preservedClaims, role: "driver" });
       await settleTogether(
-        [...new Set([uid, previousDriverId].filter(Boolean))]
-          .map((driverId) => rtdb.ref(`driverRouteAssignments/${driverId}`).remove()),
+        [...new Set([uid, previousDriverId, driverId].filter(Boolean))]
+          .map((id) => rtdb.ref(`driverRouteAssignments/${id}`).remove()),
       );
-      throw new Error("Driver must have exactly one authUid assignment.");
+      throw new Error(message);
+    };
+    if (role === "driver" && driverAssignment?.size !== 1) {
+      await failDriverClosed("Driver must have exactly one authUid assignment.");
     }
 
     const driver = driverAssignment?.docs[0];
@@ -45,7 +50,7 @@ async function syncUser(uid: string): Promise<boolean> {
     let routeAssignments: Record<string, true> | undefined;
     if (role === "driver" && assignedBusId !== null) {
       if (typeof assignedBusId !== "string" || !SAFE_ID.test(assignedBusId)) {
-        throw new Error("Driver has no valid bus assignment.");
+        await failDriverClosed("Driver has no valid bus assignment.", driver?.id);
       }
       const bus = await db.collection("buses").doc(assignedBusId).get();
       const busData = bus.data();
@@ -58,7 +63,7 @@ async function syncUser(uid: string): Promise<boolean> {
         (routeId): routeId is string => typeof routeId === "string" && SAFE_ID.test(routeId),
       );
       if (!bus.exists || validRouteIds.length === 0) {
-        throw new Error(`Assigned bus ${assignedBusId} has no valid routes.`);
+        await failDriverClosed(`Assigned bus ${assignedBusId} has no valid routes.`, driver?.id);
       }
       routeAssignments = Object.fromEntries(validRouteIds.map((routeId) => [routeId, true]));
     }

@@ -144,6 +144,15 @@ describe("POST /api/plan directional geometry", () => {
     expect(reverse.polyline).toBe(reversePolyline);
   });
 
+  it("explains a route without stops to riders without operator instructions", async () => {
+    harness.routes.set("stopless_route", {
+      id: "stopless_route", name: "Stopless", color: "#000", stops: [], waypoints: [], polyline: forwardPolyline,
+    });
+    const response = await plan("stopless_route", "a", "z") as { status: number; error?: string };
+    expect(response.status).toBe(422);
+    expect(response.error).toBe("This route has no stops configured yet.");
+  });
+
   it("still rejects a route with no decodable geometry", async () => {
     harness.routes.set("empty_route", {
       id: "empty_route",

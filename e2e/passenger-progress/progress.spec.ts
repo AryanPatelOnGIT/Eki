@@ -71,8 +71,8 @@ test("destination ETA, passed stops, segmented road and one bus glyph stay consi
     })).toBe(true);
   }
   await expect(page.locator('[data-road-color="#71717a"]')).toHaveCount(1);
-  await expect(page.locator('[data-road-color="#3b82f6"]')).toHaveCount(1);
-  await expect(page.locator('[data-road-color="#22c55e"]')).toHaveCount(1);
+  await expect(page.locator('[data-road-color="#3b82f6"]')).toHaveCount(2);
+  await expect(page.locator('[data-road-color="#22c55e"]')).toHaveCount(0);
   await expect(page.getByLabel("Beta — passed", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
   await page.screenshot({ path: info.outputPath("destination-etas.png"), fullPage: true });
@@ -88,4 +88,35 @@ test("destination ETA, passed stops, segmented road and one bus glyph stay consi
   await picker.click();
   await expect(page.getByRole("option", { name: "Gamma" })).toContainText(/min/);
   await expect(page.getByRole("option", { name: "Delta" })).not.toContainText("Signal delayed");
+});
+
+test("a detour replaces the original future road, retains covered road and restores configured tracking on rejoin", async ({ page }, info) => {
+  await page.goto("/");
+  const grey = page.locator('[data-road-color="#71717a"] polyline');
+  // Wait for the initial confident match, rather than sampling its stop-only
+  // first render before the marker selection has settled.
+  await expect.poll(async () => (await grey.getAttribute("points"))?.trim().split(/\s+/).length).toBe(3);
+  const before = await grey.getAttribute("points");
+  const configured = await page.locator('[data-road-color="#3b82f6"] polyline').first().getAttribute("points");
+  await page.getByRole("button", { name: "Publish uncertain fix", exact: true }).click();
+  await expect(grey).toHaveAttribute("points", before!);
+  await page.getByRole("button", { name: "Publish pending detour", exact: true }).click();
+  await expect(page.locator('[data-road-color="#3b82f6"]')).toHaveCount(0);
+  await expect(grey).toHaveAttribute("points", before!);
+  const picker = page.getByRole("combobox", { name: "Destination station" });
+  await picker.click();
+  await expect(page.getByRole("option", { name: "Delta" })).toContainText("Route unavailable");
+  await picker.press("Escape");
+  await page.getByRole("button", { name: "Publish detour", exact: true }).click();
+  await expect(page.locator('[data-road-color="#3b82f6"]')).toHaveCount(2);
+  await expect(grey).toHaveAttribute("points", before!);
+  for (const line of await page.locator('[data-road-color="#3b82f6"] polyline').all()) {
+    expect(await line.getAttribute("points")).not.toBe(configured);
+  }
+  await picker.click();
+  await expect(page.getByRole("option", { name: "Delta" })).toContainText(/min/);
+  await picker.press("Escape");
+  await page.screenshot({ path: info.outputPath("detour-blue-with-retained-grey.png"), fullPage: true });
+  await page.getByRole("button", { name: "Publish fresh fix", exact: true }).click();
+  await expect(page.locator('[data-road-color="#3b82f6"] polyline').first()).toHaveAttribute("points", configured!);
 });

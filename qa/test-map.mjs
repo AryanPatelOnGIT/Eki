@@ -1,3 +1,4 @@
+import { automaticServiceTestMap } from './automatic-service-test-map.mjs';
 import { gnssTestMap } from './gnss-test-map.mjs';
 import { emulatorTestMap } from './emulator-test-map.mjs';
 import { browserTestMap } from './browser-test-map.mjs';
@@ -91,4 +92,4 @@ export const testMap = mergeTestMaps([{
     level: 'L1',
     semantics: 'Both HTTP handlers acknowledge boarding and record membership for numeric zero bus/passenger coordinates using mocked storage.',
   }],
-}], gnssTestMap, emulatorTestMap, browserTestMap, mutationTestMap, apiTestMap, nativeTestMap, reviewedUnitTestMap, routingTestMap, productionAuditTestMap);
+}], gnssTestMap, emulatorTestMap, browserTestMap, mutationTestMap, apiTestMap, nativeTestMap, reviewedUnitTestMap, routingTestMap, productionAuditTestMap, automaticServiceTestMap);

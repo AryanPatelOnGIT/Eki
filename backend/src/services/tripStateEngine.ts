@@ -78,6 +78,8 @@ interface TelemetrySample {
   timestamp: number;
   lat: number;
   lng: number;
+  gpsHdop?: number | null;
+  motionState?: "moving" | "stopped" | "uncertain";
 }
 interface RideCheckpoint {
   tripState: "pre_departure" | "in_service";
@@ -95,10 +97,12 @@ export function lifecycleDirection(data: Record<string, unknown>) {
 /**
  * Parses an environment-derived interval with a fallback and a lower bound.
  *
- * Returns `fallback` when `value` is not a finite number or is below
- * `minimum`; otherwise the floored parsed value.
+ * Returns `fallback` when `value` is blank, not a finite number or below
+ * `minimum`; otherwise the floored parsed value. `Number("")` is 0, so a
+ * blank value must be rejected before parsing.
  */
-function readIntervalMs(value: string | undefined, fallback: number, minimum: number): number {
+export function readIntervalMs(value: string | undefined, fallback: number, minimum: number): number {
+  if (!value?.trim()) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= minimum ? Math.floor(parsed) : fallback;
 }
@@ -913,7 +917,7 @@ export function startTripStateEngine(): () => Promise<void> {
       lat: data.lat,
       lng: data.lng,
       previousPosition: previousTelemetry
-        ? { lat: previousTelemetry.lat, lng: previousTelemetry.lng }
+        ? previousTelemetry
         : undefined,
       motionState: data.motionState || "moving",
       currentTripState: data.tripState || "pre_departure",
@@ -1197,7 +1201,8 @@ export function startTripStateEngine(): () => Promise<void> {
     }
 
     if (isNewTelemetry) {
-      processedTelemetry.set(nodeKey, { timestamp: telemetryTimestamp, lat: data.lat, lng: data.lng, sessionId: data.sessionId, direction });
+      processedTelemetry.set(nodeKey, { timestamp: telemetryTimestamp, lat: data.lat, lng: data.lng,
+        gpsHdop: data.gpsHdop, motionState: data.motionState, sessionId: data.sessionId, direction });
     }
     persistFleetState({ ...data, tripState }, new Date().toISOString());
   };

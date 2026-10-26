@@ -201,6 +201,19 @@ describe("live bus listener recovery", () => {
     expect(second).not.toHaveBeenCalled();
   });
 
+  it("keeps a repeated stale dispose from evicting the route's newer shared store", async () => {
+    const { onValue } = await import("firebase/database"); vi.mocked(onValue).mockClear();
+    const { subscribeLiveBusesByRoute } = await import("./liveBusStore");
+    const disposeFirst = subscribeLiveBusesByRoute("A", vi.fn()); await flushPromises();
+    disposeFirst();
+    const disposeSecond = subscribeLiveBusesByRoute("A", vi.fn()); await flushPromises();
+    disposeFirst();
+    const disposeThird = subscribeLiveBusesByRoute("A", vi.fn()); await flushPromises();
+    expect(vi.mocked(onValue).mock.calls.filter(([reference]) =>
+      (reference as unknown as { path: string }).path === "publicRouteBuses/route:A/buses")).toHaveLength(2);
+    disposeSecond(); disposeThird();
+  });
+
   it("does not replay another auth generation's route cache while verification is pending", async () => {
     const { subscribeLiveBusesByRoute } = await import("./liveBusStore");
     const first = vi.fn(); const dispose = subscribeLiveBusesByRoute("A", first); await flushPromises();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BUS_EXPIRY_MS } from "./liveBusFreshness";
+import { filterActiveBusEntries } from "./activeBusEntries";
 import {
   ACTIVE_RIDE_RETENTION_MS,
   millisecondsUntilNextPrune,
@@ -51,6 +52,22 @@ describe("live bus snapshot expiry", () => {
     expect(pruneExpiredLiveBuses(snapshot, now)).toEqual({
       active: snapshot.active,
     });
+  });
+
+  it("does not retain a stale active ride without a non-empty session", () => {
+    const snapshot: LiveBusSnapshot = {
+      emptySession: {
+        busId: "bus_1",
+        timestamp: now - BUS_EXPIRY_MS,
+        status: "active",
+        sessionId: "",
+        tripState: "in_service",
+      },
+    };
+
+    expect(pruneExpiredLiveBuses(snapshot, now)).toEqual({});
+    expect(millisecondsUntilNextPrune(snapshot, now)).toBe(0);
+    expect(filterActiveBusEntries(snapshot, now)).toEqual([]);
   });
 
   it("removes a completed ride immediately even if its final fix is fresh", () => {

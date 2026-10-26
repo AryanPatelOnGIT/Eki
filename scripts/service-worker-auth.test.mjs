@@ -42,5 +42,6 @@ it("keeps Auth helpers on the network and retires only their obsolete cache", as
   let cleanup;
   events.get("activate")({ waitUntil: promise => { cleanup = promise; } });
   await cleanup;
-  assert.deepEqual(deleted, ["eki-firebase-sdk"]);
+  // Deployment-scoped navigation HTML is also retired; static caches stay.
+  assert.deepEqual(deleted, ["eki-firebase-sdk", "eki-navigations"]);
 });

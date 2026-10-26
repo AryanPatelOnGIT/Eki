@@ -13,9 +13,11 @@ function scope(routeId?: string): Store {
   if (routeId !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(routeId)) throw new Error("Invalid live route ID.");
   let store = scopes.get(key);
   if (!store) {
-    store = createLiveBusStore(routeId ? `publicRouteBuses/route:${routeId}/buses` : "publicRouteBuses",
-      !routeId, () => { scopes.delete(key); });
-    scopes.set(key, store);
+    // A late idle callback from a replaced store must not evict its successor.
+    const created: Store = createLiveBusStore(routeId ? `publicRouteBuses/route:${routeId}/buses` : "publicRouteBuses",
+      !routeId, () => { if (scopes.get(key) === created) scopes.delete(key); });
+    scopes.set(key, created);
+    store = created;
   }
   return store;
 }

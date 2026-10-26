@@ -37,6 +37,20 @@ void test_gnss_fix_requires_fresh_coherent_fields() {
   TEST_ASSERT_FALSE(gnssFixFieldsAreFresh(true, 0, true, 0, false, 0, true, stale));
 }
 
+void test_out_of_range_coordinates_are_not_a_fix() {
+  // TinyGPS++ accepts any checksummed DDMM digits, so 9500.0000,N becomes 95.
+  // The backend rejects such samples with 400, which costs a 30 s retry pause.
+  TEST_ASSERT_TRUE(coordinatesAreValid(23.0, 72.0));
+  TEST_ASSERT_TRUE(coordinatesAreValid(-90.0, -180.0));
+  TEST_ASSERT_TRUE(coordinatesAreValid(90.0, 180.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(95.0, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(-90.5, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, 185.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, -180.5));
+  TEST_ASSERT_FALSE(coordinatesAreValid(NAN, 72.0));
+  TEST_ASSERT_FALSE(coordinatesAreValid(23.0, INFINITY));
+}
+
 void test_implausible_speed_is_rejected_instead_of_clamped() {
   TEST_ASSERT_TRUE(speedIsPlausible(0.0));
   TEST_ASSERT_TRUE(speedIsPlausible(200.0));
@@ -45,6 +59,35 @@ void test_implausible_speed_is_rejected_instead_of_clamped() {
   TEST_ASSERT_FALSE(speedIsPlausible(NAN));
   TEST_ASSERT_FALSE(speedIsPlausible(INFINITY));
   TEST_ASSERT_FALSE(speedIsPlausible(-INFINITY));
+}
+
+void test_receiver_hdop_must_fit_the_telemetry_contract() {
+  // TinyGPS++ stores HDOP as a signed decimal, so a checksummed "-1.5" is
+  // committed as valid. The backend rejects gpsHdop < 0 with 400.
+  TEST_ASSERT_TRUE(gnssHdopIsAcceptable(0.0));
+  TEST_ASSERT_TRUE(gnssHdopIsAcceptable(GNSS_HDOP_MAX));
+  TEST_ASSERT_FALSE(gnssHdopIsAcceptable(GNSS_HDOP_MAX + 0.01));
+  TEST_ASSERT_FALSE(gnssHdopIsAcceptable(-0.01));
+  TEST_ASSERT_FALSE(gnssHdopIsAcceptable(-1.5));
+  TEST_ASSERT_FALSE(gnssHdopIsAcceptable(NAN));
+  TEST_ASSERT_FALSE(gnssHdopIsAcceptable(INFINITY));
+}
+
+void test_stale_receiver_fix_latches_invalid_before_millis_rollover() {
+  bool valid = true;
+  const uint32_t observedAt = 1000;
+  TEST_ASSERT_TRUE(latchFreshness(valid, observedAt, observedAt + 2000, 2000));
+  TEST_ASSERT_FALSE(latchFreshness(valid, observedAt, observedAt + 2001, 2000));
+  // One 32-bit millis() cycle later the subtraction looks fresh again. The
+  // latched result must not resurrect a fix the receiver never refreshed.
+  const uint32_t wrapped = observedAt + 500;
+  TEST_ASSERT_TRUE(static_cast<uint32_t>(wrapped - observedAt) <= 2000);
+  TEST_ASSERT_FALSE(latchFreshness(valid, observedAt, wrapped, 2000));
+  TEST_ASSERT_FALSE(valid);
+
+  bool rolledFresh = true;
+  TEST_ASSERT_TRUE(latchFreshness(rolledFresh, UINT32_MAX - 500, 1000, 2000));
+  TEST_ASSERT_TRUE(rolledFresh);
 }
 
 void test_motion_hysteresis_filters_single_noisy_readings() {
@@ -671,7 +714,10 @@ int main(int, char **) {
   RUN_TEST(test_first_diagnostic_delay_is_rollover_safe_and_latched);
   RUN_TEST(test_haversine_and_heading_wrap);
   RUN_TEST(test_gnss_fix_requires_fresh_coherent_fields);
+  RUN_TEST(test_out_of_range_coordinates_are_not_a_fix);
   RUN_TEST(test_implausible_speed_is_rejected_instead_of_clamped);
+  RUN_TEST(test_receiver_hdop_must_fit_the_telemetry_contract);
+  RUN_TEST(test_stale_receiver_fix_latches_invalid_before_millis_rollover);
   RUN_TEST(test_motion_hysteresis_filters_single_noisy_readings);
   RUN_TEST(test_motion_hysteresis_requires_consecutive_qualifying_readings);
   RUN_TEST(test_telemetry_timing_policy_is_explicit_and_safe);

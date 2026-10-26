@@ -79,6 +79,17 @@ describe("bounded indexed stale scan", () => {
     f.advance(500); await f.sweeper.tick(); expect(f.reads).toHaveLength(3);
     f.advance(500); await f.sweeper.tick(); expect(f.reads).toHaveLength(4);
   });
+  it("keeps sweeping after the wall clock steps backwards past a scheduled wait", async () => {
+    const f = fixture({ first: { timestamp: 1, status: "offline" } });
+    await f.sweeper.tick(); expect(f.data.first).toBeUndefined(); expect(f.sweeper.snapshot().cycles).toBe(1);
+    f.advance(-50_000); f.data.second = { timestamp: 1, status: "offline" };
+    f.advance(2000); await f.sweeper.tick();
+    expect(f.data.second).toBeUndefined();
+    f.state.readFail = true; f.advance(2000); await f.sweeper.tick(); expect(f.sweeper.snapshot().failed).toBe(1);
+    f.advance(-50_000); f.data.third = { timestamp: 1, status: "offline" };
+    f.advance(2000); await f.sweeper.tick();
+    expect(f.data.third).toBeUndefined();
+  });
   it("stops new writes and pages after shutdown", async () => {
     const f = fixture({ bus: { timestamp: 1, status: "offline" } });
     const pending = f.sweeper.tick(); f.sweeper.stop(); await pending;

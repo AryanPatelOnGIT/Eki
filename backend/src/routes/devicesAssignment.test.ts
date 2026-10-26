@@ -54,6 +54,13 @@ describe("device assignment HTTP retirement", () => {
     expect(harness.device.routeId).toBe("old");
     expect(harness.retire).not.toHaveBeenCalled();
   });
+  it("keeps a disabled device disabled when a reassignment omits enabled", async () => {
+    harness.device.enabled = false;
+    const response = await fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ busId: "bus", routeId: "new" }) });
+    expect(response.status).toBe(200);
+    expect(harness.device).toMatchObject({ routeId: "new", enabled: false });
+  });
   it("invalidates credentials and retires old presence before acknowledging", async () => {
     expect((await assign()).status).toBe(200);
     expect(harness.device).toMatchObject({ routeId: "new", assignmentRevision: 2 });

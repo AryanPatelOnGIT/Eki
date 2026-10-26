@@ -194,8 +194,15 @@ export default function RideHistoryPanel() {
     [armedSessions, startedSessions, historyLimit],
   );
   const sessionsLoading = armedSessionsLoading || startedSessionsLoading;
+  // Rides already shown stay on screen while a larger page subscribes.
+  const [ridesBeforeOlderPage, setRidesBeforeOlderPage] = useState<RideSession[] | null>(null);
+  // Drop the snapshot once the larger page settles, so a later reload can't resurface it.
+  if (ridesBeforeOlderPage !== null && !sessionsLoading) setRidesBeforeOlderPage(null);
+  const loadingOlderRides = sessionsLoading && ridesBeforeOlderPage !== null;
+  const shownSessions = loadingOlderRides ? ridesBeforeOlderPage : sessions;
   const sessionsError = armedSessionsError ?? startedSessionsError;
   const retrySessions = () => {
+    setRidesBeforeOlderPage(null);
     retryArmedSessions();
     retryStartedSessions();
   };
@@ -277,7 +284,7 @@ export default function RideHistoryPanel() {
     }
   };
 
-  if (sessionsLoading || busesLoading || routesLoading || driversLoading) {
+  if ((sessionsLoading && !loadingOlderRides) || busesLoading || routesLoading || driversLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="size-8 animate-spin text-brand-accent" />
@@ -313,12 +320,12 @@ export default function RideHistoryPanel() {
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4 animate-slide-up sm:p-6">
       <h2 ref={historyHeadingRef} tabIndex={-1} className="mb-4 text-balance text-xl font-bold text-white">Ride History</h2>
       {deleteNotice && <p role="status" className="text-sm text-emerald-300">{deleteNotice}</p>}
-      {sessions.length === 0 ? (
+      {shownSessions.length === 0 ? (
         <div className="py-10 text-center text-sm text-white/50">
           No rides recorded yet.
         </div>
       ) : (
-        sessions.map((session) => {
+        shownSessions.map((session) => {
           const passengers = passengerRecords(session.passengers);
           const stopsReached = stopRecords(session.stopsReached);
           const status = STATUS_CONFIG[session.status] ?? STATUS_CONFIG.failed;
@@ -531,8 +538,12 @@ export default function RideHistoryPanel() {
           );
         })
       )}
-      {(armedSessions.length === historyLimit || startedSessions.length === historyLimit) && <button
-        type="button" className="min-h-10 text-sm text-sky-300" onClick={() => setHistoryLimit(limit => limit + 100)}>
+      {loadingOlderRides ? <p role="status" className="min-h-10 text-sm text-white/50">Loading older rides…</p>
+        : (armedSessions.length === historyLimit || startedSessions.length === historyLimit) && <button
+        type="button" className="min-h-10 text-sm text-sky-300" onClick={() => {
+          setRidesBeforeOlderPage(sessions);
+          setHistoryLimit(limit => limit + 100);
+        }}>
         Load older rides
       </button>}
     </div>

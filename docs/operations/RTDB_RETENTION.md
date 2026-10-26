@@ -1,6 +1,6 @@
 # RTDB legacy and geometry retention
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Issue [214](https://github.com/notnamansinha/Eki/issues/214). Retention is 180 days.
 The RTDB sweep and resumable Firestore history deletion are implemented on
@@ -49,6 +49,11 @@ Firestore transactions establish the same observation window across replicas.
 An RTDB transaction deletes only the unchanged fingerprint. Failure leaves the
 record/inventory available for the next sweep; missing-record inventory is
 cleaned on subsequent runs. Sweeps page through keys, outside telemetry requests.
+
+The scheduled sweep settles every Firestore retention category before this RTDB
+sweep runs, so one failing category cannot skip RTDB cleanup or stop the other
+categories from being observed. Failures are rethrown afterwards (several as an
+`AggregateError`) and logged by the scheduler.
 
 ## Geometry lifetime and pointer safety
 

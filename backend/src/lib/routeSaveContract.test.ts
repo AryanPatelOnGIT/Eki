@@ -23,6 +23,14 @@ describe("route save contract", () => {
     expect(decideRouteSaveOperation(operation, "hash", 200)).toEqual({ kind: "claim" });
   });
 
+  it("reclaims an unknown-outcome failure but replays a definitive one", () => {
+    const unknown = { payloadHash: "hash", status: "failed", httpStatus: 503, error: { code: "ROUTE_PERSISTENCE_FAILED", outcomeUnknown: true } };
+    expect(decideRouteSaveOperation(unknown, "hash", 100)).toEqual({ kind: "claim" });
+    expect(decideRouteSaveOperation(unknown, "other", 100)).toEqual({ kind: "conflict" });
+    const definitive = { payloadHash: "hash", status: "failed", httpStatus: 409, error: { code: "STALE_ROUTE_VERSION" } };
+    expect(decideRouteSaveOperation(definitive, "hash", 100)).toMatchObject({ kind: "failed", httpStatus: 409 });
+  });
+
   it("treats legacy route documents as version zero", () => {
     expect(routeDocumentVersion(undefined)).toBe(0);
     expect(routeDocumentVersion({})).toBe(0);

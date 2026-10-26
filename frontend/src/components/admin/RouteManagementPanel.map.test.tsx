@@ -109,4 +109,13 @@ describe("route editor map and place interaction contracts", { timeout: 15_000 }
     expect(new Headers(fetchMock.mock.calls[1][1].headers).get("Authorization")).toBe("Bearer test-token");
     expect(sdk.save.mock.calls[0][2].stops[0]).toMatchObject({ name: "Provider stop", lat: 23.04, lng: 72.04 });
   });
+
+  it("reports a null place search body as unavailable instead of a raw script error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("null", { status: 200 })));
+    const user = await create();
+    await user.type(screen.getByRole("searchbox", { name: "Search for a stop" }), "null body");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Place search is temporarily unavailable.");
+    expect(screen.queryByText(/No matching places/)).toBeNull();
+  });
 });

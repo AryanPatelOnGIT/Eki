@@ -1,6 +1,6 @@
 # Production audit validation fixtures
 
-Last updated: 2026-10-20 22:28 IST (UTC+05:30).
+Last updated: 2026-10-26 06:00 IST (UTC+05:30).
 
 Run `npx playwright test --config playwright.production-audit.config.ts` from the
 repository root. Port 3123 is reserved for this isolated Vite fixture. Chromium
@@ -27,5 +27,12 @@ not a universal assessment of every provider surface or theme.
 Additional checks use the production-default 300-second expiry, inject 90.001-,
 120- and 200-second-old telemetry, and verify matching delayed warnings plus fresh
 recovery without reload. A denied passenger detail subscription shows a distinct
-live-data error and clears after a new authoritative delivery. These synthetic
+live-data error and clears after a new authoritative delivery.
+
+`resilience.spec.ts` (13 cases per viewport) intercepts place search and route
+save/delete HTTP: 4xx/5xx, HTML gateway and malformed bodies, a stale slow
+response, offline search, rate limiting, hostile place names, a dropped save that
+reconciles with the same `saveId`, a double-activated Update that sends one PUT,
+and a failed deletion whose reason is dismissable. Passenger cases cover offline
+toggles, 320–1024 px resizes, two tabs, reload and back/forward. These synthetic
 callbacks do not certify real Firebase reconnects, permissions or GNSS quality.

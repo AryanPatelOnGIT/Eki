@@ -12,7 +12,8 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 function argument(name: string): string {
   const index = process.argv.indexOf(`--${name}`);
   const value = index >= 0 ? process.argv[index + 1] : "";
-  if (!SAFE_ID.test(value ?? "")) {
+  // SAFE_ID admits "--flag", so a missing value must not consume the next flag.
+  if (!SAFE_ID.test(value ?? "") || value.startsWith("--")) {
     throw new Error(`Missing or invalid --${name}.`);
   }
   return value;
