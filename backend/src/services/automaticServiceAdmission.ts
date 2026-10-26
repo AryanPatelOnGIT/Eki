@@ -72,12 +72,22 @@ async function admit(assignment:DeviceAssignment) {
   });
 }
 
+function admissionKey(assignment:DeviceAssignment):string {
+  return `${assignment.busId}/${assignment.routeId}/${assignment.deviceId}/${assignment.assignmentRevision??0}`;
+}
+
+/** True while an attempt is running or backing off, so callers can skip work that only leads back here. */
+export function isAutomaticServiceAdmissionDeferred(assignment:DeviceAssignment):boolean {
+  const key=admissionKey(assignment);
+  return pending.has(key) || (retryAt.get(key)??0)>performance.now();
+}
+
 /** One bounded startup attempt per bus; fresh position publication never awaits it. */
 export function scheduleAutomaticServiceAdmission(assignment:DeviceAssignment,sample:TelemetryPayload):void {
   const now=Date.now();
   if (now-sample.timestamp>60000 || sample.timestamp>now+10000 || typeof sample.gpsHdop!=="number" ||
       !Number.isFinite(sample.gpsHdop) || sample.gpsHdop<0 || sample.gpsHdop>4 || sample.motionState==="uncertain") return;
-  const key=`${assignment.busId}/${assignment.routeId}/${assignment.deviceId}/${assignment.assignmentRevision??0}`;
+  const key=admissionKey(assignment);
   if (pending.has(key)) { latest.set(key,{assignment,sample}); return; }
   if ((retryAt.get(key)??0)>performance.now()) return;
   if (retryAt.size>=1000) retryAt.delete(retryAt.keys().next().value!);
