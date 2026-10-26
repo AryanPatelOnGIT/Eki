@@ -501,6 +501,8 @@ function PassengerMapInner({
   const firstBusMarker = useLiveBusMarkerPosition(firstBus);
   const estimatesUnavailable = liveReadFailed || !liveUpdatesAvailable ? "Updates unavailable"
     : signalLostBuses.length === buses.size && buses.size > 0 ? "Signal delayed"
+    // Paused automatic service has fresh location but no live ride progress.
+    : buses.size > 0 && [...buses.values()].every(bus => bus.automaticServicePaused === true) ? "Tracking paused"
     : preview ? (firstBus?.sessionId ? "Direction pending" : "Service not started")
     : buses.size === 0 ? "Waiting for bus"
     : progressBus && activeBusStopIndex === undefined ? "Stop progress unavailable"

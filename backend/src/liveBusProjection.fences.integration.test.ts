@@ -121,7 +121,9 @@ integration("R14 actual SDK publisher fences, recovery and listener isolation", 
     await realtime.ref("activeBuses/busA_routeA").set(live());
     await realtime.ref("liveRouteCatalog").set({ _workerGeneration: 3, values: { "route:routeA": { active: 0, available: 2, freshestAt: 1, availableReceipts: [1] } }, revisions: { "route:routeA": 5 } });
     await start(4);
-    expect(await read("liveRouteCatalog/values/route:routeA")).toMatchObject({ active: 1, available: 0, freshestAt: 0 });
+    const catalog = await read("liveRouteCatalog/values/route:routeA");
+    expect(catalog).toMatchObject({ active: 1, available: 0, freshestAt: catalog.activeReceipts[0] });
+    expect(catalog.activeReceipts).toHaveLength(1); expect(catalog.availableReceipts ?? []).toEqual([]);
     expect(await read("publicRouteBuses/route:routeA/buses/node:busA_routeA")).toMatchObject({ sessionId: "sessionA" });
   }, 30_000);
 
@@ -129,7 +131,9 @@ integration("R14 actual SDK publisher fences, recovery and listener isolation", 
     if (sourceExists) await realtime.ref("activeBuses/busA_routeA").set(live());
     await realtime.ref("liveRouteCatalog").set({ _workerGeneration: 4, generations: { "route:routeA": 4 }, values: { "route:routeA": { active: 8, available: 2, freshestAt: 1, availableReceipts: [1] } }, revisions: { "route:routeA": 5 } });
     await start(4);
-    expect(await read("liveRouteCatalog/values/route:routeA")).toMatchObject({ active: sourceExists ? 1 : 0, available: 0, freshestAt: 0 });
+    const catalog = await read("liveRouteCatalog/values/route:routeA");
+    expect(catalog).toMatchObject({ active: sourceExists ? 1 : 0, available: 0, freshestAt: sourceExists ? catalog.activeReceipts[0] : 0 });
+    expect(catalog.activeReceipts ?? []).toHaveLength(sourceExists ? 1 : 0); expect(catalog.availableReceipts ?? []).toEqual([]);
     expect(await read("liveRouteCatalog/generations/route:routeA")).toBe(4);
     expect((await read("publicRouteBuses/route:routeA"))?.revision).toBeGreaterThan(5);
     expect((await read("liveRouteCatalog/revisions/route:routeA"))).toBeGreaterThan(5);

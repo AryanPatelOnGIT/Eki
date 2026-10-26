@@ -118,6 +118,15 @@ describe("published passenger stop progress", () => {
     act(() => state.listener?.({ bus: { ...bus, timestamp: Date.now(), backendReceivedAt: Date.now() } }));
     expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ unavailable: undefined }));
   });
+  it("withholds stop ETAs while automatic service is paused and restores them on resume", () => {
+    const bus = { ...fixtureBus("forward"), currentStopIndex: 1 };
+    state.snapshot = { bus: { ...bus, automaticServicePaused: true } };
+    const changed = vi.fn();
+    render(<PassengerMap route={directed} targetStop={route.stops[1]} onStopEstimatesChange={changed} />);
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: {}, unavailable: "Tracking paused" }));
+    act(() => state.listener?.({ bus }));
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ minutes: { b: 1 }, unavailable: undefined }));
+  });
   it("renders one accessible bus glyph with no duplicate status or passenger-location marker", () => {
     const watchPosition = vi.fn(success => { success({ coords: { latitude: 24, longitude: 73 } }); return 1; });
     Object.defineProperty(navigator, "geolocation", { configurable: true, value: { watchPosition, clearWatch: vi.fn() } });
