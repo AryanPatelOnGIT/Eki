@@ -307,15 +307,18 @@ export default function PassengerWorkspace() {
   const busesOnRoute: VisibleBusData[] = [...activeBuses, ...availableBuses].filter(
     (bus) => bus.routeId === effectiveRouteId,
   );
-  const activeBusOnRoute =
+  const selectedBusOnRoute =
     busesOnRoute.find((bus) => bus.sessionId === trackedSessionId) ??
     busesOnRoute.find((bus) => passengerLiveBusSelectionKey(bus) === selectedLiveBusKey) ??
-    busesOnRoute.find((bus) => bus.busId === selectedBusId) ??
+    busesOnRoute.find((bus) => bus.busId === selectedBusId);
+  const activeBusOnRoute =
+    selectedBusOnRoute ??
     busesOnRoute.find((bus) => isPassengerBusSelectable(bus, availabilityNow)) ??
     busesOnRoute[0];
   // Pick a fresh bus for a new selection, then retain that identity through a
   // signal gap instead of silently moving an existing viewer to another bus.
-  if (currentView === "tracking" && activeBusOnRoute) {
+  // A fallback shown while the selected entry is absent never replaces it.
+  if (currentView === "tracking" && activeBusOnRoute && (selectedBusOnRoute || (!selectedLiveBusKey && !selectedBusId))) {
     const key = passengerLiveBusSelectionKey(activeBusOnRoute);
     if (key !== selectedLiveBusKey) { setSelectedLiveBusKey(key); setSelectedBusId(activeBusOnRoute.busId); }
   }
