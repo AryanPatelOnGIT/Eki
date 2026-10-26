@@ -196,6 +196,8 @@ export default function RideHistoryPanel() {
   const sessionsLoading = armedSessionsLoading || startedSessionsLoading;
   // Rides already shown stay on screen while a larger page subscribes.
   const [ridesBeforeOlderPage, setRidesBeforeOlderPage] = useState<RideSession[] | null>(null);
+  // Drop the snapshot once the larger page settles, so a later reload can't resurface it.
+  if (ridesBeforeOlderPage !== null && !sessionsLoading) setRidesBeforeOlderPage(null);
   const loadingOlderRides = sessionsLoading && ridesBeforeOlderPage !== null;
   const shownSessions = loadingOlderRides ? ridesBeforeOlderPage : sessions;
   const sessionsError = armedSessionsError ?? startedSessionsError;

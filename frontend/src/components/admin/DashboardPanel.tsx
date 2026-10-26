@@ -599,7 +599,7 @@ export default function DashboardPanel() {
     [activeEntries],
   );
   const dynamicGeometries = useDynamicRouteGeometries(activeEntriesMap);
-  const { drivers, error: driversError, retry: retryDrivers } = useDrivers();
+  const { drivers, error: driversError, retry: retryDrivers, loading: driversLoading } = useDrivers();
   const { routes, error: routesError, retry: retryRoutes } = useRoutes();
   const activeRouteOverlays = useMemo(() => {
     const overlays = new Map<string, {
@@ -709,6 +709,8 @@ export default function DashboardPanel() {
 
   const resumeAutomaticService = async (entry: ActiveBusEntry) => {
     if (resumeInFlight.current || !entry.routeId) return;
+    if (driversLoading) { setArmStatus("Operators are still loading. Try again in a moment."); return; }
+    if (driversError) { setArmStatus(driversError); return; }
     const operators = drivers.filter(driver => driver.assignedBusId === entry.busId);
     if (operators.length !== 1) { setArmStatus("Assign exactly one operator before resuming tracking."); return; }
     resumeInFlight.current = true;
@@ -801,10 +803,14 @@ export default function DashboardPanel() {
   const liveChatEntry = chatEntry
     ? activeEntries.find(entry => entry.busId === chatEntry.busId && entry.routeId === chatEntry.routeId)
     : undefined;
+  // While live data is unavailable a missing receiver is unknown, not gone, so
+  // the chat stays on its last snapshot instead of closing for good.
+  const liveDataUnavailable = isResuming || liveReadFailed;
+  const chatReceiver = liveChatEntry ?? (liveDataUnavailable ? chatEntry ?? undefined : undefined);
   // A chat whose receiver went offline, or whose ride was replaced, ends instead
   // of reopening later over whatever the admin is doing.
-  const chatOpen = Boolean(liveChatEntry && isLiveChatDeviceOnline(liveChatEntry)
-    && (!chatEntry?.sessionId || liveChatEntry.sessionId === chatEntry.sessionId));
+  const chatOpen = Boolean(chatReceiver && (liveDataUnavailable || (isLiveChatDeviceOnline(chatReceiver)
+    && (!chatEntry?.sessionId || chatReceiver.sessionId === chatEntry.sessionId))));
   if (chatEntry && !chatOpen) setChatEntry(null);
 
   return (
@@ -897,7 +903,7 @@ export default function DashboardPanel() {
           <h2 className="text-sm font-bold text-white">Automatic service</h2>
           <p className="mt-2 text-pretty text-xs text-white/60">Services start automatically when an assigned receiver sends a fresh, reliable GPS fix. Direction resolves at an endpoint or after a qualified departure.</p>
           <p className="mt-2 text-pretty text-xs text-white/45">An offline session is retained for recovery. Movement, stop arrivals and return services follow GNSS evidence.</p>
-          {activeEntries.filter(entry => entry.automaticServicePaused || entry.automaticServiceState === "paused").map(entry => <button key={entry.busId} type="button"
+          {activeEntries.filter(entry => entry.automaticServicePaused || entry.automaticServiceState === "paused").map(entry => <button key={`${entry.busId}_${entry.routeId}`} type="button"
             aria-label={`Resume automatic tracking for ${entry.busId}`} disabled={resumePending}
             onClick={() => void resumeAutomaticService(entry)}
             className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50">Resume tracking · {entry.busId}</button>)}
@@ -952,16 +958,16 @@ export default function DashboardPanel() {
           )}
         </div>
       </div>
-      {liveChatEntry && chatOpen && user?.uid && (
+      {chatReceiver && chatOpen && user?.uid && (
         <div className="fixed inset-0 z-[250] bg-black/70 pt-10 sm:p-10">
           <div className="mx-auto h-full max-w-2xl">
             <MessagingPanel
-              sessionId={liveChatEntry.sessionId ?? ""}
+              sessionId={chatReceiver.sessionId ?? ""}
               currentUserRole="admin"
               currentUserId={user.uid}
               isOverlay
               onClose={() => setChatEntry(null)}
-              unavailableMessage={liveChatEntry.sessionId ? undefined : "Waiting for automatic service setup for this assigned receiver."}
+              unavailableMessage={chatReceiver.sessionId ? undefined : "Waiting for automatic service setup for this assigned receiver."}
             />
           </div>
         </div>

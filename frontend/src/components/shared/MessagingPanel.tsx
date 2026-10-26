@@ -29,6 +29,10 @@ interface Message {
   timestamp: Timestamp | null;
 }
 
+function messageMillis(message: Message) {
+  return message.timestamp?.toMillis?.() ?? 0;
+}
+
 interface BaseProps {
   sessionId: string;
   currentUserRole: "passenger" | "admin";
@@ -62,6 +66,9 @@ export default function MessagingPanel({
   // null until the first snapshot: history loaded on open is already seen.
   // IDs, not a count: at the 200-message window a new message evicts an old one.
   const seenOthersRef = useRef<Set<string> | null>(null);
+  // Newest message shown from a cached snapshot before the server's baseline:
+  // anything from others the server adds after it arrived while chat was open.
+  const cachedNewestRef = useRef<{ ids: Set<string>; newest: number } | null>(null);
 
   // Messages belong to one session: after a session switch, prior-session
   // messages must not render as if they were the new session's chat (#47).
@@ -74,6 +81,7 @@ export default function MessagingPanel({
 
   useEffect(() => {
     seenOthersRef.current = null;
+    cachedNewestRef.current = null;
 
     if (!sessionId) return;
 
@@ -111,12 +119,23 @@ export default function MessagingPanel({
             if (onUnreadCountChange) {
               const othersIds = msgs.filter((m: Message) => m.senderId !== currentUserId).map(m => m.id);
               const seen = seenOthersRef.current;
-              const unseen = seen ? othersIds.filter(id => !seen.has(id)).length : 0;
+              const cached = cachedNewestRef.current;
+              const unseen = seen
+                ? othersIds.filter(id => !seen.has(id)).length
+                : !snapshot.metadata.fromCache && cached
+                  ? msgs.filter(m => m.senderId !== currentUserId && !cached.ids.has(m.id)
+                    && messageMillis(m) > cached.newest).length
+                  : 0;
               if (unseen > 0) onUnreadCountChange(unseen);
               // A partial cached snapshot must not become the baseline, or the
               // server's older history would then be counted as new.
               if (seen || !snapshot.metadata.fromCache) {
                 seenOthersRef.current = new Set([...(seen ?? []), ...othersIds]);
+              } else {
+                cachedNewestRef.current = {
+                  ids: new Set(msgs.map(m => m.id)),
+                  newest: Math.max(cached?.newest ?? 0, ...msgs.map(messageMillis)),
+                };
               }
             }
 

@@ -57,6 +57,19 @@ describe("ride-history controls", () => {
       expect(screen.queryByText("Loading older rides…")).toBeNull();
     } finally { state.sessions = original; }
   });
+  it("does not resurface the pre-page snapshot when the larger page later reloads", async () => {
+    const original = state.sessions;
+    try {
+      state.sessions = Array.from({ length: 101 }, (_, i) => ({ ...original[0], id: `ride-${i}` }));
+      state.pendingLimit = 200;
+      const view = render(<RideHistoryPanel />);
+      fireEvent.click(screen.getByText("Load older rides"));
+      state.pendingLimit = null; view.rerender(<RideHistoryPanel />);
+      state.pendingLimit = 200; view.rerender(<RideHistoryPanel />);
+      expect(screen.queryByText("Loading older rides…")).toBeNull();
+      expect(view.container.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(0);
+    } finally { state.sessions = original; }
+  });
   it("shows both persisted stop choices without inventing arrival time", async () => {
     state.sessions[0].passengers = [{ userId: "qa-user", userName: "QA Passenger", boardingStopId: "origin", alightingStopId: "destination", joinedAt: 1_750_000_010_000 }];
     render(<RideHistoryPanel />); await userEvent.setup().click(screen.getByRole("button", { expanded: false }));

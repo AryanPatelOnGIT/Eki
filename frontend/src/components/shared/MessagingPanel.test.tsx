@@ -61,6 +61,16 @@ describe("ride chat user workflows", () => {
     act(() => mocks.listen.mock.calls[0][2]({ docs: [...history, message("d4", "driver")], metadata: { fromCache: false } }));
     expect(onUnreadCountChange).toHaveBeenCalledExactlyOnceWith(1);
   });
+  it("counts a message that arrives between a cached snapshot and the server baseline as unread", async () => {
+    const onUnreadCountChange = vi.fn();
+    panel({ onUnreadCountChange });
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
+    const message = (id: string, at: number) => ({ id, data: () => ({ from: "driver", senderId: "driver", text: id, timestamp: { toMillis: () => at } }) });
+    const history = [message("d1", 1_000), message("d2", 2_000), message("d3", 3_000)];
+    act(() => mocks.listen.mock.calls[0][2]({ docs: history.slice(1), metadata: { fromCache: true } }));
+    act(() => mocks.listen.mock.calls[0][2]({ docs: [...history, message("d4", 4_000)], metadata: { fromCache: false } }));
+    expect(onUnreadCountChange).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it("counts a new message from others as unread once the chat window is full at 200 messages", async () => {
     const onUnreadCountChange = vi.fn();
     panel({ onUnreadCountChange });
