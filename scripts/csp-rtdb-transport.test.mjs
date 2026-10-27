@@ -49,7 +49,7 @@ for (const database of [undefined, 'https://demo-transport-default-rtdb.firebase
       // JSONP gadgets: www.google.com reflects ?callback= with attacker text and
       // RTDB REST answers /<path>.json?callback=. Only the /.lp transport path
       // of the configured instance may load scripts.
-      assert(!directives['script-src'].includes('https://www.google.com'), 'script-src must not allow the www.google.com JSONP host');
+      assert(!new Set(directives['script-src']).has('https://www.google.com'), 'script-src must not allow the www.google.com JSONP host');
       if (database) {
         assert(!directives['script-src'].includes(new URL(database).origin), 'the bare RTDB origin allows REST JSONP');
         assert(directives['script-src'].includes(`${new URL(database).origin}/.lp`));

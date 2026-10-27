@@ -126,7 +126,7 @@ beforeAll(async () => {
   process.env.GOOGLE_MAPS_API_KEY = "test-key";
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
-    if (url.includes("routes.googleapis.com")) {
+    if (new URL(url).hostname === "routes.googleapis.com") {
       return new Response(JSON.stringify({ routes: [{ polyline: { encodedPolyline: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" }, distanceMeters: 1000, duration: "100s" }] }), { status: 200 });
     }
     return realFetch(input as string, init);
