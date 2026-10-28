@@ -25,7 +25,7 @@ export default function PassengerLoadingShell() {
       </picture>
       <div className="pointer-events-none absolute inset-0 z-0 bg-black/40" />
 
-      <div className="absolute inset-0 z-10 flex flex-col pt-safe">
+      <div data-passenger-loading-placeholder className="absolute inset-0 z-10 flex flex-col pt-safe">
         <div
           className="shrink-0"
           style={passengerTopSpacerStyle}
@@ -59,7 +59,7 @@ export default function PassengerLoadingShell() {
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center pb-safe" aria-hidden="true">
+      <div data-passenger-loading-placeholder className="absolute inset-x-0 bottom-0 z-20 flex justify-center pb-safe" aria-hidden="true">
         <div
           className="flex w-full items-center justify-around rounded-t-[24px] border-t border-white/15 px-2 py-2.5"
           style={{ background: "rgba(22, 22, 26, 0.98)" }}

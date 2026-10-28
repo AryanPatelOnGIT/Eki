@@ -12,6 +12,7 @@ import { clearJoinedRidePointer, readJoinedRidePointer, saveJoinedRidePointer } 
 import { getAuthVerificationGeneration } from "@/lib/authState";
 import { PASSENGER_BUS_START_TIME } from "@/config/passenger";
 import { useSettings } from "@/hooks/useSettings";
+import { formatNoBusesSubMessage } from "@/lib/serviceMessages";
 import { isAuthoritativeLiveBusDelivery } from "@/lib/liveBusDelivery";
 import {
   passengerLiveBuses,
@@ -19,6 +20,7 @@ import {
   passengerTripStates,
   type PassengerLiveBus,
 } from "@/lib/passengerLiveBus";
+import { serverNow } from "@/lib/serverClock";
 import { useRTDBResume } from "@/hooks/useRTDBResume";
 import { isPassengerBusSelectable } from "@/lib/passengerAvailability";
 import {
@@ -97,7 +99,7 @@ export default function PassengerWorkspace() {
   const [selectedBusId, setSelectedBusId] = useState("");
   const [activeBuses, setActiveBuses] = useState<ActiveBusData[]>([]);
   const [availableBuses, setAvailableBuses] = useState<PassengerBusAvailability[]>([]);
-  const [availabilityNow, setAvailabilityNow] = useState(() => Date.now());
+  const [availabilityNow, setAvailabilityNow] = useState(() => serverNow());
   const [isMessagingOpen, setIsMessagingOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
@@ -195,7 +197,7 @@ export default function PassengerWorkspace() {
           Object.entries(rawSnapshot ?? {}).forEach(([key, value]) => rawLiveBusesRef.current.set(key, value));
           const merged = Object.fromEntries(rawLiveBusesRef.current);
           activeLiveBusesRef.current = new Map(
-            passengerLiveBuses(merged, Date.now()).map((bus) => [
+            passengerLiveBuses(merged, serverNow()).map((bus) => [
               passengerLiveBusSelectionKey(bus),
               bus,
             ]),
@@ -208,7 +210,7 @@ export default function PassengerWorkspace() {
             if (typeof oldBus.sessionId === "string") {
               latestTripStatesRef.current.delete(oldBus.sessionId);
             }
-            const oldNormalized = passengerLiveBuses({ [change.key]: previous }, Date.now())[0];
+            const oldNormalized = passengerLiveBuses({ [change.key]: previous }, serverNow())[0];
             if (oldNormalized) {
               activeLiveBusesRef.current.delete(passengerLiveBusSelectionKey(oldNormalized));
             }
@@ -217,7 +219,7 @@ export default function PassengerWorkspace() {
             rawLiveBusesRef.current.delete(change.key);
           } else {
             rawLiveBusesRef.current.set(change.key, change.value);
-            const nextBus = passengerLiveBuses({ [change.key]: change.value }, Date.now())[0];
+            const nextBus = passengerLiveBuses({ [change.key]: change.value }, serverNow())[0];
             if (nextBus) {
               activeLiveBusesRef.current.set(passengerLiveBusSelectionKey(nextBus), nextBus);
             }
@@ -235,7 +237,7 @@ export default function PassengerWorkspace() {
         setActiveBuses([...activeLiveBusesRef.current.values()]);
         setAvailableBuses(passengerBusAvailabilities(
           Object.fromEntries(rawLiveBusesRef.current),
-          Date.now(),
+          serverNow(),
         ));
         if (isAuthoritativeLiveBusDelivery(change.source)) {
           authoritative.add(routeId);
@@ -295,7 +297,7 @@ export default function PassengerWorkspace() {
   // Presence expires without another RTDB event after power/network loss.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const now = Date.now();
+      const now = serverNow();
       setAvailabilityNow(now);
       const next = passengerBusAvailabilities(Object.fromEntries(rawLiveBusesRef.current), now);
       setAvailableBuses(previous => reuseUnchangedAvailabilities(previous, next));
@@ -541,7 +543,7 @@ export default function PassengerWorkspace() {
                   <p className="text-[12px]" style={{ color: "var(--text-ghost)" }}>
                     {isResuming
                       ? "Unable to reach live data. Check your connection."
-                      : (settings.noBusesSubMessage || "Service starts at {time}").replace("{time}", settings.serviceStartTime || PASSENGER_BUS_START_TIME)}
+                      : formatNoBusesSubMessage(settings.noBusesSubMessage || "Service starts at {time}", settings.serviceStartTime || PASSENGER_BUS_START_TIME)}
                   </p>
                 </div>
               )}
