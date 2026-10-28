@@ -1,6 +1,6 @@
 # Eki campus bus tracking
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 Eki lets passengers find a campus bus, choose a destination, join a ride and follow its progress. Administrators manage routes, fleet assignments, ride operations, feedback and history.
 
@@ -62,8 +62,9 @@ flowchart LR
 - The protected device registry supplies the bus and route assignment. Hardware cannot choose its assignment or write Firebase directly.
 - The backend advances only the next ordered stop. The final stop completes a ride; ending it early records `interrupted`.
 - A bus lock prevents concurrent rides on one physical bus. Durable ride state supports recovery after network, browser, device or backend interruptions.
-- Fresh stopped endpoint evidence can arm the opposite direction after the configured dwell. Device presence alone does not mean passenger service has started.
-- Live maps use shared Firebase subscriptions. Admin feedback is a bounded HTTP read; commands and mutations use authenticated HTTP endpoints.
+- Routine service starts automatically from a qualified device GNSS fix on a fully assigned bus/route; manual start/resume remains through the protected session API. Fresh stopped endpoint evidence can arm the opposite direction after the configured dwell. Device presence alone does not mean passenger service has started.
+- Passengers join a ride without a boarding code; account, stop and proximity checks still apply.
+- Live maps use shared Firebase subscriptions. Feedback submission, the admin latest-200 list and status updates go directly to Firestore under security rules, so they work while the backend is offline; other commands and mutations use authenticated HTTP endpoints.
 
 See [architecture](docs/design/ARCHITECTURE.md), [data model](docs/data/FIREBASE_DATA_MODEL.md) and [telemetry contract](docs/hardware/HARDWARE_TELEMETRY.md) for the full behavior.
 
@@ -89,7 +90,7 @@ npm run verify
 
 This runs lint, software tests, build/export, service-worker/CSP generation and the production dependency audit. Run rule, browser and firmware checks separately when affected; [test strategy](docs/testing/TEST_STRATEGY.md) explains the commands and what each proves.
 
-CI runs on `testing` PRs. Automatic staging deployment is tied to verified pushes to `main`; merging into `testing` does not deploy the application. See [release guide](docs/operations/CI_CD_AND_RELEASES.md).
+CI (`Production verification`) runs on every push and pull request. Integration PRs target `testing`. Automatic staging deployment is tied to verified pushes to `main`; merging into `testing` does not deploy the application. See [release guide](docs/operations/CI_CD_AND_RELEASES.md).
 
 ## Deployment readiness
 

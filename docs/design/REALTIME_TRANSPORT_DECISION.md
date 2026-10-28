@@ -1,6 +1,6 @@
 # Realtime transport decision (#195)
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 Date: 2026-10-01. Source baseline: `testing` at `e5d41be`.
 Status: retain Firebase SDK listeners; moving/weak-network acceptance remains
@@ -10,8 +10,10 @@ field performance gate has passed.
 ## Current requirement and decision
 
 Signed-in browser clients need live bus locations and bounded ride chat. The
-shared `liveBusStore` observes compact RTDB `publicRouteBuses/{routeId}/buses` paths for passengers and the public fleet root for trusted admins. The browser performs an initial sync and then applies child deltas. Route selection reads `liveRouteCatalog/values` counts; raw `activeBuses` is backend-only. Firestore SDK listeners serve messages, settings, routes and history. Admin
-feedback review now uses bounded authenticated `GET /api/v2/feedback` reads. Chat reads the latest 200 documents; authenticated HTTP performs
+shared `liveBusStore` observes compact RTDB `publicRouteBuses/{routeId}/buses` paths for passengers and the public fleet root for trusted admins. The browser performs an initial sync and then applies child deltas. Route selection reads `liveRouteCatalog/values` counts; raw `activeBuses` is backend-only. Firestore SDK listeners serve messages, settings, routes and history. Feedback
+submission, the admin latest-200 review read and status updates go directly to
+Firestore through the SDK (one-shot reads, no listener), so they do not depend
+on the backend. Chat reads the latest 200 documents; authenticated HTTP performs
 bounded writes. Firebase already supplies authentication, reconnection, and
 cross-replica delivery. No current client requires a separate streaming API.
 

@@ -1,6 +1,6 @@
 # Eki getting started and operating guide
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 This is the plain-language entry point for the Eki campus bus-tracking system.
 It explains what the system does, who uses it, how to run it locally, and
@@ -20,7 +20,8 @@ passenger and administrator experience:
    (RTDB), while Firestore stores configuration, recovery state, messages,
    feedback, and history.
 4. Browsers receive live changes through Firebase listeners. REST requests are
-   used for commands and other deliberate mutations; the live map is not
+   used for commands and other deliberate mutations (feedback is the exception:
+   it goes directly to Firestore under security rules); the live map is not
    implemented as repeated API polling.
 5. An exclusive Firestore bus lock and durable ride record keep one physical bus
    from running two sessions and allow a session to recover after interruptions.
@@ -31,8 +32,8 @@ The end-to-end architecture is documented in [High-level design](design/HIGH_LEV
 
 | Role | What the role can do | How access is granted |
 |---|---|---|
-| Passenger | View configured routes and live buses, join an active ride with the driver-issued boarding code, select boarding/alighting stops, message ride members, submit feedback, and request personal-data deletion | Firebase Authentication account with a passenger role |
-| Driver/operator | Operate the assigned bus and route, arm/resume a ride, issue a boarding code, adjust delay, and message passengers | Admin-managed driver record, assigned bus, trusted role claims, and current session ownership |
+| Passenger | View configured routes and live buses, join an active ride (no boarding code), select boarding/alighting stops, message ride members, submit feedback, and request personal-data deletion | Firebase Authentication account with a passenger role |
+| Driver/operator | Operate the assigned bus and route, arm/resume a ride when automatic startup is not enough, adjust delay, and message passengers | Admin-managed driver record, assigned bus, trusted role claims, and current session ownership |
 | Administrator | Manage routes, buses, drivers, devices, settings, requests, feedback, ride history, analytics, and reconciliation | Firebase Authentication account with an administrator role and backend admin claim |
 | Deployment/firmware operator | Provision devices, create protected firmware artifacts, perform physical acceptance tests, and rotate device credentials | Controlled operational process; this is not a browser role |
 
@@ -157,9 +158,16 @@ The durable state machine is:
 
 `armed / pre_departure → active / in_service → completed`
 
-- Initial arming requires an assigned bus/route and a fresh stopped hardware
-  fix near exactly one route endpoint. Moving, stale, mid-route or ambiguous
-  evidence cannot select a direction. The backend infers forward/reverse.
+- Routine startup is automatic: a qualified device fix (complete device, bus,
+  operator and route assignment; fresh fix with HDOP ≤ 4) creates the session
+  with no admin tab or Start service action. Direction can stay pending until
+  endpoint or departure evidence resolves it. See
+  [automatic GNSS service](operations/AUTOMATIC_GNSS_SERVICE.md).
+- Manual arming through the protected session API (driver or admin), and
+  **Resume tracking** in Live Ops for an intentionally paused receiver, remain
+  available. Manual arming requires an assigned bus/route and a fresh stopped
+  hardware fix near exactly one route endpoint. Moving, stale, mid-route or
+  ambiguous evidence cannot select a direction. The backend infers forward/reverse.
 - Arming at the inferred origin can enter service immediately. An existing
   session resumes with its stored direction and progress.
 - Only the next ordered stop advances progress. Visiting a later stop cannot
@@ -185,8 +193,10 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
    follows ride-direction stop order, updates the map/timeline target and falls
    back to the terminal stop when no valid selection exists. Bus/station
    dropdowns remain inside the app and support keyboard selection.
-3. When a driver provides a boarding code for an active session, join with the
-   boarding and destination stations. The destination is stored in the ride
+3. When a session is active, choose boarding and destination stations and press
+   **Board**; no driver code is needed. Boarding still requires a verified
+   profile, a fresh bus position and your location near the bus. The
+   destination is stored in the ride
    manifest for administrators. Your preselected destination carries into
    the boarding form as `alightingStopId`; changing the boarding stop does not
    change the map destination.
@@ -206,13 +216,15 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 ### Driver/operator
 
 1. Confirm the assigned bus, route, device and current GNSS/network status.
-2. Arm or resume the assigned session from the Operations workspace.
-3. Issue the boarding code to passengers through the approved channel.
-4. Adjust delay when required; the backend validates session ownership and
+2. Service starts automatically from the tracker's qualified GNSS fix; there is
+   no manual Start service control. An admin uses **Resume tracking** in Live
+   Ops only for an intentionally paused receiver. The protected session API
+   remains for compatible clients and explicit recovery.
+3. Adjust delay when required; the backend validates session ownership and
    preserves the value durably.
-5. Drive the route in configured stop order. The first stop activates service
+4. Drive the route in configured stop order. The first stop activates service
    and the final stop completes it.
-6. Report device, power, GNSS, Wi-Fi or backend faults using the diagnostics and
+5. Report device, power, GNSS, Wi-Fi or backend faults using the diagnostics and
    operational runbooks. Do not operate the web app while driving.
 
 ### Administrator
@@ -225,8 +237,9 @@ See [the data model](data/FIREBASE_DATA_MODEL.md) for the records and
 4. Monitor `/health`, telemetry rejection counts, latency percentiles, worker
    lease health, Firebase usage and Maps usage.
 5. Review feedback from the Admin Feedback tab or `/feedback`. Both use the
-   same admin-authenticated HTTP panel, which loads the latest 200 records and
-   updates status only after an acknowledged PATCH.
+   same panel, which reads the latest 200 records and updates status directly
+   in Firestore (admin claims enforced by rules), so it works while the backend
+   is offline.
 6. Review history using readable bus/route/driver names, labeled timestamps,
    arrival-stop names and recorded destination evidence. Interrupted rides
    show as ended early. Terminal history deletion requires a separate in-app
@@ -266,7 +279,7 @@ for the full rollout.
 | `/health` returns 503 | Firebase Admin credentials, Firestore/RTDB reachability, and the cached probe timestamp | [API health](../backend/API.md#health) |
 | Browser shows no live bus | Auth, RTDB URL, rules, device health, and whether the fix is fresh | [Hardware telemetry](hardware/HARDWARE_TELEMETRY.md) |
 | Security verification fails or fleet permissions fail after sign-in | Check Firebase Auth role claims and database rules; protected listeners wait for refreshed trusted claims. Disable old Firebase App Check enforcement before deploying this browser. Permission retries refresh access together; timeouts leave access closed | [Local auth setup](CONFIGURATION.md#local-auth-setup) |
-| Feedback cannot load | Check backend reachability and verified admin claims for `GET /api/v2/feedback`; retry from the panel. Do not relax Firestore rules | [Feedback API](../backend/API.md#feedback-profile-and-settings-endpoints) |
+| Feedback cannot load | Feedback reads Firestore directly, not the backend. Check Firestore connectivity, verified admin claims (`role: "admin"` and `admin: true`) and that current `firestore.rules` are deployed; retry from the panel. Do not relax Firestore rules | [Frontend README](../frontend/README.md) |
 | Sign-out fails | Protected content stays hidden; reload and retry sign-out. Previous verification/results must not reopen access | [Frontend guide](../frontend/README.md) |
 | Device receives 400 | Validate the deployed schema (nine-field current; eight-field sequenced and six-field legacy compatibility), JSON size, ranges, sequence, and capture/send timestamps | [API device endpoints](../backend/API.md#device-endpoints) |
 | Device receives 401 | Device ID, registry status, secret, assignment and certificate/clock; correct by re-provisioning and reflashing | [Security provisioning](operations/HARDWARE_SECURITY_PROVISIONING.md) |

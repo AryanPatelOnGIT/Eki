@@ -1,6 +1,6 @@
 # Firmware policy tests
 
-Last updated: 2026-10-05 (Asia/Kolkata).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 Run from the repository root:
 
@@ -10,7 +10,7 @@ py -m platformio test --project-dir hardware -e native
 
 The native Unity suites execute production header policies:
 
-The current #246 firmware has nine suites and 82 native cases, including DNS
+The current firmware has nine suites and 93 native cases, including DNS
 policy and production resolver tests with native radio/TCP-IP adapters. These
 adapters are native-only; all board builds compile against the actual SDK. Use the
 actual runner output at the tested commit to confirm the count.

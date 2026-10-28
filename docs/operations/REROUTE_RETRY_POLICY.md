@@ -1,5 +1,7 @@
 # Failed live reroutes (issue #246 R35)
 
+Last updated: 2026-10-26 00:21 IST (UTC+05:30).
+
 Live rerouting is still driven by fresh accepted telemetry. It does not use
 retry timers, replay old positions or block ingestion while routing is pending.
 

@@ -1,6 +1,6 @@
 # ESP32 + NEO-M8N tracker
 
-Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 The firmware continuously parses NMEA on UART2, captures trusted GNSS state in
 a bounded RTC-memory queue, and publishes it from a separate FreeRTOS task. It
@@ -106,7 +106,7 @@ motion, and timestamp. The backend registry supplies the device's current
 | Change | Backend action | Reflash required? |
 |---|---|---|
 | Add/edit route name, stops, waypoints, color or polyline | Seed or save the route in the backend; validate stop order and walk/drive it | No |
-| Assign the same device to another approved bus/route | Update the device registry/admin assignment while no active ride/lock exists; restart the backend after direct CLI provisioning to clear credential caches | No, if device ID/secret/network/backend/CA stay the same |
+| Assign the same device to another approved bus/route | Update the device registry/admin assignment while no active ride/lock exists. Direct CLI provisioning publishes a credential-cache invalidation, so no backend restart is normally needed; if the CLI reports that cache invalidation failed twice, the printed secret is still valid; restore RTDB connectivity and restart the backend to clear its credential caches before relying on the device (rerunning the CLI would rotate the secret) | No, if device ID/secret/network/backend/CA stay the same |
 | Change bus/route while the current ride is active | Stop at a safe terminal state and clear the approved lifecycle conflict first | No hardware change, but the backend correctly rejects unsafe reassignment |
 | Change Wi-Fi name/password | Update `WIFI_SSID`/`WIFI_PASS` | Yes |
 | Change device ID | Provision the new ID, update `DEVICE_ID` | Yes |
@@ -160,7 +160,10 @@ credential values:
 
 If a boot validation message names `WIFI_SSID`, `WIFI_PASS`, `DEVICE_ID`,
 `DEVICE_SECRET`, `BACKEND_URL`, or `BACKEND_ROOT_CA`, correct that definition in
-the ignored file and rebuild. A 401 means invalid credentials and latches the
+the ignored file and rebuild. GPIO2 blinks two pulses every two seconds for
+that halt (and for a boot resource/task start failure); four pulses mean a
+fleet build found a non-HTTPS backend origin or inactive flash encryption or
+Secure Boot. A 401 means invalid credentials and latches the
 radio off until restart; a 403 means a valid device awaits an assignment and
 retries after one minute. Repair the backend assignment without reflashing when
 the compiled credentials are correct. A TLS error is a hostname, clock, certificate-chain, or root-CA
@@ -264,7 +267,9 @@ done safely while retaining the current Wi-Fi stack.
   that sample. A 401 latches publishing off, disables the station radio, and
   emits three GPIO2 pulses every two seconds. A 403 keeps Wi-Fi enabled and
   retries after one minute while waiting for a valid backend assignment.
-- A 25-second watchdog covers both tasks. Authenticated remote diagnostics send
+- A 25-second watchdog covers the Arduino loop task, the publisher task and,
+  in fleet builds, the firmware-maintenance task; the `diagnostic-http` worker
+  is not subscribed. Authenticated remote diagnostics send
   bounded health state every five minutes while idle and never send credentials.
 - Fleet OTA discovery runs on its own watched task. Installation requires a
   fresh, protected stopped-GNSS snapshot and an authenticated transactional

@@ -1,6 +1,6 @@
 # Recording a physical GNSS test
 
-Last updated: 2026-10-21 04:20 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 Prepare the recorder before boarding. Device presence, location delivery and an
 armed service are separate checks. A moving location trace without a ride session
@@ -10,9 +10,11 @@ can measure delivery but cannot verify stops, boarding, completion or return.
 
 1. Confirm the intended device/vehicle/route in Admin → Live Ops. In Fleet &
    People, the operator must have the correct vehicle and its route assignment.
-2. In **Start service**, select the operator, check the automatically filled
-   assigned vehicle, select the route and click **Start service**. Retain the
-   success message and session ID. The card must leave **Ride Not Armed** for
+2. Service starts automatically once the receiver sends a qualified fix (complete
+   device/bus/operator/route assignment, fresh fix with HDOP ≤ 4); there is no
+   **Start service** action. See [automatic GNSS service](AUTOMATIC_GNSS_SERVICE.md).
+   If the receiver was intentionally paused, use **Resume tracking** in Live Ops.
+   Record the session ID. The card must leave **Ride Not Armed** for
    **Direction Pending**, **Awaiting Stop 1** or **In Service**. Do not treat an
    online marker or moving speed alone as a started ride.
 3. Prefer a fresh stopped fix at the configured origin to resolve direction.

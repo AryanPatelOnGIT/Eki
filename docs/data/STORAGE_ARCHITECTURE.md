@@ -1,17 +1,17 @@
 # Storage architecture summary
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 The exhaustive field/access/relationship dictionary is [Firebase data model](FIREBASE_DATA_MODEL.md).
 
 | Store | Use | Main paths |
 |---|---|---|
-| RTDB | Latest pushed live state | `activeBuses/{busId}_{routeId}`, server-only assignment mirror |
+| RTDB | Latest pushed live state and its browser projections | `activeBuses/{busId}_{routeId}` (backend-only raw projection), `publicRouteBuses`, `liveRouteCatalog`, `activeRouteGeometry`, `clientProjectionStatus`; server-only `_userAuthorization` mirror, `_deviceRateLimits`, `_deviceCredentialVersions` |
 | Firestore | Durable configuration, access metadata, recovery, locks, messages and history | `users`, `routes`, `buses`, `drivers`, `devices`, `active_rides`, `_active_bus_locks`, `ride_sessions`, `completed_trips`, feedback/settings/internal jobs |
 
 RTDB contains one current point, not coordinate history. Firestore receives lifecycle/stop/delay/session changes, not every GNSS fix. This avoids duplicate high-frequency writes and keeps recovery/history queryable.
 
-ESP32 devices have no Firebase credentials. The backend is the only writer to RTDB live state and the Firestore `bus_locations` fleet projection. Browsers read through constrained rules and use protected APIs for fleet/route/device/shift mutations. Passenger manifest has narrowly permitted client writes; messaging, feedback and settings mutations use protected backend APIs.
+ESP32 devices have no Firebase credentials. The backend is the only writer to RTDB live state and the Firestore `bus_locations` fleet projection. Browsers read through constrained rules and use protected APIs for fleet/route/device/shift mutations. Passenger manifests have no client writes: boarding goes through the backend join API. Messaging and settings mutations use protected backend APIs. Feedback is the exception: browsers write `feedbacks`/`feedbackCooldowns` and admins read and update feedback status directly in Firestore, with rules enforcing eligibility, the 24-hour cooldown and admin-only access.
 
 `active_rides` restores an interrupted live projection. `_active_bus_locks` enforces one active session per physical bus. `ride_sessions` is detailed history; `completed_trips` is a compact analytics projection; `bus_locations` is compact fleet lifecycle state.
 
@@ -25,7 +25,7 @@ A ride is readable through the following fields, without decoding the composite 
 | `direction`, `originStopId`, `destinationStopId` | Immutable travel direction and endpoints |
 | `status`, `startTime`, `endTime` | Lifecycle and recorded start/end time |
 | `stopsReached/{index}` | Travel-ordered stop ID, name and recorded timestamp |
-| Stop `evidence` | `gnss_progress` for newly observed progression; `recovered_checkpoint` for an older checkpoint repaired later |
+| Stop `evidence` | `gnss_progress` for newly observed progression; `recovered_checkpoint` for an older checkpoint repaired later; `skipped_gnss_gap` for a stop credited, not observed, when a later stop was reliably reached after a GNSS gap |
 
 Recovered stop timestamps record when the missing history was repaired; they are not invented original arrival times. Multiple stops crossed between fixes share the observation time. A cloud checkpoint survives device power loss, but only facts committed to the backend can be recovered. The bounded RTC queue is for recent live fixes and validates its checksum/configuration on boot; it is not a persistent archive of every GPS point. Complete loss of device power can discard unsent fixes. Controlled watchdog/brownout acceptance remains tracked in [#60](https://github.com/notnamansinha/Eki/issues/60).
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-Last updated: 2026-10-16 00:23 IST (UTC+05:30).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 This document outlines the security models, vulnerability reporting procedures,
 and database rules governing the Eki ecosystem. For the public-safe
@@ -24,7 +24,7 @@ Eki enforces strict RBAC across presentation, API, and database perimeters:
 2. **Frontend Presentation Guard (`RoleGuard`)**:
    Controls route rendering based on authenticated claims (`admin`, `driver`, `passenger`).
 3. **Backend API Authorization**:
-   Express endpoints validate Bearer tokens. Admin endpoints enforce `requireAdmin` middleware checking `auth.token.admin === true`.
+   Express endpoints validate Bearer tokens. Admin endpoints enforce `requireAdmin` middleware, which requires `role: "admin"`, the boolean `admin: true` claim and an `authorizationVersion` that still matches the backend-only `_userAuthorization/{uid}` record in both Firestore and RTDB (fresh reads, no positive cache; unavailable metadata returns a retryable 503). See [privileged database authorization](../operations/PRIVILEGED_DATABASE_AUTHORIZATION.md).
 
 Protected browser reads wait for refreshed Auth tokens and trusted role
 verification. Account changes and sign-out invalidate pending verification and
@@ -62,6 +62,7 @@ ESP32 GNSS units post a closed nine-field payload to
   denied; chat is stored under Firestore ride sessions with scoped rules.
 - **`/users`**: Legacy tree with all client reads/writes denied by the root rules.
 - **`/activeRouteGeometry`**: Authenticated reads; all client writes denied.
+- **`/_userAuthorization`, `/_deviceRateLimits`, `/_deviceCredentialVersions`**: Backend-only authorization mirror and device ingress controls; every client read/write is denied.
 
 ### Ride Chat Safety
 

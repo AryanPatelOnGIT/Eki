@@ -1,6 +1,6 @@
 # Hardware telemetry, latency and failure design
 
-Last updated: 2026-10-27 12:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 Setup boundary: use [the hardware setup guide](README.md) before reading this
 design. It is the source for required `backend/.env`, frontend environment
@@ -22,7 +22,7 @@ Use a fused automotive-rated 12 V-to-5 V buck converter, strain relief, protecte
 
 ## Firmware build contract
 
-- Development: `esp32dev`, Arduino, `partitions_development.csv`; OTA compiled disabled.
+- Development: `esp32dev`, Arduino, `partitions_development.csv`; OTA code is not compiled because `EKI_FLEET_BUILD=0` (the firmware does not read the environment's `-D DISABLE_OTA` flag).
 - Fleet: `esp32dev-secure`, Arduino as an ESP-IDF component, Secure Boot V2, release-mode flash encryption, ROM-download lockdown, RAM-only Wi-Fi state, and a bootloader-safe custom partition table.
 - Pinned platform/libraries: Espressif32 7.0.1, TinyGPSPlus 1.1.0, ArduinoJson 7.4.3.
 - Runtime configuration: Wi-Fi, device ID/base64url secret, backend origin, and issuing root CA are compiled from the ignored `hardware/include/secrets.h` and validated before networking starts.
@@ -122,14 +122,14 @@ Follow [cold-power recovery](COLD_POWER_RECOVERY.md), including the legacy-board
 | GNSS correction | >=1.5 s, at most once/minute | Primary clock discipline without rapid jumps |
 | NTP cross-check | startup after Wi-Fi, then six-hour schedule | Independent fallback/check; not a publish dependency |
 | Wi-Fi retry | 5-60 s exponential | Bound radio churn while retrying indefinitely |
-| HTTPS retry | 1–30 s + up to 1 s jitter | Recovery without fleet retry storm |
+| HTTPS retry | Transport error/408: 250–750 ms for the first retry, then 1–2 s; other retryable failures: 1 s doubling to a 30 s cap plus up to 1 s jitter; explicit minimums (429 `Retry-After` or 60 s, 403/404 60 s, rejected sample 30 s) take precedence | Fast recovery from a transient socket expiry without a tight reconnect loop or fleet retry storm |
 | RTC queue | 100 samples / 5,648 bytes | Bounded store-and-forward with oldest-drop overflow |
 | Queued-fix discard | >55 s | Stay within backend freshness window |
-| Task watchdog | 25 s, panic/restart | Cover both tasks and bounded connect-plus-request latency |
+| Task watchdog | 25 s, panic/restart | Covers the Arduino loop task, the telemetry publisher task and (fleet builds) the firmware-maintenance task; the `diagnostic-http` worker is not subscribed |
 | Remote diagnostics | first at 30 s, then every 5 min while no fresh telemetry is queued | Authenticated bounded health without delaying a queued fix or retry recovery |
-| NMEA no-data warning | after 5 s, every 5 s | Wiring/baud diagnosis |
+| GNSS serial evidence | `[GNSS] CFG-MSG ACK/NAK` at boot; `[GNSS] Connected`/`Not connected` on fix transitions while Wi-Fi is connected | Wiring/baud/fix diagnosis; there is no periodic NMEA no-data warning, and checksum/UART overflow counters are reported only through remote diagnostics |
 
-Wi-Fi persistence is disabled before the driver starts, auto-reconnect is enabled, the strongest known AP is selected with fast scan, and modem sleep is disabled because the tracker is vehicle-powered and latency is preferred over battery life. Outages retry indefinitely with bounded exponential delay. Association is checked against the ESP32 driver as well as Arduino's connection status, because a lost hotspot can leave the latter stale; retries issue a fresh connect even when the preliminary disconnect reports an error. The firmware never starts a soft AP or HTTP server. A credential fault disables the station radio and GPIO2 emits three short pulses every two seconds until corrected firmware is flashed. Fleet builds require release-mode flash encryption and Secure Boot, and explicitly disable ESP32 Wi-Fi key-value persistence.
+Wi-Fi persistence is disabled before the driver starts, auto-reconnect is enabled, the strongest known AP is selected with fast scan, and modem sleep is disabled because the tracker is vehicle-powered and latency is preferred over battery life. Outages retry indefinitely with bounded exponential delay. Association is checked against the ESP32 driver as well as Arduino's connection status, because a lost hotspot can leave the latter stale; retries issue a fresh connect even when the preliminary disconnect reports an error. The firmware never starts a soft AP or HTTP server. A credential fault disables the station radio and GPIO2 emits three short pulses every two seconds until corrected firmware is flashed. GPIO2 also signals boot halts with the same two-second pattern: two pulses for invalid compile-time configuration or a boot resource/task start failure, and four pulses when a fleet build rejects a non-HTTPS backend origin or finds flash encryption or Secure Boot inactive. Fleet builds require release-mode flash encryption and Secure Boot, and explicitly disable ESP32 Wi-Fi key-value persistence.
 
 Deterministic UTC conversion/discipline lives in `hardware/include/clock_policy.h`; Wi-Fi retry and LED behavior in `hardware/include/connectivity_policy.h`; compile-time secret validation in `hardware/include/firmware_config.h`; distance, heading, motion hysteresis, HTTP outcomes and capture decisions in `hardware/include/telemetry_policy.h`; and queue ordering/recovery in `hardware/include/telemetry_queue.h`. Pure policies are executed on the host by `platformio test -d hardware -e native`. Radio, UART, antenna, TLS, watchdog and power behavior remain physical acceptance concerns.
 
@@ -153,11 +153,11 @@ Treat a gap as intentional only when `captureSeen=1`, `captureAgeMs` is within t
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| No NMEA warning | RX/TX reversed, no GNSS power, wrong baud | Check wiring/LED/serial at 9,600 |
+| No `[GNSS] CFG-MSG ACK/NAK` at boot and no `[GNSS] Connected` after Wi-Fi connects | RX/TX reversed, no GNSS power, wrong baud | Check wiring/GNSS LED and the receiver output at 9,600 baud |
 | Never gets valid fix | Indoor/multipath antenna, HDOP >4 | Move antenna to sky view; inspect GNSS output |
 | Clock not synchronized | Stale/invalid GNSS date-time and NTP blocked | Check NMEA date/time freshness; then Wi-Fi/DNS/UDP |
-| Boot halts on compile-time configuration | Missing/invalid value in `secrets.h` | Correct the named field, rebuild, and reflash |
-| Fleet firmware halts at security gate | Flash encryption or Secure Boot inactive | Quarantine the unit; repeat only the witnessed spare-board procedure, never bypass the gate |
+| Boot halts on compile-time configuration (two LED pulses) | Missing/invalid value in `secrets.h` | Correct the named field, rebuild, and reflash |
+| Fleet firmware halts at security gate (four LED pulses) | Flash encryption or Secure Boot inactive, or non-HTTPS `BACKEND_URL` | Quarantine the unit; repeat only the witnessed spare-board procedure, never bypass the gate |
 | Negative HTTPClient/transport failure | DNS/backend unreachable, wrong hostname/CA, expired issuer, bad clock | Use the printed transport string; verify URL chain and NTP; never use insecure mode |
 | HTTP 400 | Firmware/backend contract mismatch or timestamp/range | Compare the deployed schema (nine-field current; eight-field sequenced and six-field legacy compatibility), sequence, and clock |
 | HTTP 401 + three LED pulses | ID/secret missing or mismatched, or device disabled | Inspect registry, correct credentials or enable the device, then restart or reflash as required |
@@ -186,14 +186,14 @@ Each latency is a rolling in-process 512-sample window with average/p50/p95/p99.
 | Point | Detection | Software behavior | Remaining action |
 |---|---|---|---|
 | Vehicle power/buck/cable | Board resets/no telemetry | Reset reason logged; durable ride retained | Automotive wiring/spares/monitoring |
-| GNSS receiver/antenna/UART | No NMEA, quality rejection, checksum or UART overflow count | Warning; one uncertain sample; 30 s counters | Physical inspection/route survey |
+| GNSS receiver/antenna/UART | No NMEA, quality rejection, checksum or UART overflow count | `[GNSS]` transition log; one uncertain sample; counters in remote diagnostics | Physical inspection/route survey |
 | Wi-Fi/hotspot | Disconnect/RSSI/timeouts | Exponential retry and RTC queue | Coverage/SIM/hotspot redundancy; reflash if credentials change |
 | Clock | No TLS/invalid timestamp | Fresh GNSS UTC primary; NTP cross-check/fallback; no invalid publish | Validate receiver UTC and NTP paths on target hardware |
 | TLS CA rotation | TLS failure | Fail closed | Controlled physical trust-root reflash before issuer expiry |
 | Signed OTA | Manifest withheld during active ride; candidate pending validation | Idle/stopped local gate, exact size/SHA-256, Secure Boot signature and dual-slot rollback | Prove wrong-key/digest rejection and five-minute rollback on spare boards |
 | Device credential | 401, rejected metric, three-pulse LED | Publishing latches off and station radio stops | Repair credentials, restart or reflash as required |
 | Device assignment | 403, rejected metric | Wi-Fi stays on; retry after 60 seconds | Repair backend bus/route assignment |
-| Hardware security | Boot gate and remote diagnostic booleans | Fleet firmware halts unless both protections are active | Witness first boot and retain spare-board evidence |
+| Hardware security | Boot gate, four-pulse LED and remote diagnostic booleans | Fleet firmware halts unless both protections are active | Witness first boot and retain spare-board evidence |
 | Backend/Firebase | 503/latency metrics | Bounded queue retained; jitter retry | Regional managed runtime/alerts |
 | Process restart | health/worker lease | Durable active ride and reconnect | Runbook/availability deployment |
 | GNSS gap | uncertain/stale UI | No dead-reckoned authoritative point | Accept interruption or add separately-labelled estimate only after safety review |

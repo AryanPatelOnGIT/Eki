@@ -1,6 +1,6 @@
 # High-level design (HLD)
 
-Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 ## Scope and goals
 
@@ -48,7 +48,7 @@ flowchart TB
 | Trip-state worker | Consume live RTDB changes, enforce ordered geofences, persist recovery/history, sweep stale state, run retention/privacy jobs | Ingest unauthenticated devices |
 | RTDB | Latest low-latency live projection and server-only assignment mirror | Durable history or device secrets |
 | Firestore | Identity profile data, fleet/route configuration, recovery, locks, messages, feedback and history | High-frequency coordinate stream |
-| Next.js PWA | Role-specific maps/workflows, pushed live views, server-authorized messaging/feedback commands | Authoritative GNSS/lifecycle mutation |
+| Next.js PWA | Role-specific maps/workflows, pushed live views, server-authorized messaging commands, rules-checked direct Firestore feedback | Authoritative GNSS/lifecycle mutation |
 | Google Maps APIs | Admin-only place search and route geometry computation; browser map tiles | Per-fix ETA/directions calls |
 
 ## Core flows
@@ -67,8 +67,8 @@ flowchart TB
 
 ### Ride start and progression
 
-1. Firebase Auth custom claims identify a driver and assigned bus.
-2. The start API rechecks Firestore driver/bus/route assignment and requires fresh hardware coordinates.
+1. Routine startup is automatic. A qualified device fix (enabled canonical device assignment, an active bus on the route, exactly one eligible operator, a valid ordered route, and a fresh fix with HDOP ≤ 4) calls the same internal session operation as the operator API; it does not impersonate an administrator. An incomplete setup carries a server-owned `serviceSetupPending` marker that later accepted fixes repair. See [Automatic GNSS service](../operations/AUTOMATIC_GNSS_SERVICE.md).
+2. Manual start and resume remain available to drivers and admins through the protected session API (Live Ops exposes Resume tracking for an intentionally paused receiver): Firebase Auth custom claims identify the operator, and the start API rechecks Firestore driver/bus/route assignment and requires fresh hardware coordinates.
 3. A Firestore transaction creates `ride_sessions/{sessionId}` and `_active_bus_locks/{busId}`. The deterministic lock makes cross-route starts mutually exclusive.
 4. An RTDB transaction claims the bus/route node for that session; on failure one Firestore transaction records the failed session and conditionally releases its lock.
 5. The leader worker compares each new fix with only the next expected stop. It records stop evidence and lifecycle deltas, not every coordinate, in Firestore.
@@ -137,6 +137,8 @@ Firebase usage zero-cost.
 ## Deployment view
 
 The static frontend is deployed to Firebase Hosting. The Express container/runtime must expose managed HTTPS near the Firebase region and use Application Default Credentials/Workload Identity or a secret-managed service-account JSON. It should sit behind university WAF/global rate limits. The worker lease supports multiple API replicas while keeping one background owner.
+
+Current state: the backend is not yet on a managed container host. It runs as a single Node process on one machine exposed through an ngrok tunnel ([ngrok runbook](../operations/NGROK_TUNNEL.md)), and the CI deploy workflow publishes only Hosting, Firestore/RTDB rules and Firestore indexes, not the backend. The managed multi-replica runtime above is the target design.
 
 The vehicle needs a fused 12 V-to-5 V converter, stable ground, secure enclosure/cabling, a clear-sky antenna, and cellular/Wi-Fi access. The fleet build embeds device-specific configuration, enables Secure Boot V2 and release-mode flash encryption, and refuses operation if either protection is inactive; its irreversible first boot still requires the witnessed spare-board procedure. Fleet application updates use two signed slots, an authenticated backend gate that withholds releases during active rides, exact size/SHA-256 verification, and rollback unless authenticated backend health succeeds. Controlled key custody, immutable hosting and spare-board update/rollback proof remain deployment prerequisites.
 

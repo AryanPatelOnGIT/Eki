@@ -1,6 +1,6 @@
 # Low-level design (LLD)
 
-Last updated: 2026-10-27 12:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 This document maps runtime behavior to source modules. Tests beside a module exercise its pure/security-sensitive behavior.
 
@@ -24,7 +24,7 @@ This document maps runtime behavior to source modules. Tests beside a module exe
 | `lib/boundedSingleFlight.ts` | Credential-fill and waiting-caller ceilings, monotonic response budget, retained unsettled slots and invalidation fencing |
 | `routes/devices.ts` | Device telemetry/diagnostics, ride-gated signed-release metadata, and admin registry update/disable |
 | `routes/shifts.ts` | Driver authorization, delay, start/resume, early interruption, message/history deletion |
-| `routes/feedback.ts` | Admin feedback list/status and server-authoritative passenger submission |
+| `routes/feedback.ts` | Legacy admin feedback list/status and passenger submission endpoints; still served, but the web app writes and reads feedback directly in Firestore |
 | `routes/rideSessions.ts` | Versioned session resources and idempotent creation/member commands |
 | `routes/fleet.ts` | Admin buses/drivers, Auth claims, RTDB assignment mirrors, reconciliation; bus saves merge editable catalog fields, preserve metadata and explicitly remove the legacy assignment |
 | `routes/polyline.ts` | Admin route geometry create/update/delete with active-use guards |
@@ -94,7 +94,7 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `app/feedback/*` | Admin feedback review/status workflow |
 | `app/manifest.ts`, `robots.ts`, `sitemap.ts` | PWA and public-index metadata |
 | `app/globals.css` | Tokens, responsive layout, focus/motion rules; reduced motion disables decoration |
-| `components/Providers.tsx` | Auth/App Check and top-level client providers |
+| `components/Providers.tsx` | Auth and top-level client providers |
 | `components/MapProviders.tsx` | Single Maps API provider/load per workspace |
 | `components/ServiceWorkerRegistrar.tsx` | SW registration/update check and controlled one-time reload |
 | `components/maps/DirectionsRoute.tsx` | Draw active direction/version stored geometry; missing legacy geometry requires admin repair, and a repaired road fallback is used only until trusted stored geometry exists |
@@ -105,15 +105,15 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `components/passenger/*` | Boarding, route timeline/carousel/sheet and account |
 | `components/shared/RoleGuard.tsx` | Presentation guard and auth/access states; not the security boundary |
 | `components/shared/MessagingPanel.tsx` | Firestore message reads (latest 200) and idempotent server-authorized message submission; unread counts track seen message IDs, so new messages still count once the window is full |
-| `components/shared/FeedbackModal.tsx`, `components/admin/FeedbackPanel.tsx` | Server-authoritative feedback submission/cooldown; shared admin HTTP list/status review with auth-generation guards |
+| `components/shared/FeedbackModal.tsx`, `components/admin/FeedbackPanel.tsx`, `lib/feedbackStore.ts` | Direct Firestore feedback: transactional idempotent submission with the 24-hour cooldown, admin latest-200 list and status update, all enforced by Firestore rules and guarded by auth generation; no backend call |
 | `components/ui/*` | Keyboard-accessible in-app listboxes and focus-contained alert/confirm dialogs |
-| `hooks/useAuth.ts` | App Check/role verification before user/readiness publication; account/sign-out generation guards and cache disposal |
+| `hooks/useAuth.ts` | Role verification before user/readiness publication; account/sign-out generation guards and cache disposal |
 | `hooks/useCollection.ts` | Auth-ready singleton/bounded collection listener pattern |
 | `hooks/useBuses.ts`, `useDrivers.ts`, `useRoutes.ts`, `useSettings.ts` | Typed shared Firestore subscriptions |
 | `hooks/useRTDBResume.ts`, `rtdbResumeState.ts`, `lib/liveBusRetry.ts` | Confirmed-disconnect/30-second suspension gates, 1–1.5 second debounce, 5-second cooldown and capped exponential equal-jitter retries; healthy short tabs preserve cache |
 | `hooks/useSmoothPosition.ts` | Bounded rAF interpolation; bypassed for reduced motion |
 | `hooks/useDialogFocus.ts` | Top-dialog focus trap, Escape, scroll lock and focus restoration |
-| `lib/firebaseCore/Auth/Database/Firestore/AppCheck.ts` | Split client SDK initialization to limit route dependencies |
+| `lib/firebaseCore/Auth/Database/Firestore.ts` | Split client SDK initialization to limit route dependencies |
 | `lib/firebaseAuthDomain.ts` | Normalizes primary project Hosting domains; custom/secondary domains require explicit auth-helper configuration |
 | `lib/authState.ts` | Tracks verified auth readiness and generations before protected listeners attach |
 | `lib/liveBusStore.ts` | Shared initial RTDB snapshot followed by child deltas, route-scoped subscriptions and freshness pruning |
@@ -122,7 +122,7 @@ The Next.js App Router produces a static export. `layout.tsx` installs global me
 | `lib/polyline.ts`, `polylineDistance.ts`, `snapToPolyline.ts`, `mapUtils.ts` | Pure map math, distance index, snapping/interpolation |
 | `lib/liveBusMarkerPosition.ts`, `markerHeading.ts` | Client-side jump hold/reacquisition and wrap-safe marker heading presentation |
 | `lib/rideHistory.ts`, `rideFeedbackEligibility.ts` | Pure historical normalization/eligibility |
-| `lib/feedback.ts` | Validated admin list/status response parsing |
+| `lib/feedback.ts` | Feedback entry normalization and list validation for Firestore documents |
 | `lib/predefinedRoutes.ts` | Seed source geometry/stops |
 | `config/maps.ts`, `config/passenger.ts`, `etaConstants.ts` | Central public/runtime tuning |
 

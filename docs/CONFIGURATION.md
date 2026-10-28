@@ -1,6 +1,6 @@
 # Environment and configuration reference
 
-Last updated: 2026-10-27 12:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 This page documents configuration names and safe handling rules. Values below
 are placeholders. Use separate files and projects for local, staging and
@@ -18,15 +18,18 @@ partial case evidence without claiming live-motion or RF acceptance.
 
 ## Stop-arrival policy
 
-The backend stop-arrival radius and initial endpoint direction radius are both
-**10 m** (source constants, not environment overrides). Intermediate stops advance
-in configured order when accepted raw GNSS reaches/crosses that circle. The
+The backend stop-arrival radius is **2.5 m** (`STOP_ARRIVAL_GEOFENCE_M` in
+`backend/src/services/tripStateReducer.ts`) and the separate initial endpoint
+direction radius is **10 m** (`ENDPOINT_GEOFENCE_M` in
+`backend/src/lib/automaticRideDirection.ts`); both are source constants, not
+environment overrides. Intermediate and final stops advance in configured order
+when accepted raw GNSS reaches/crosses the 2.5 m circle. The
 passenger timeline and map use the published stop index. Snapped map markers and
 passenger phone location do not decide bus arrival. Final-stop completion also
 requires fresh reliable stopped telemetry and distinct samples spanning the
 default 2-second confirmation. The separate 75 m return-readiness area applies
 only after confirmed completion and the turnaround wait; it cannot complete a trip.
-10 m needs validation with the actual NEO-M8N and surveyed stop pins.
+Both radii need validation with the actual NEO-M8N and surveyed stop pins.
 
 ## Backend variables
 
@@ -55,7 +58,7 @@ runtime secret/configuration system.
 | `FIRMWARE_RELEASE_ALLOWED_ORIGIN` | OTA set | Exact HTTPS origin permitted to host the release binary | Must match `FIRMWARE_RELEASE_URL`; no path, query, credentials or fragment |
 | `FIRMWARE_RELEASE_SHA256` | OTA set | SHA-256 digest of the exact signed binary | Record and verify this from the controlled signing environment |
 | `FIRMWARE_RELEASE_SIZE` | OTA set | Exact binary size in bytes (maximum 1,966,080) | Must match both the hosted object and signed release evidence |
-| `RATE_LIMIT_SHARD_FACTOR` | No | Expected backend replica count used to divide in-process budgets; default `1` only when unset | Set to the deployed replica count; malformed and over-budget values reject startup |
+| `RATE_LIMIT_SHARD_FACTOR` | No | Expected backend replica count used to divide in-process budgets; default `1` only when unset | Set to the deployed replica count. Anything other than a positive decimal integer (for example `0`, blank, `2.5` or ` 2`) refuses startup, and so does a value above `10`, the smallest in-process budget (route compute, 10/minute); use a shared distributed limiter beyond that scale |
 | `AUTH_REVOCATION_CACHE_MS` | No | Short cache for ordinary passenger Firebase Auth revocation checks; `0` disables it, maximum `60000` | Privileged admin/driver claims receive a fresh check for each HTTP request; admission and route middleware reuse that request's verified token |
 | `AUTH_MAX_PENDING_VERIFICATIONS` | No | Maximum distinct Firebase Auth verifications in flight per backend process; default `256`, maximum `2000` | Size for expected concurrency; overflow fails with retryable HTTP 503 instead of growing memory without bound |
 | `WORKER_ENABLED` | No | Enables the Firestore-lease background worker; default `true` | Boolean flag (see below). Keep enabled for lifecycle recovery, abandonment and retention jobs; `false`/`0`/`no`/`off` on a replica stops it competing for the lease |
@@ -75,6 +78,13 @@ runtime secret/configuration system.
 | `OTEL_SDK_DISABLED` | Optional | `true` disables instrumentation | Use as an exporter kill switch |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | Optional | Trace head sampling; when the sampler is unset the backend uses `parentbased_traceidratio` with `0.1` (10% of new root traces, parent decisions respected) | An explicit standard sampler is respected; use `parentbased_always_on` only for short diagnostic sessions. Head sampling cannot guarantee retaining every error trace |
 | `LOG_LEVEL` | Optional | Structured application logging level; template `info` | `debug`, `info`, `warn` or `error` |
+| `RTDB_LATENCY_SAMPLES` | No | Sample count for the `npm run measure:rtdb --workspace=backend` CLI only; default `30` | Integer `10`–`500`; any other value is rejected rather than defaulted. Not read by the server |
+
+Test-only variables are not backend runtime configuration: `FIREBASE_RULES_TEST=1`
+makes `backend/src/testSetup.ts` require the disposable emulator environment
+(`FIRESTORE_EMULATOR_HOST`, `FIREBASE_DATABASE_EMULATOR_HOST`,
+`FIREBASE_AUTH_EMULATOR_HOST`, `GCLOUD_PROJECT`, `EKI_QA_*`); see
+[the QA guide](qa/README.md).
 
 The exact defaults and comments are maintained in [`backend/.env.example`](../backend/.env.example).
 Configuration is loaded before Firebase initialization; changing it requires a

@@ -1,6 +1,6 @@
 # Ride-session migration (#193)
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 Current implemented lifecycle contract on `testing`; the original design
 baseline was `b4fa46b`. The legacy stop command interrupts an early ride; it
@@ -13,8 +13,8 @@ does not mark a ride completed. All v2 paths below are under `/api/v2/`.
 | Hardware destination arrival | Telemetry engine (no HTTP command) | active → completed; completion and turnaround remain engine-owned. |
 | POST shifts/stop | Retain legacy command | pending/armed/active → interrupted; completed is a successful no-op, interrupted retries cleanup, failed conflicts. No v2 completion or stop command is introduced. |
 | PATCH shifts/delay | PATCH ride-sessions/:sessionId | Live pre_departure/in_service only; path ID must still match inside RTDB transaction. Firestore projection revision cannot overwrite a newer revision; durable=false reports deferred persistence. |
-| POST sessions/:sessionId/boarding-code | POST ride-sessions/:sessionId/boarding-code | Assigned operator/admin; armed/active only; issue once or return existing code. No lifecycle change. |
-| POST sessions/:sessionId/join | PUT ride-sessions/:sessionId/passengers/me | Passenger token UID only; armed/active, code, ordered stops, device proximity for first join. Transaction rechecks state and membership. No lifecycle change. |
+| POST sessions/:sessionId/boarding-code | POST ride-sessions/:sessionId/boarding-code | Assigned operator/admin; armed/active only; issue once or return existing code. Kept for older clients; the code is no longer a passenger boarding credential. No lifecycle change. |
+| POST sessions/:sessionId/join | PUT ride-sessions/:sessionId/passengers/me | Passenger token UID only; armed/active, ordered stops, device proximity for first join. No boarding code is required or validated. Transaction rechecks state and membership. No lifecycle change. |
 | POST sessions/:sessionId/messages | POST ride-sessions/:sessionId/messages | Member/operator/admin in armed/active; moderation and durable per-UID rate limit. Same request ID/text replays even after closure; changed text conflicts. |
 | DELETE shifts/:sessionId/messages | DELETE ride-sessions/:sessionId/messages | Admin only; existing policy permits deletion during a live ride. Cleanup uses batches of at most 400; concurrent new messages may remain. |
 | DELETE shifts/:sessionId/history | DELETE ride-sessions/:sessionId | Admin only; completed/interrupted/failed or already absent. Live states conflict. Recursive session cleanup and bounded projection batches. |

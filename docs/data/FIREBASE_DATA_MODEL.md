@@ -1,6 +1,6 @@
 # Firebase Firestore and RTDB data model
 
-Last updated: 2026-10-27 12:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:29 IST (UTC+05:30).
 
 Field ownership and compatibility build on [the field contract audit](../testing/RTDB_FIELD_CONTRACT_AUDIT_2026_10_02.md).
 
@@ -8,7 +8,7 @@ Field ownership and compatibility build on [the field contract audit](../testing
 
 Firestore is durable/queryable; RTDB is the low-latency latest-state projection. `server` means Firebase Admin SDK and therefore not governed by client rules. Timestamps are called out because this repository contains both Firestore `Timestamp`, ISO strings, RTDB server milliseconds and epoch-millisecond numbers.
 
-Access model: client-facing Firestore and RTDB rules require authentication and enforce least-privilege roles. App Check is enforced for both products through Firebase Console; it is not available as a Firestore Security Rules request field. Server/Admin SDK writes bypass rules. The emulator integration suite uses isolated copies of the deployed rules (`scripts/rules-for-emulator.mjs`).
+Access model: client-facing Firestore and RTDB rules require authentication and enforce least-privilege roles. Privileged rules also compare the token's `authorizationVersion` with the backend-only `_userAuthorization/{uid}` record (see [privileged database authorization](../operations/PRIVILEGED_DATABASE_AUTHORIZATION.md)). App Check is not used; deployment disables its enforcement for both products, and the rules alone carry identity and role authorization. Server/Admin SDK writes bypass rules. The emulator integration suite uses isolated copies of the deployed rules (`scripts/rules-for-emulator.mjs`).
 
 ```mermaid
 erDiagram
@@ -83,6 +83,9 @@ Backend-only authority, with every browser read/write denied. One latest record 
 | `currentStopIndex` | integer | Zero-based next/current ordered stop progress |
 | `hasDepartedOrigin` | boolean | Prevents repeated origin activation |
 | `gnssGap` | `{sessionId,since}` / null | Worker-owned GNSS gap marker: `since` is the last sample time before ten missed 1 Hz heartbeats, an untrusted fix or a segment too long to check. While it is open, a reliably observed later stop credits the unobserved stops before it as skipped; a later stop at the same location as a stop already passed is not credited, nor is any stop while the fix is at a passed stop's location. Observing any stop clears it. Ignored unless `sessionId` matches the node's session; not public |
+| `serviceSetupPending` | boolean | Server-owned marker for an incomplete automatic service setup: `true` when an automatic start publishes the session, cleared once later accepted fixes repair the same session and durable projections. Not in the public allowlist; see [automatic GNSS service](../operations/AUTOMATIC_GNSS_SERVICE.md) |
+| `automaticServicePaused`, `automaticServiceState` | boolean / `assignment_required` / `paused` / `awaiting_return` / `setup_pending` / null | Live mirror of an operator pause and the reason automatic admission is currently blocked for a device-only node; both are in the public allowlist |
+| `rerouteRetry` | `{context,failures,nextAttemptAt}` / null | Failed-reroute backoff: context fingerprint, consecutive failures (saturating at 32) and next permitted attempt in server epoch ms. Reserved before provider dispatch and cleared on context reset; not public. See [reroute retry policy](../operations/REROUTE_RETRY_POLICY.md) |
 | `delayMinutes` | number | Driver API value, 0–1440 |
 | `delayUpdatedAt` | epoch ms | Delay revision for conflict-safe recovery/projection |
 | `lifecycleUpdatedAt` | RTDB server epoch ms | Server lifecycle/status mutation time |
@@ -97,7 +100,7 @@ sibling store below is authoritative. Route context also owns
 roles. Context reset clears `mapMatchSeq` and `mapMatchSampledAt` as well as the
 previous match result.
 
-Read and write: denied to all clients at `/activeBuses`; the backend owns the authoritative node. Browsers read the scoped `/publicRouteBuses` projection instead. App Check is enforced through the Firebase console. Indexed by `routeId`, `busId`. Active rides survive stale hardware and are marked offline; stale non-active nodes can be removed.
+Read and write: denied to all clients at `/activeBuses`; the backend owns the authoritative node. Browsers read the scoped `/publicRouteBuses` projection instead. Indexed by `routeId`, `busId`. Active rides survive stale hardware and are marked offline; stale non-active nodes can be removed.
 
 ### `activeRouteGeometry/{busId}_{routeId}/{routeVersion}`
 
@@ -114,6 +117,21 @@ Version-keyed sibling node holding the full dynamic-reroute polyline. The geomet
 ### `driverRouteAssignments/{driverId}`
 
 Server-only authorization mirror used with Auth claims/driver records. It is written/reconciled by fleet management and removed on unassignment/deletion. Typical data identifies `driverId`, `assignedBusId`, and authorized `routeIds`/assignment values. All client reads/writes are denied; clients receive their assignment through trusted claims and allowed Firestore/API views.
+
+### `_userAuthorization/{uid}`
+
+Backend-only RTDB mirror of the Firestore `_userAuthorization/{uid}` record: `{version,role,driverId,assignedBusId}` (RTDB omits null children). RTDB rules compare it with the token's `authorizationVersion` before privileged reads such as the admin `publicRouteBuses` fleet root. All client reads and writes are denied. See the Firestore entry below and [privileged database authorization](../operations/PRIVILEGED_DATABASE_AUTHORIZATION.md).
+
+### `_deviceRateLimits/{deviceId}` and `_deviceCredentialVersions/{deviceId}`
+
+Server-only ingress controls in RTDB. `_deviceRateLimits` stores the number of tokens
+reserved from each shared fixed-window budget. Replicas consume their small
+leases in memory, which amortizes RTDB transactions while ensuring total issued
+tokens never exceed the configured per-device limit. Unused leased tokens may
+reduce capacity only until that minute window expires. `_deviceCredentialVersions`
+changes whenever a device is disabled, reassigned, or re-provisioned; every
+backend replica listens for those changes and immediately evicts matching
+credential-cache entries. RTDB rules deny all client reads and writes.
 
 ### `users/{uid}` and `messages`
 
@@ -165,7 +183,18 @@ Fields: `id`, `name`, `authUid`, `assignedBusId` (`string|null`), and optional `
 
 ### `bus_locations/{busId}`
 
-Compact server lifecycle projection: `routeId`, `driverId`, `status`, `deviceState`, `tripState`, `lastSeen`, plus legacy/optional motion fields. It changes on lifecycle/fleet state, not every coordinate. Admin clients may read; client writes are denied and the backend writes. Fleet analytics consumes it.
+Durable per-bus fleet state; admin clients may read, client writes are denied and only the backend writes. It is deleted with its bus.
+
+| Field | Type | Meaning/source |
+|---|---|---|
+| `sessionId`, `routeId`, `driverId`, `status`, `deviceState`, `tripState`, `direction`, `motionState` | string / null | Fleet projection written by the worker's `persistFleetState`/offline variant on lifecycle changes, not every coordinate. Written only while `_active_bus_locks/{busId}` names that session (or, for offline, no newer session owns the bus); `direction` stays null while pending |
+| `lastSeen` | ISO string | Time of that lifecycle write |
+| `lastKnownLocation` | `{lat,lng,sampledAt,seq,receivedAt}` | Last raw fix persisted at signal loss or retirement; never rolled backward by a delayed event. Live Ops uses it to keep an offline bus on the map |
+| `terminalJourney` | object / absent | Checkpoint written with a natural completion: `busId`, `routeId`, `driverId`, `sessionId`, `direction`, `directionEndpointVersion`, `completedAt`, `turnaroundEligibleAt`, `turnaroundSampledAt`, `currentStopIndex`, `hasDepartedOrigin`, `originStopId`, `destinationStopId` and `consumedBy` (null until the automatic return session is created, then its session ID). Lets recovery restore a completed node and blocks automatic admission while a return is awaited; a new manual or automatic session deletes it |
+| `automaticServicePaused` | boolean | Set by an operator End ride early; automatic admission refuses while `true`. A deliberate manual start or resume sets it `false` |
+| `automaticServiceEpoch` | integer | Generation that scopes the automatic start key. A manual start/resume increments it; after a non-operator early end (abandonment, failed return) admission compare-and-swaps it by one so the next qualified fix creates a fresh service. Admission transactions refuse when it changed |
+
+Fleet analytics reads `deviceState`, `motionState`, `status` and `tripState`. See [automatic GNSS service](../operations/AUTOMATIC_GNSS_SERVICE.md) for pause/resume behaviour.
 
 ### `passenger_requests/{uid}`
 
@@ -198,22 +227,26 @@ Durable ride record and parent of messages.
 | `failureReason`, `interruptionReason` | string | Terminal explanation when applicable |
 | `passengers` | map keyed UID | Passenger manifest |
 | `passengers.{uid}` | `{userId,userName,boardingStopId,alightingStopId,joinedAt}` | Server-issued entry for the authenticated UID |
-| `boardingCode` | eight-character string | Driver-visible session proof; never projected into RTDB |
+| `boardingCode` | eight-character string | Legacy driver-visible session code, still issued by the boarding-code endpoint but no longer required to join; never projected into RTDB |
 | `boardingCodeIssuedAt` | Firestore Timestamp | Server issuance time |
 | `stopsReached` | map keyed zero-based index | Ordered server evidence |
 | `stopsReached.{i}` | `{stopIndex,stopId,stopName,timestamp,evidence?}` | Stop evidence; new `evidence` is `gnss_progress`, `recovered_checkpoint` (timestamp denotes repair time rather than original arrival) or `skipped_gnss_gap` (credited because a later stop was observed after a GNSS gap; never observed itself). Admin History shows only `gnss_progress` and legacy records without `evidence` as observed arrivals: skipped stops read "Skipped (GNSS gap)", recovered ones "Recovered HH:MM:SS", and neither yields a passenger "Destination reached" time |
 | `automaticTurnaround`, `previousSessionId` | boolean / string | Present on an automatically armed opposite-direction session |
 | `path` | legacy map/array | Older history tolerated/read/deleted; no current per-fix writes |
 
-Admin and the assigned session driver can read. All client writes are denied. The assigned driver obtains the session code from the authenticated API; a passenger presents that code plus a fresh near-bus position to the join endpoint, which validates boarding and alighting stops in the session's travel order and writes the manifest transactionally.
+Admin and the assigned session driver can read. All client writes are denied. No boarding code is needed to join: on first boarding a passenger with a profile sends a fresh near-bus position (within 150 m of the session's live hardware fix, browser accuracy no worse than 100 m) to the join endpoint, which requires a resolved direction, validates boarding and alighting stops in the session's travel order and writes the manifest transactionally. An existing member may change stops without a new position.
 
 #### `ride_sessions/{sessionId}/messages/{messageId}`
 
-Fields: `text` (1–500), `from` (`driver|passenger`), `senderName` (1–100), `senderId` (auth UID), `requestHash` (server idempotency fingerprint), and `timestamp` (server time). Session operator/admin and registered session passengers read; all client writes are denied. The active-session message endpoint derives identity, keys each document from UID plus `requestId`, and writes message/rate state atomically. Admin API can recursively clear messages.
+Fields: `text` (1–500), `from` (`driver|passenger`), `senderName` (1–100), `senderId` (auth UID), `requestHash` (server idempotency fingerprint), and `timestamp` (server time). Session operator/admin and registered session passengers read; all client writes are denied. The active-session message endpoint derives identity, keys each document from UID plus `requestId`, and writes message/rate state atomically. Admin API can clear live messages; they are moved to `archivedMessages` rather than destroyed.
+
+#### `ride_sessions/{sessionId}/archivedMessages/{messageId}`
+
+Operator-only ride-history copy of cleared chat. The admin clear-messages endpoint copies each page of up to 200 `messages` documents here under the same ID and deletes the originals in one transaction per page. Message replay checks this collection too, so a cleared `requestId` cannot be reused. Admin and the assigned session driver read; all client writes are denied. Recursive history/retention deletion removes it with the session.
 
 #### `ride_sessions/{sessionId}/messageRateLimits/{uid}`
 
-Fields: `userId`, `sentAt: Timestamp[]` (bounded rolling history), `lastSentAt`. The backend advances the message and rate record in one transaction after rechecking live session membership. Minimum gap is three seconds and maximum is 60/hour. Owner/member reads are allowed; all client writes are denied.
+Fields: `userId`, `sentAt: Timestamp[]` (bounded rolling history), `lastSentAt`. The backend advances the message and rate record in one transaction after rechecking live session membership. Minimum gap is three seconds, with at most 10 messages per rolling minute and 60 per rolling hour. Owner/member reads are allowed; all client writes are denied.
 
 ### `completed_trips/{sessionId}`
 
@@ -247,6 +280,14 @@ These have no matching allow rule and are therefore client-denied.
 ### `devices/{deviceId}`
 
 Fields: `deviceId`, `busId`, `routeId`, `enabled`, `secretHash` (`32-hex-salt:128-hex-scrypt-key`), `credentialRotatedAt`, `updatedAt`, optional `disabledAt`. Plain `secret` is explicitly deleted on provisioning. Exactly one device may own a bus/route assignment; active ride/lock guards prevent unsafe rotation/reassignment. An admin reassignment that omits `enabled` keeps the stored value, and disabling updates only an existing entry (an unknown ID is 404, never a new credential-less entry). A Firestore-reserved `__…__` `busId`/`routeId` is treated as unassigned.
+
+### `_userAuthorization/{uid}`
+
+Current privileged authorization: `version` (random UUID matching the token's `authorizationVersion` claim), `role` (`admin|driver|passenger`, or `blocked` during publication), `driverId` and `assignedBusId` (null when not applicable). `publishUserAuthorization` writes it together with the RTDB mirror of the same path: it first blocks both with a fresh version, then updates Auth claims, then activates both conditionally. Firestore rules for admin and driver reads require the token's version and role to match this record; `requireAdmin` reads both copies on every request. All client access is denied. See [privileged database authorization](../operations/PRIVILEGED_DATABASE_AUTHORIZATION.md).
+
+### `_ride_session_creation_keys/{keyHash}`
+
+Durable idempotency binding for session creation. The document ID is the SHA-256 of the caller's principal scope and `Idempotency-Key` (automatic device starts use the `automatic-service-v1` key under a device/assignment-revision/`automaticServiceEpoch` scope). Fields: `busId`, `routeId`, `driverId`, `sessionId` and `createdAt`. It is created in the same transaction as the session and survives session deletion, so a reused key with another assignment is 409 and one whose session was deleted is 410. All client access is denied.
 
 ### `active_rides/{busId}_{routeId}`
 
@@ -309,17 +350,6 @@ Read-only probe target. The server issues a bounded `limit(1)` every 30 seconds 
 ### `_device_diagnostics/{deviceId}`
 
 Server-only latest health report received through device-authenticated HTTPS. It contains the registry `deviceId`/`busId`/`routeId`, firmware version, uptime, free heap, RSSI, bounded telemetry/queue/UART/reset counters, current fault, reported flash-encryption/Secure-Boot state, device timestamp, and server `receivedAt`. Each accepted report replaces the prior one; this is operational state, not an unbounded event history. Browser Firebase rules deny all access. Admins read it through `GET /api/devices/:deviceId/diagnostics`; credentials, SSIDs, and CA content are never accepted.
-
-### `_deviceRateLimits/{deviceId}` and `_deviceCredentialVersions/{deviceId}`
-
-Server-only ingress controls. `_deviceRateLimits` stores the number of tokens
-reserved from each shared fixed-window budget. Replicas consume their small
-leases in memory, which amortizes RTDB transactions while ensuring total issued
-tokens never exceed the configured per-device limit. Unused leased tokens may
-reduce capacity only until that minute window expires. `_deviceCredentialVersions`
-changes whenever a device is disabled, reassigned, or re-provisioned; every
-backend replica listens for those changes and immediately evicts matching
-credential-cache entries. Browser rules deny all reads and writes.
 
 ## Relationships and deletion
 

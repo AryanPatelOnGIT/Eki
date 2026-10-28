@@ -1,6 +1,6 @@
 # HTTP resource migration for issue #192
 
-Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 This is the compatibility contract for the six method/path changes on `testing`.
 The existing handlers remain available. The v2 routes call those same handlers,
@@ -44,8 +44,9 @@ responses may also include `retryAfterMs` and `Retry-After`.
 
 1. Deploy the backend with both old and v2 routes. Run authorization, validation,
    rate-limit, and response-parity checks in staging before changing any caller.
-2. The frontend source now uses v2 for settings (`PATCH`), feedback status
-   (`PATCH`), and privacy deletion requests (`POST`). Deploy this frontend only
+2. The frontend source now uses v2 for settings (`PATCH`) and privacy deletion
+   requests (`POST`). Feedback status no longer uses HTTP: the web app updates
+   it directly in Firestore, so neither feedback status route has a web caller. Deploy this frontend only
    after the compatible backend passes step 1. Preparing these caller changes
    does not establish that staging acceptance or frontend deployment is done.
    The current frontend does not call the HTTP planning and routes-list endpoints.

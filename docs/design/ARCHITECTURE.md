@@ -1,6 +1,6 @@
 # Architecture and lifecycle summary
 
-Last updated: 2026-10-04 14:20 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 The authoritative design is split into [High-level design](HIGH_LEVEL_DESIGN.md), [Low-level design](LOW_LEVEL_DESIGN.md), [Firebase data model](../data/FIREBASE_DATA_MODEL.md), and [Hardware telemetry](../hardware/HARDWARE_TELEMETRY.md). This page is the short operational reference.
 
@@ -21,9 +21,9 @@ flowchart LR
 
 Hardware pushes; the backend never polls devices. Browsers do not repeatedly poll the live API: Firebase listeners push live changes and REST commands use `fetch`. `fetch` is not an alternative to polling—it is an HTTP API that could be used to implement polling.
 
-Ride state is `pre_departure → in_service → completed`. The driver may arm only their assigned bus/route with a fresh fix. `_active_bus_locks/{busId}` makes the physical bus exclusive across routes. Stop 1 activates service, only the next ordered stop advances, and the final stop completes. GNSS/network loss changes signal/device state, never ride truth.
+Ride state is `pre_departure → in_service → completed`. Routine startup is automatic: a qualified device GNSS fix (complete device/bus/operator/route assignment, fresh fix with HDOP ≤ 4) creates the session through the same internal operation as the operator API ([Automatic GNSS service](../operations/AUTOMATIC_GNSS_SERVICE.md)). A driver or admin can still start or resume service through the protected session API (Live Ops offers Resume tracking for an intentionally paused receiver), only for the assigned bus/route with a fresh fix. `_active_bus_locks/{busId}` makes the physical bus exclusive across routes. Stop 1 activates service, only the next ordered stop advances, and the final stop completes. GNSS/network loss changes signal/device state, never ride truth.
 
-Device presence and passenger service are separate projections. Fresh authenticated telemetry may make `deviceState: online`, but it does not arm a ride and is visible only as an admin diagnostic. Passenger routes and service counts require `status: active`, a non-empty `sessionId`, a resolved `forward|reverse` direction, and `tripState: pre_departure|in_service`. Direction-pending sessions remain visible to admins as pending and never silently default to forward. Conversely, stale GNSS marks presence offline/unknown without deleting an active service.
+Device presence and passenger service are separate projections. Fresh authenticated telemetry may make `deviceState: online`; presence alone is an admin diagnostic, and only a qualified fix with a complete assignment admits service. Passenger routes and service counts require `status: active`, a non-empty `sessionId`, a resolved `forward|reverse` direction, and `tripState: pre_departure|in_service`. Direction-pending sessions remain visible to admins as pending and never silently default to forward. Conversely, stale GNSS marks presence offline/unknown without deleting an active service.
 
 RTDB `activeBuses/{busId}_{routeId}` is the current projection. Firestore `active_rides/{busId}_{routeId}` is minimal recovery; `ride_sessions` and `completed_trips` are history. Completion and abandoned cleanup compare session IDs before deleting recovery/lock or changing RTDB, so delayed old work cannot damage a new session.
 
@@ -53,14 +53,18 @@ Security boundaries: device assignment comes from protected Firestore; device se
 
 ## Browser access and feedback
 
-- App Check and role verification complete before protected listeners open.
-  Failure/timeouts leave readiness closed.
+- Role verification completes before protected listeners open.
+  Failure/timeouts leave readiness closed. The web app no longer uses App Check.
 - Account changes/sign-out invalidate pending verification, shared caches and
   old-session feedback requests, including same-account re-verification.
-- Both admin feedback views use the latest-200 HTTP list and acknowledged status
-  PATCH. Firestore feedback access remains restricted.
+- Feedback submission, the admin latest-200 list and status updates go directly
+  from the browser to Firestore (`lib/feedbackStore.ts`), not through the
+  backend, so they work while the backend tunnel is offline. Firestore rules
+  enforce eligibility, the 24-hour cooldown and admin-only list/status access.
+  The backend feedback endpoints remain but the web app does not call them.
 - Passenger station/bus selection stays inside the app. Destination selection
   updates the tracking target before boarding and carries into the join form.
+  Joining needs no driver boarding code.
 
 See [testing evidence](../testing/README.md) and [deployment checklist](../operations/UNIVERSITY_DEPLOYMENT_CHECKLIST.md)
 for physical-route, GNSS, secure-fleet and infrastructure acceptance.

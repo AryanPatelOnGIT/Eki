@@ -1,6 +1,6 @@
 # Backend API reference
 
-Last updated: 2026-10-27 04:10 IST (UTC+05:30).
+Last updated: 2026-10-29 02:31 IST (UTC+05:30).
 
 The machine-readable contract is `backend/openapi.json` (OpenAPI 3.1.1).
 See [HTTP contract checks and rollout](../docs/api/HTTP_CONTRACT.md) for schema
@@ -84,17 +84,21 @@ guidance; the OpenAPI contract and schema-backed tests check HTTP conformance.
 
 ## Authentication
 
-- Browser: `Authorization: Bearer <Firebase ID token>`. `requireAuth` verifies revocation and trusted custom claims. Admin endpoints additionally require role/admin claim; operational endpoints recheck assigned `drivers` and `buses` records even when invoked from the admin workspace.
+- Browser: `Authorization: Bearer <Firebase ID token>`. `requireAuth` verifies revocation and trusted custom claims. Admin endpoints additionally require `role: "admin"`, `admin: true` and a current `authorizationVersion` matching `_userAuthorization` in both databases ([privileged database authorization](../docs/operations/PRIVILEGED_DATABASE_AUTHORIZATION.md)); operational endpoints recheck assigned `drivers` and `buses` records even when invoked from the admin workspace.
 - Hardware: `Authorization: Device <per-device secret>`. It is not a Firebase token and must never use `Bearer`.
-- Public: only `GET /health`.
+- Public: only `GET /health` and `GET /live`.
 
-IDs accept 1–128 ASCII letters, digits, `_`, or `-`; route, save-operation, bus and driver IDs that become Firestore document IDs must also not match the reserved `__…__` form. CORS/preflight runs before admission. Pre-auth IP buckets key on Express `req.ip`: the socket peer unless `TRUST_PROXY` says which reverse proxy may supply `X-Forwarded-For` (production defaults to one hop; use `loopback` behind a local ngrok agent so tunnelled clients do not share one bucket). A generous normalized-IP ingress guard admits 1,000 browser requests/minute before authentication; scoped public GET/HEAD probes and exact device-ingress paths are exempt. After revocation-aware token verification, separate per-UID budgets permit 200 reads/minute and 30 mutations/minute (POST/PUT/PATCH/DELETE); read polling never consumes mutation tokens. Detailed admin health is authenticated and exempt from the user read budget. Route compute/plan endpoints use dedicated verified-UID limiters (10/min and 30/min), and Places search has a verified-UID 20/minute limiter, and device telemetry bypasses global and write limiters while enforcing separate pre-auth IP (15 requests per configured device per 10 seconds before replica sharding; `HTTPS_INGRESS_DEVICES_PER_IP` defaults to 100, with separate diagnostics and firmware pools of 2 requests per configured device per 10 seconds) and authenticated per-device limits. The safe default device mode reserves bounded token leases from a shared RTDB fixed-window budget, so replicas cannot exceed the fleet-wide limit without paying for one transaction per fix. Local device limiting requires explicit `HTTPS_DEVICE_RATE_LIMIT_MODE=local` and `RATE_LIMIT_SHARD_FACTOR=1`. Other sharded counters divide their budgets by `RATE_LIMIT_SHARD_FACTOR` (set it to the deployed replica count; invalid values fall back to 1). If the replica count exceeds the smallest in-process budget (currently 10/minute), startup fails; use a shared distributed limiter beyond that scale. An edge load balancer or WAF cap is an external deployment requirement for global rate protection.
+IDs accept 1–128 ASCII letters, digits, `_`, or `-`; route, save-operation, bus and driver IDs that become Firestore document IDs must also not match the reserved `__…__` form. CORS/preflight runs before admission. Pre-auth IP buckets key on Express `req.ip`: the socket peer unless `TRUST_PROXY` says which reverse proxy may supply `X-Forwarded-For` (production defaults to one hop; use `loopback` behind a local ngrok agent so tunnelled clients do not share one bucket). A generous normalized-IP ingress guard admits 1,000 browser requests/minute before authentication; scoped public GET/HEAD probes and exact device-ingress paths are exempt. After revocation-aware token verification, separate per-UID budgets permit 200 reads/minute and 30 mutations/minute (POST/PUT/PATCH/DELETE); read polling never consumes mutation tokens. Detailed admin health is authenticated and exempt from the user read budget. Route compute/plan endpoints use dedicated verified-UID limiters (10/min and 30/min), and Places search has a verified-UID 20/minute limiter, and device telemetry bypasses global and write limiters while enforcing separate pre-auth IP (15 requests per configured device per 10 seconds before replica sharding; `HTTPS_INGRESS_DEVICES_PER_IP` defaults to 100, with separate diagnostics and firmware pools of 2 requests per configured device per 10 seconds) and authenticated per-device limits. The safe default device mode reserves bounded token leases from a shared RTDB fixed-window budget, so replicas cannot exceed the fleet-wide limit without paying for one transaction per fix. Local device limiting requires explicit `HTTPS_DEVICE_RATE_LIMIT_MODE=local` and `RATE_LIMIT_SHARD_FACTOR=1`. Other sharded counters divide their budgets by `RATE_LIMIT_SHARD_FACTOR` (set it to the deployed replica count; it defaults to 1 only when unset, and any value that is not a positive decimal integer refuses startup). If the replica count exceeds the smallest in-process budget (currently 10/minute), startup fails; use a shared distributed limiter beyond that scale. An edge load balancer or WAF cap is an external deployment requirement for global rate protection.
 
 ## Health
 
 ### `GET /health` — public
 
 Returns only `{ "status": "ok" }` when the cached 30-second Firestore/RTDB probe is ready, otherwise 503 with `{ "status": "degraded" }`. It does not read Firebase for every request or expose dependency and telemetry details.
+
+### `GET /live` — public
+
+Process liveness only: always 200 `{ "status": "alive" }` with `Cache-Control: no-store`, independent of Firebase readiness.
 
 ### `GET /api/health` — admin
 
@@ -355,15 +359,17 @@ An admin may request the code for any active session; a legacy assigned-operator
 
 ### `POST /api/sessions/:sessionId/join` — passenger
 
-Body: `{ "boardingCode":"ABCD2345", "lat":23.0, "lng":72.5, "accuracy":25, "boardingStopId":"stop_1", "alightingStopId":"stop_3" }`. Both stop IDs are required. Coordinates are required on first boarding and may be omitted only when the same authenticated UID updates an existing manifest entry.
+Body: `{ "lat":23.0, "lng":72.5, "accuracy":25, "boardingStopId":"stop_1", "alightingStopId":"stop_3" }`. Both stop IDs are required. Coordinates are required on first boarding and may be omitted only when the same authenticated UID updates an existing manifest entry. No boarding code is required; a legacy `boardingCode` field is ignored.
 
-Requires a valid Firebase bearer token and an existing passenger profile, the driver-issued session code, route-owned stops in forward order, browser accuracy no worse than 100 m, and—on first boarding—a passenger coordinate within 150 m of a fresh nonfuture hardware GNSS projection bound to the exact session/bus/route. Browser location is defense in depth rather than trusted proof; possession of the non-public session code is the server-verifiable authorization. An existing passenger may correct stops without a second location prompt. A Firestore transaction rechecks the profile, session state, code, and existing membership when proximity is omitted before adding or updating only the authenticated UID's manifest entry. Display name and timestamps are server-derived. Returns `{joined:true,sessionId}` or 400/403/404/409/422/500.
+Requires a valid Firebase bearer token with a passenger (or no) role and an existing passenger profile, a resolved session direction, route-owned stops in the session's travel order, browser accuracy no worse than 100 m, and—on first boarding—a passenger coordinate within 150 m of a fresh nonfuture hardware GNSS projection bound to the exact session/bus/route. Browser location is client-supplied, not independent proof of physical presence. An existing passenger may correct stops without a second location prompt. A Firestore transaction rechecks the profile, session state/bus/route/direction, manifest capacity, and existing membership when proximity is omitted before adding or updating only the authenticated UID's manifest entry. Display name and timestamps are server-derived. Returns `{joined:true,sessionId}` or 400/403/404/409/422/500.
 
 ### `POST /api/sessions/:sessionId/messages` — session member/operator
 
 Body: `{ "text":"Bus arriving", "requestId":"browser-generated-uuid" }`. The authenticated UID must be a manifest passenger, the assigned driver on the assigned bus, or an admin, and the session must still be `armed|active`. Sender role/name are server-derived. The passenger branch also requires an existing profile, including on replay. One transaction rechecks membership/state and passenger profile existence; applies the three-second, 10-per-minute, and 60-per-hour limits; normalizes unsafe Unicode formatting; censors common English, Hindi/Hinglish, leetspeak, separator, and repeated-letter profanity evasions; and writes both message and rate state. The uncensored text is not stored. `requestId` makes retries idempotent: first success is 201, an identical retry is 200, and reuse with changed content is 409. Throttling is 429 with `Retry-After` and `retryAfterMs`.
 
 ## Feedback, profile, and settings endpoints
+
+The web app does not call the feedback endpoints below. It submits feedback, lists the latest 200 records for admins and updates review status directly in Firestore (`frontend/src/lib/feedbackStore.ts`), governed by `firestore.rules`, so feedback keeps working while the backend tunnel is offline. These Admin SDK endpoints remain served for compatible clients and are not on the browser path; see [the data model](../docs/data/FIREBASE_DATA_MODEL.md#feedbacksfeedbackid).
 
 ### `POST /api/feedback` — authenticated
 
@@ -383,10 +389,9 @@ The timestamp is `{ "seconds": N, "nanoseconds": N }` when valid, otherwise
 failures return `500` with `Unable to load feedback.`; middleware can return
 authentication, authorization or rate-limit failures first.
 
-The embedded and standalone admin views validate the response, provide retry,
-and discard requests/results belonging to an earlier auth generation. A status
-change uses `PATCH /api/v2/feedback/:feedbackId` with the same status-only body
-and acknowledgement as the legacy endpoint below.
+The admin web views read feedback from Firestore instead of this endpoint. For
+API clients, a status change uses `PATCH /api/v2/feedback/:feedbackId` with the
+same status-only body and acknowledgement as the legacy endpoint below.
 
 ### `PATCH /api/feedback/:feedbackId/status` — admin
 
@@ -510,7 +515,7 @@ legacy routes; Firebase SDK reads retain their existing authorization rules.
 | `GET /api/v2/ride-sessions/:sessionId` | Assigned operator, admin or manifest member; only sessionId, busId, routeId, status and direction. |
 | `PATCH /api/v2/ride-sessions/:sessionId` | Only `{delayMinutes:0..1440}`; derives assignment from session, checks path identity in the RTDB transaction and preserves durable mirror semantics. |
 | `POST /api/v2/ride-sessions/:sessionId/boarding-code` | Existing idempotent operator/admin issuance command, armed/active only. |
-| `PUT /api/v2/ride-sessions/:sessionId/passengers/me` | Existing join body; binds membership to token UID, rechecks boarding code, proximity, stop order and live state. |
+| `PUT /api/v2/ride-sessions/:sessionId/passengers/me` | Existing join body (no boarding code); binds membership to token UID, rechecks proximity, stop order and live state. |
 | `POST /api/v2/ride-sessions/:sessionId/messages` | Existing text/requestId body; same moderation, membership, durable rate limit and request ID replay. Reads remain Firestore listeners. |
 | `DELETE /api/v2/ride-sessions/:sessionId/messages` | Admin; pages of up to 200 messages are copied to the session's `archivedMessages` subcollection and deleted in one transaction per page, including during live sessions under existing policy. |
 | `DELETE /api/v2/ride-sessions/:sessionId` | Admin; only terminal or absent sessions, recursive history/projection cleanup. Creation-key bindings survive deletion. |

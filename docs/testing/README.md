@@ -1,6 +1,6 @@
 # Testing and acceptance evidence
 
-Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 The [deterministic acceptance catalog](../../qa/README.md) imports the full
 A-Z requirements and current source census, preserves historical evidence
@@ -111,6 +111,8 @@ the development-only opt-out, admin feedback HTTP loading/status and pending
 verification/session guards during sign-out. PR #244 adds passenger in-app
 station/bus dropdowns. Their behavior is maintained in [frontend guide](../../frontend/README.md),
 [configuration](../CONFIGURATION.md) and [API reference](../../backend/API.md).
+App Check and HTTP feedback loading have since been removed from the web app;
+feedback now reads and writes Firestore directly.
 
 Use current test/CI output to validate newer commits. `npm run test:e2e:admin`
 uses synthetic Firebase adapters; it cannot certify live provider enforcement.

@@ -1,6 +1,6 @@
 # HTTP contract and compatibility checks
 
-Last updated: 2026-10-27 04:10 IST (UTC+05:30).
+Last updated: 2026-10-29 02:26 IST (UTC+05:30).
 
 The machine-readable contract is [`backend/openapi.json`](../../backend/openapi.json),
 in OpenAPI 3.1.1 JSON format. [`backend/API.md`](../../backend/API.md) remains the
@@ -126,8 +126,9 @@ every subsequent ingestion dependency (R03). See the device operation policies.
 ## Realtime channels are Firebase SDK subscriptions
 
 These channels are deliberately excluded from OpenAPI `paths`. HTTP remains
-the authoritative surface for bounded writes. Authentication, Firebase rules,
-and App Check configuration for SDK reads apply independently of HTTP auth.
+the authoritative surface for bounded writes, except feedback (below).
+Authentication and Firebase rules for SDK access apply independently of HTTP
+auth; the web app does not use App Check.
 
 | SDK channel | Data and audience | Recovery |
 |---|---|---|
@@ -137,9 +138,14 @@ and App Check configuration for SDK reads apply independently of HTTP auth.
 | Firestore `ride_sessions/{id}/messages` | Authorized session chat | SDK listener reconnect; writes use idempotent HTTP message creation |
 | Firestore ride history queries | User/admin views constrained by query shape and rules | SDK listener reconnect; writes remain backend-authoritative |
 
-Admin feedback review uses bounded `GET /api/v2/feedback` HTTP reads, rather
-than a browser Firestore feedback listener. Both feedback views share the same
-panel; old-session reads/writes are aborted or ignored on auth changes.
+Feedback does not use HTTP from the web app. Passenger submission (with its
+24-hour cooldown), the admin latest-200 review read and status updates go
+directly to Firestore `feedbacks`/`feedbackCooldowns` through the SDK
+(`frontend/src/lib/feedbackStore.ts`), enforced by Firestore rules, so they
+work while the backend is unreachable. The admin read is a one-shot server
+query, not a listener. Both feedback views share the same panel; old-session
+reads/writes are rejected on auth changes. The backend feedback endpoints
+below remain served for compatibility.
 
 No application-owned SSE/WebSocket/GraphQL/webhook interface is introduced.
 Transport decisions and measurements remain #195. Ride-session compatibility

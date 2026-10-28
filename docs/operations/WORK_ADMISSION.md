@@ -1,5 +1,7 @@
 # Bounded worker admission
 
+Last updated: 2026-10-05 03:07 IST (UTC+05:30).
+
 These limits apply to each backend process. They bound retained work when a
 dependency stalls; replica count multiplies the fleet totals.
 

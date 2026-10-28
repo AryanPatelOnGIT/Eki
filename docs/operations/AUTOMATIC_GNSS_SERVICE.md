@@ -1,5 +1,7 @@
 # Automatic GNSS service lifecycle
 
+Last updated: 2026-10-28 10:53 IST (UTC+05:30).
+
 A qualified authenticated receiver fix automatically establishes its protected service. Routine service startup does not require an open admin tab or a Start service action. The existing ride-session API remains available for compatible clients and explicit recovery from an intentionally paused service.
 
 ## Admission and authorization

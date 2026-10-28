@@ -1,6 +1,6 @@
 # Eki documentation index
 
-Last updated: 2026-10-26 06:00 IST (UTC+05:30).
+Last updated: 2026-10-29 02:31 IST (UTC+05:30).
 
 ## New to the project
 
@@ -37,6 +37,19 @@ run revisions, dates and measurements. Verify deployed availability separately.
 
 | Document | Covers |
 |---|---|
+| [Automatic GNSS service lifecycle](../operations/AUTOMATIC_GNSS_SERVICE.md) | Fix-driven service admission, direction/progress recovery, pause and resume |
+| [Privileged database authorization (#315)](../operations/PRIVILEGED_DATABASE_AUTHORIZATION.md) | `authorizationVersion` claims, `_userAuthorization` records and role publication |
+| [Browser API security and fleet viewing](../operations/BROWSER_API_SECURITY.md) | Signed-in fleet viewing policy, ID-token-only browser auth (no App Check) and diagnostic counters |
+| [Worker leadership and fencing](../operations/WORKER_LEADERSHIP.md) | Lease timing, generation fencing, clock skew and fencing limits |
+| [Bounded worker admission](../operations/WORK_ADMISSION.md) | Per-process executor limits, queue ages and uncertain-commit boundaries |
+| [Telemetry execution deadlines](../operations/TELEMETRY_DEADLINES.md) | Ingest verification order, stage budgets and executor limits |
+| [Failed live reroutes (R35)](../operations/REROUTE_RETRY_POLICY.md) | Persisted `rerouteRetry` backoff, jitter and provider circuit |
+| [Matching and lifecycle scans (R19)](../operations/MATCHING_AND_LIFECYCLE_SCANS.md) | Bounded matching/lifecycle scan work and measurements |
+| [API read reduction and retirement (R20)](../operations/API_READS_AND_RETIREMENT.md) | Process-local read caches, evidence and legacy caller inventory |
+| [Bounded reconciliation and continuation](../operations/RECONCILIATION.md) | Durable page cursors, fleet/device guards, bounded Auth/session work and stranded mutation recovery |
+| [Read-only passenger geometry and bounded admin repair](../operations/ROUTE_GEOMETRY_READS.md) | Geometry cache, independent quotas and explicit versioned repair |
+| [Firestore index deployment (R11)](../operations/FIRESTORE_INDEX_DEPLOYMENT.md) | Deploy-workflow index deployment and read-only index verification probes |
+| [Recording a physical GNSS test](../operations/FIELD_CAPTURE.md) | Pre-ride checks, serial recording, correlation and archive |
 | [Versioned telemetry route catalog](../operations/ROUTE_CATALOG.md) | Shared watcher data, freshness and edit/deletion fencing |
 | [RTDB browser reconnect recovery](../operations/RTDB_RECONNECT_RECOVERY.md) | Suspension/disconnection gates, debounce, jitter and snapshot readiness |
 | [Privacy deletion queue and recovery](../operations/PRIVACY_DELETION.md) | Fair bounded cleanup, backoff, resubmission and stopped-executor recovery |
@@ -92,7 +105,3 @@ owns current commands; historical test counts apply only to their recorded run.
   and architectural decisions remain available.
 - Update the top date/time when editing. Keep original evidence timestamps,
   commit references and measurements intact. See [contributing](../../CONTRIBUTING.md).
-
-- [Bounded reconciliation and continuation](../operations/RECONCILIATION.md): durable page cursors, all-record fleet/device guards, bounded Auth/session work and stranded mutation recovery.
-
-- [Read-only passenger geometry and bounded admin repair](../operations/ROUTE_GEOMETRY_READS.md) — cache, independent quotas and explicit versioned repair.
