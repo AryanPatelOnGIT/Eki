@@ -102,6 +102,8 @@ export const MAX_PASSENGER_ROUTES = 50;
 export const STOP_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 type PassengerRouteEntry = { routeId: string; stopTimes: Record<string, string> };
+/** Parsed request entry; stop times stay in a Map so request keys never become object properties. */
+type PassengerRouteRequest = { routeId: string; stopTimes: Map<string, string> };
 type RouteStopRef = { id: string; name: string };
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -133,7 +135,7 @@ function routeStops(data: Record<string, unknown> | undefined): RouteStopRef[] {
 class PassengerRoutesInvalid extends Error {}
 
 /** Structural validation only; route/stop existence is checked against Firestore afterwards. */
-function parsePassengerRoutesBody(body: unknown): PassengerRouteEntry[] {
+function parsePassengerRoutesBody(body: unknown): PassengerRouteRequest[] {
   if (!isPlainObject(body) || !hasExactKeys(body, ["routes"]) || !Array.isArray(body.routes)) {
     throw new PassengerRoutesInvalid("Request body must be exactly { routes: [...] }.");
   }
@@ -141,7 +143,7 @@ function parsePassengerRoutesBody(body: unknown): PassengerRouteEntry[] {
     throw new PassengerRoutesInvalid(`At most ${MAX_PASSENGER_ROUTES} routes can be shown to passengers.`);
   }
   const seen = new Set<string>();
-  const entries: PassengerRouteEntry[] = [];
+  const entries: PassengerRouteRequest[] = [];
   body.routes.forEach((entry, index) => {
     const position = `Route entry ${index + 1}`;
     if (!isPlainObject(entry) || !hasExactKeys(entry, ["routeId", "stopTimes"])) {
@@ -157,13 +159,12 @@ function parsePassengerRoutesBody(body: unknown): PassengerRouteEntry[] {
     if (!isPlainObject(entry.stopTimes)) {
       throw new PassengerRoutesInvalid(`${position} stopTimes must be an object of stop ID to time.`);
     }
-    // Copy into a null-prototype record so request keys never touch Object.prototype.
-    const stopTimes: Record<string, string> = Object.create(null);
+    const stopTimes = new Map<string, string>();
     for (const [stopId, time] of Object.entries(entry.stopTimes)) {
       if (typeof time !== "string") {
         throw new PassengerRoutesInvalid(`${position} has a non-text time for stop ${echo(stopId)}.`);
       }
-      stopTimes[stopId] = time;
+      stopTimes.set(stopId, time);
     }
     entries.push({ routeId: entry.routeId, stopTimes });
   });
@@ -171,7 +172,7 @@ function parsePassengerRoutesBody(body: unknown): PassengerRouteEntry[] {
 }
 
 /** Check approvals against the stored routes; returns the record to persist. */
-async function resolvePassengerRoutes(entries: PassengerRouteEntry[]): Promise<PassengerRouteEntry[]> {
+async function resolvePassengerRoutes(entries: PassengerRouteRequest[]): Promise<PassengerRouteEntry[]> {
   if (entries.length === 0) return [];
   const snapshots = await db.getAll(...entries.map(entry => db.collection("routes").doc(entry.routeId)));
   return entries.map((entry, index) => {
@@ -183,7 +184,7 @@ async function resolvePassengerRoutes(entries: PassengerRouteEntry[]): Promise<P
     const routeName = displayName(data?.name, entry.routeId);
     const stops = routeStops(data);
     const stopIds = new Set(stops.map(stop => stop.id));
-    for (const stopId of Object.keys(entry.stopTimes)) {
+    for (const stopId of entry.stopTimes.keys()) {
       if (!stopIds.has(stopId)) {
         throw new PassengerRoutesInvalid(`Route ${routeName} has no stop ${echo(stopId)}. Reload and try again.`);
       }
@@ -191,7 +192,7 @@ async function resolvePassengerRoutes(entries: PassengerRouteEntry[]): Promise<P
     // Destination keys and order come from the stored route, never the request.
     const stopTimes: Record<string, string> = {};
     for (const stop of stops) {
-      const time = entry.stopTimes[stop.id];
+      const time = entry.stopTimes.get(stop.id);
       if (time === undefined) {
         throw new PassengerRoutesInvalid(`Missing time for stop ${stop.name} on route ${routeName}.`);
       }
