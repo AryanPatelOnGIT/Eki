@@ -69,10 +69,9 @@ describe("passenger map loads (real PassengerTrackingMap + real vis.gl Map, fake
 
   it("reuses the same map instance when the selected bus, preview state, ride direction or route changes", async () => {
     setScenario("forward");
-    let before = snapshotCounters();
+    // Setup: constructs the map when run alone, reattaches it after an earlier test.
     const view = render(<PassengerTrackingMap {...base} route={forward} preview selectedBusKey={undefined} />);
     const map = await waitForMountedMap();
-    await expectRemountReused(map, before);
 
     const transitions = [
       <PassengerTrackingMap key="t" {...base} route={forward} preview selectedBusKey="session:qa-session" />,
@@ -81,7 +80,7 @@ describe("passenger map loads (real PassengerTrackingMap + real vis.gl Map, fake
       <PassengerTrackingMap key="t" {...base} route={otherForward} selectedBusKey="session:qa-session" />,
     ];
     for (const next of transitions) {
-      before = snapshotCounters();
+      const before = snapshotCounters();
       view.rerender(next);
       await expectRemountReused(map, before);
       expectFollowCamera(map);
